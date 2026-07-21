@@ -4,13 +4,40 @@ import bitMascotSvg from '../../Bit.svg?raw';
 // One page-level cursor source keeps every Bit instance in sync, including
 // avatars that mount after the visitor has already moved their cursor.
 let lastPointerPosition = null;
-const pointerSubscribers = new Set();
 let pointerTrackingStarted = false;
+
+// Every mounted Bit. They are aimed together, from a single frame, so that one
+// mascot's DOM write can never force the next one's rect read to re-run layout —
+// which is what made three mascots cost three reflows per scrolled frame.
+const gazers = new Set();
+let gazeFrame = 0;
+
+function runGaze() {
+  gazeFrame = 0;
+  const point = lastPointerPosition;
+  if (!point) return;
+
+  // Phase one: read. Nothing writes to the DOM in this loop.
+  const measured = [];
+  for (const gazer of gazers) {
+    if (!gazer.visible) continue;
+    const rect = gazer.root.getBoundingClientRect();
+    if (!rect.width || !rect.height) continue;
+    measured.push([gazer, rect]);
+  }
+  // Phase two: write. Layout is already settled, so none of these force a reflow.
+  for (const [gazer, rect] of measured) gazer.aim(rect, point);
+}
+
+function scheduleGaze() {
+  if (gazeFrame) return;
+  gazeFrame = window.requestAnimationFrame(runGaze);
+}
 
 function publishPointerPosition(clientX, clientY) {
   if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) return;
   lastPointerPosition = { x: clientX, y: clientY };
-  pointerSubscribers.forEach(subscriber => subscriber(lastPointerPosition));
+  scheduleGaze();
 }
 
 function startPointerTracking() {
@@ -24,21 +51,32 @@ function startPointerTracking() {
   };
 
   // Listen on window so tracking is independent of which page element is
-  // currently under the cursor. mousemove is retained for older webviews.
-  window.addEventListener('pointermove', onPointerMove, { passive: true });
-  window.addEventListener('mousemove', onPointerMove, { passive: true });
-  window.addEventListener('pointerenter', onPointerMove, { passive: true });
-  window.addEventListener('mouseenter', onPointerMove, { passive: true });
-  window.addEventListener('pointerdown', onPointerMove, { passive: true });
+  // currently under the cursor. Pointer events cover mouse, pen and touch, so
+  // the mouse* fallbacks are only registered for webviews that lack them —
+  // otherwise every desktop cursor move ran this path twice.
+  if (window.PointerEvent) {
+    window.addEventListener('pointermove', onPointerMove, { passive: true });
+    window.addEventListener('pointerenter', onPointerMove, { passive: true });
+    window.addEventListener('pointerdown', onPointerMove, { passive: true });
+  } else {
+    window.addEventListener('mousemove', onPointerMove, { passive: true });
+    window.addEventListener('mouseenter', onPointerMove, { passive: true });
+  }
   window.addEventListener('touchstart', onTouchMove, { passive: true });
   window.addEventListener('touchmove', onTouchMove, { passive: true });
+
+  // Scrolling moves the mascots under a stationary cursor, so the gaze has to be
+  // recomputed — but one shared listener does it for every instance at once.
+  document.addEventListener('scroll', scheduleGaze, { capture: true, passive: true });
+  window.addEventListener('resize', scheduleGaze, { passive: true });
+  window.visualViewport?.addEventListener('resize', scheduleGaze, { passive: true });
+  window.visualViewport?.addEventListener('scroll', scheduleGaze, { passive: true });
 }
 
-function subscribeToPointerPosition(subscriber) {
-  startPointerTracking();
-  pointerSubscribers.add(subscriber);
-  if (lastPointerPosition) subscriber(lastPointerPosition);
-  return () => pointerSubscribers.delete(subscriber);
+// Returning from another tab can briefly report stale element geometry, so wait
+// for two paint frames before recalculating.
+function scheduleGazeAfterLayout() {
+  window.requestAnimationFrame(() => window.requestAnimationFrame(scheduleGaze));
 }
 
 const taggedMascotSvg = bitMascotSvg
@@ -79,10 +117,6 @@ export const BitMascot = memo(function BitMascot({ className = '', decorative = 
       if (!pupils.length || !pupils[0].isConnected) pupils = [...root.querySelectorAll('[data-bit-pupil]')];
       return pupils;
     };
-    let lastPoint = null;
-    let animationFrame = null;
-    let restoreFrame = null;
-    let mountRefreshTimer = null;
 
     const movePupils = (x, y) => {
       livePupils().forEach(pupil => {
@@ -93,89 +127,58 @@ export const BitMascot = memo(function BitMascot({ className = '', decorative = 
       });
     };
 
-    const aimAt = (clientX, clientY) => {
-      if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) return;
+    const gazer = {
+      root,
+      // Assume visible until the observer reports otherwise, so the very first
+      // frame after mount still aims.
+      visible: true,
+      aim(rect, point) {
+        const eyeX = rect.left + rect.width * 0.503;
+        const eyeY = rect.top + rect.height * 0.439;
+        const deltaX = point.x - eyeX;
+        const deltaY = point.y - eyeY;
+        const distance = Math.hypot(deltaX, deltaY);
+        const strength = Math.min(distance / Math.max(rect.width * 0.45, 44), 1);
+        const travel = 8.25 * strength;
 
-      lastPoint = { x: clientX, y: clientY };
-      const rect = root.getBoundingClientRect();
-      if (!rect.width || !rect.height) return;
-      const eyeX = rect.left + rect.width * 0.503;
-      const eyeY = rect.top + rect.height * 0.439;
-      const deltaX = clientX - eyeX;
-      const deltaY = clientY - eyeY;
-      const distance = Math.hypot(deltaX, deltaY);
-      const strength = Math.min(distance / Math.max(rect.width * 0.45, 44), 1);
-      const travel = 8.25 * strength;
-
-      const x = distance ? (deltaX / distance) * travel : 0;
-      const y = distance ? (deltaY / distance) * travel : 0;
-      movePupils(x, y);
-    };
-
-    const scheduleAim = (clientX, clientY) => {
-      if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) return;
-      lastPoint = { x: clientX, y: clientY };
-      if (animationFrame !== null) return;
-      animationFrame = window.requestAnimationFrame(() => {
-        animationFrame = null;
-        if (lastPoint) aimAt(lastPoint.x, lastPoint.y);
-      });
-    };
-
-    const refreshAim = () => {
-      if (lastPoint) scheduleAim(lastPoint.x, lastPoint.y);
-    };
-    const restoreAimAfterLayout = () => {
-      if (restoreFrame !== null) window.cancelAnimationFrame(restoreFrame);
-      // Returning from another tab can briefly report stale element geometry.
-      // Wait for two paint frames before calculating Bit's new gaze direction.
-      restoreFrame = window.requestAnimationFrame(() => {
-        restoreFrame = window.requestAnimationFrame(() => {
-          restoreFrame = null;
-          refreshAim();
-        });
-      });
-    };
-    const onVisibilityChange = () => {
-      if (document.hidden) {
-        // Browsers pause queued animation frames in background tabs. Clear the
-        // stale handle so a new eye update can be scheduled on return.
-        if (animationFrame !== null) window.cancelAnimationFrame(animationFrame);
-        if (restoreFrame !== null) window.cancelAnimationFrame(restoreFrame);
-        animationFrame = null;
-        restoreFrame = null;
-        return;
+        movePupils(
+          distance ? (deltaX / distance) * travel : 0,
+          distance ? (deltaY / distance) * travel : 0
+        );
       }
-      restoreAimAfterLayout();
     };
-    const resizeObserver = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(refreshAim);
 
-    const unsubscribeFromPointer = subscribeToPointerPosition(({ x, y }) => scheduleAim(x, y));
-    document.addEventListener('scroll', refreshAim, { capture: true, passive: true });
-    document.addEventListener('visibilitychange', onVisibilityChange);
-    window.addEventListener('focus', restoreAimAfterLayout);
-    window.addEventListener('pageshow', restoreAimAfterLayout);
-    window.addEventListener('resize', refreshAim, { passive: true });
-    window.visualViewport?.addEventListener('resize', refreshAim, { passive: true });
-    window.visualViewport?.addEventListener('scroll', refreshAim, { passive: true });
+    const onVisibilityChange = () => {
+      if (!document.hidden) scheduleGazeAfterLayout();
+    };
+    // A mascot scrolled off screen has no gaze worth computing, and skipping it
+    // skips its rect read too.
+    const intersectionObserver = new IntersectionObserver(([entry]) => {
+      gazer.visible = entry.isIntersecting;
+      if (gazer.visible) scheduleGaze();
+    }, { threshold: 0 });
+    const resizeObserver = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(scheduleGaze);
+
+    startPointerTracking();
+    gazers.add(gazer);
+    intersectionObserver.observe(root);
     resizeObserver?.observe(root);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('focus', scheduleGazeAfterLayout);
+    window.addEventListener('pageshow', scheduleGazeAfterLayout);
     // The chat avatar mounts inside an entrance animation. Recalculate once
     // that layout motion has settled even if the cursor has not moved again.
-    mountRefreshTimer = window.setTimeout(restoreAimAfterLayout, 850);
+    const mountRefreshTimer = window.setTimeout(scheduleGazeAfterLayout, 850);
+    scheduleGaze();
 
     return () => {
-      if (animationFrame !== null) window.cancelAnimationFrame(animationFrame);
-      if (restoreFrame !== null) window.cancelAnimationFrame(restoreFrame);
-      if (mountRefreshTimer !== null) window.clearTimeout(mountRefreshTimer);
-      unsubscribeFromPointer();
-      document.removeEventListener('scroll', refreshAim, true);
-      document.removeEventListener('visibilitychange', onVisibilityChange);
-      window.removeEventListener('focus', restoreAimAfterLayout);
-      window.removeEventListener('pageshow', restoreAimAfterLayout);
-      window.removeEventListener('resize', refreshAim);
-      window.visualViewport?.removeEventListener('resize', refreshAim);
-      window.visualViewport?.removeEventListener('scroll', refreshAim);
+      window.clearTimeout(mountRefreshTimer);
+      gazers.delete(gazer);
+      intersectionObserver.disconnect();
       resizeObserver?.disconnect();
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('focus', scheduleGazeAfterLayout);
+      window.removeEventListener('pageshow', scheduleGazeAfterLayout);
     };
   }, []);
 

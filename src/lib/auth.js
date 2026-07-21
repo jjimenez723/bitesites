@@ -10,6 +10,7 @@
 //     which avoids a document read on every rule evaluation.
 
 import {
+  getAuth,
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   signOut,
@@ -19,7 +20,11 @@ import {
   onAuthStateChanged
 } from 'firebase/auth';
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
-import { auth, db } from './firebase';
+import { app, db } from './firebase';
+
+// The auth instance lives here rather than in ./firebase so that the marketing
+// bundle, which only ever wants `db`, does not also ship the auth SDK.
+const auth = getAuth(app);
 
 const AUTH_ERRORS = {
   'auth/email-already-in-use': 'An account with that email already exists.',

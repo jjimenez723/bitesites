@@ -14,6 +14,8 @@
     "deploy:functions": "firebase deploy --only functions",
     "emulators": "firebase emulators:start",
     "test:rules": "firebase emulators:exec --only firestore --project demo-bitesites \"node scripts/test-rules.mjs\"",
+    "test:voice": "firebase emulators:exec --only firestore --project demo-bitesites \"node functions/voice-webhook.test.mjs\"",
+    "test:import": "firebase emulators:exec --only firestore --project demo-bitesites \"node functions/voice-import.test.mjs\"",
     "role": "node scripts/set-role.mjs",
     "ship": "sh scripts/ship.sh",
     "start": "node server.js",

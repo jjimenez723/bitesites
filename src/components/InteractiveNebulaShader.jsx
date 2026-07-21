@@ -15,18 +15,38 @@ export function InteractiveNebulaShader({ className = '' }) {
       if (disposed) return;
       let renderer;
       try {
-        renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        // No antialiasing: the scene is a single fullscreen quad, so MSAA has no
+        // edges to smooth — it just costs a resolve pass and the memory bandwidth
+        // that goes with it. `low-power` keeps laptops on the integrated GPU;
+        // switching to the discrete one for a background is its own source of hitches.
+        renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true, powerPreference: 'low-power' });
       } catch {
         return;
       }
 
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+      // A soft nebula hides resolution loss, and this is the single biggest lever
+      // on what the hero costs: the shader runs per pixel, so halving the pixel
+      // ratio roughly halves the GPU time.
+      const modest =
+        window.matchMedia('(pointer: coarse)').matches || (navigator.hardwareConcurrency || 8) <= 4;
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, modest ? .75 : 1.25));
       container.appendChild(renderer.domElement);
 
       const scene = new THREE.Scene();
       const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
       const clock = new THREE.Clock();
-      const uniforms = { iTime: { value: 0 }, iResolution: { value: new THREE.Vector2() } };
+      // Everything below that is constant across a frame is computed once on the
+      // CPU instead of being recomputed per pixel. `field()` runs 12 times per
+      // pixel, so the two rotations and the sin() it used to contain were ~36
+      // transcendental ops per pixel spent recalculating identical values.
+      const uniforms = {
+        iTime: { value: 0 },
+        iResolution: { value: new THREE.Vector2() },
+        uRotXZ: { value: new Float32Array([1, 0, 0, 1]) },
+        uRotXY: { value: new Float32Array([1, 0, 0, 1]) },
+        uSinT: { value: 0 },
+        uQOffset: { value: 0 }
+      };
       const material = new THREE.ShaderMaterial({
       transparent: true,
       uniforms,
@@ -35,13 +55,16 @@ export function InteractiveNebulaShader({ className = '' }) {
         precision mediump float;
         uniform vec2 iResolution;
         uniform float iTime;
+        uniform mat2 uRotXZ;
+        uniform mat2 uRotXY;
+        uniform float uSinT;
+        uniform float uQOffset;
         varying vec2 vUv;
-        mat2 rotate2d(float a) { float c = cos(a), s = sin(a); return mat2(c, -s, s, c); }
         float field(vec3 p) {
-          p.xz *= rotate2d(iTime * .10);
-          p.xy *= rotate2d(iTime * .06);
-          vec3 q = p * 1.8 + iTime * .28;
-          return length(p + vec3(sin(iTime * .22))) * log(length(p) + 1.0) + sin(q.x + sin(q.z + sin(q.y))) * .5 - 1.0;
+          p.xz *= uRotXZ;
+          p.xy *= uRotXY;
+          vec3 q = p * 1.8 + uQOffset;
+          return length(p + vec3(uSinT)) * log(length(p) + 1.0) + sin(q.x + sin(q.z + sin(q.y))) * .5 - 1.0;
         }
         void main() {
           vec2 uv = (vUv * iResolution - .5 * iResolution) / min(iResolution.x, iResolution.y);
@@ -65,21 +88,67 @@ export function InteractiveNebulaShader({ className = '' }) {
       const mesh = new THREE.Mesh(geometry, material);
       scene.add(mesh);
 
+      let resizeFrame = 0;
       const resize = () => {
+        resizeFrame = 0;
         const { clientWidth: width, clientHeight: height } = container;
         renderer.setSize(width, height, false);
         uniforms.iResolution.value.set(width, height);
       };
-      window.addEventListener('resize', resize);
+      // Mobile browsers fire resize continuously as the URL bar collapses.
+      const queueResize = () => {
+        if (!resizeFrame) resizeFrame = window.requestAnimationFrame(resize);
+      };
+      window.addEventListener('resize', queueResize, { passive: true });
       resize();
-      renderer.setAnimationLoop(() => {
-        uniforms.iTime.value = clock.getElapsedTime();
+
+      // A drifting nebula reads the same at 30fps and costs half as much.
+      const FRAME_INTERVAL = 1 / 30;
+      let lastRender = -Infinity;
+      const render = () => {
+        const time = clock.getElapsedTime();
+        if (time - lastRender < FRAME_INTERVAL) return;
+        lastRender = time;
+
+        const xz = time * .10;
+        const xy = time * .06;
+        const cosXZ = Math.cos(xz), sinXZ = Math.sin(xz);
+        const cosXY = Math.cos(xy), sinXY = Math.sin(xy);
+        // Column-major, matching the mat2(c, -s, s, c) this replaced.
+        const rotXZ = uniforms.uRotXZ.value;
+        rotXZ[0] = cosXZ; rotXZ[1] = -sinXZ; rotXZ[2] = sinXZ; rotXZ[3] = cosXZ;
+        const rotXY = uniforms.uRotXY.value;
+        rotXY[0] = cosXY; rotXY[1] = -sinXY; rotXY[2] = sinXY; rotXY[3] = cosXY;
+        uniforms.uSinT.value = Math.sin(time * .22);
+        uniforms.uQOffset.value = time * .28;
+        uniforms.iTime.value = time;
         renderer.render(scene, camera);
-      });
+      };
+
+      // The hero is one section of a long page. Rendering it while the visitor is
+      // reading the footer burns GPU that the compositor needs for scrolling.
+      let running = false;
+      const start = () => {
+        if (running || disposed) return;
+        running = true;
+        renderer.setAnimationLoop(render);
+      };
+      const stop = () => {
+        if (!running) return;
+        running = false;
+        renderer.setAnimationLoop(null);
+      };
+      const observer = new IntersectionObserver(
+        ([entry]) => (entry.isIntersecting ? start() : stop()),
+        { threshold: 0 }
+      );
+      observer.observe(container);
 
       cleanup = () => {
-        window.removeEventListener('resize', resize);
-        renderer.setAnimationLoop(null);
+        observer.disconnect();
+        stop();
+        window.removeEventListener('resize', queueResize);
+        if (resizeFrame) window.cancelAnimationFrame(resizeFrame);
         geometry.dispose();
         material.dispose();
         renderer.dispose();

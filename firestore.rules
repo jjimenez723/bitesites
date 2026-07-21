@@ -107,6 +107,10 @@ service cloud.firestore {
         && data.businessSize in ['solo', 'small', 'growing', 'established', 'enterprise', 'other']
         && (!('urgencyTag' in data) || data.urgencyTag in ['asap', '2_4_weeks', '1_2_months', 'flexible', 'other', ''])
         && data.preferredContactMethod in ['email', 'phone']
+        // Only the two sources a browser can legitimately be. Byte's leads carry
+        // source 'byte_voice' and are written by the recordVoiceCall function
+        // with the Admin SDK, which bypasses these rules — leaving it out here
+        // means a visitor cannot forge a lead that looks like a booked call.
         && data.source in ['intake_form', 'bit_chat']
 
         && data.services is list

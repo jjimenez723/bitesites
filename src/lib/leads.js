@@ -6,8 +6,7 @@
 // submission never trips those rules, and to give the visitor a readable error
 // when something is genuinely wrong.
 
-import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
-import { db } from './firebase';
+import { firestore } from './firestore';
 
 const BUSINESS_SIZES = ['solo', 'small', 'growing', 'established', 'enterprise'];
 const URGENCY_TAGS = ['asap', '2_4_weeks', '1_2_months', 'flexible'];
@@ -59,8 +58,8 @@ export function buildLead(input, source) {
     services,
     preferredContactMethod,
     source,
-    status: 'new',
-    createdAt: serverTimestamp()
+    status: 'new'
+    // createdAt is stamped in submitLead, once the Firestore SDK is loaded.
   };
 
   // Optional fields are omitted entirely rather than sent as empty strings, so
@@ -110,7 +109,8 @@ export async function submitLead(input, source = 'intake_form') {
   if (problem) throw new Error(problem);
 
   try {
-    const ref = await addDoc(collection(db, 'leads'), lead);
+    const { sdk, db } = await firestore();
+    const ref = await sdk.addDoc(sdk.collection(db, 'leads'), { ...lead, createdAt: sdk.serverTimestamp() });
     return ref.id;
   } catch (error) {
     console.error('[leads] submission failed', error);

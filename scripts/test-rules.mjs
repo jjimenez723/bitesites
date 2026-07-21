@@ -77,6 +77,20 @@ await testEnv.withSecurityRulesDisabled(async context => {
     ...validLead(),
     createdAt: new Date()
   });
+  // A Byte lead as recordVoiceCall writes it: server-side source, and often no
+  // email at all, because a caller leaves a phone number.
+  await setDoc(doc(db, 'leads', 'seeded_voice_lead'), {
+    name: 'Sam Reyes',
+    email: '',
+    phone: '+15550199',
+    businessSize: '',
+    services: [],
+    preferredContactMethod: 'phone',
+    source: 'byte_voice',
+    status: 'new',
+    createdAt: new Date(),
+    voice: { callId: 'call1', providerCallId: 'ghl-1', durationSec: 95 }
+  });
   await setDoc(doc(db, 'projects', 'proj1'), {
     name: 'Site build',
     clientUids: ['client_ok']
@@ -183,6 +197,15 @@ await it('admin can triage a lead status', () =>
 
 await it('admin cannot rewrite a lead email (audit integrity)', () =>
   assertFails(updateDoc(doc(adminByDoc, 'leads', 'seeded_lead'), { email: 'changed@example.com' })));
+
+// The update rule compares `email` against the stored value, so a Byte lead has
+// to carry the key even when the call captured only a phone number — a missing
+// one would error the rule out and leave the lead permanently un-triageable.
+await it('admin can triage a phone-only Byte lead', () =>
+  assertSucceeds(updateDoc(doc(adminByDoc, 'leads', 'seeded_voice_lead'), { status: 'contacted' })));
+
+await it('visitor cannot forge a lead that looks like a booked call', () =>
+  assertFails(addDoc(collection(anon, 'leads'), { ...validLead(), source: 'byte_voice' })));
 
 describe('roles — privilege escalation is impossible');
 await it('user cannot grant themselves a role', () =>

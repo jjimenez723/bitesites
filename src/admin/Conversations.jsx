@@ -8,9 +8,10 @@
 // Turns load only when a conversation is opened. Fetching every transcript to
 // render a table would be a lot of reads for text nobody asked to see.
 
-import React, { useEffect, useState } from 'react';
-import { useConversations, loadTurns, toDate } from './data';
+import React, { useState } from 'react';
+import { useConversations, toDate } from './data';
 import { Panel, DetailRows, Pill } from './Panel';
+import Transcript from './Transcript';
 
 const TABS = [
   { key: 'chats', label: 'Bit · chat', sub: 'messages', agent: 'Bit' },
@@ -24,11 +25,6 @@ const when = value => {
     : '—';
 };
 
-const clock = value => {
-  const date = toDate(value);
-  return date ? date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : '';
-};
-
 function duration(row) {
   let seconds = row.durationSec;
   if (typeof seconds !== 'number' || seconds <= 0) {
@@ -39,60 +35,6 @@ function duration(row) {
   }
   const minutes = Math.floor(seconds / 60);
   return minutes ? `${minutes}m ${seconds % 60}s` : `${seconds}s`;
-}
-
-function Transcript({ tab, row }) {
-  const [turns, setTurns] = useState(null);
-  const [error, setError] = useState('');
-
-  useEffect(() => {
-    let cancelled = false;
-    setTurns(null);
-    setError('');
-    loadTurns(tab.key, row.id, tab.sub)
-      .then(result => { if (!cancelled) setTurns(result); })
-      .catch(err => { if (!cancelled) setError(err?.message || 'Could not load the transcript.'); });
-    return () => { cancelled = true; };
-  }, [tab.key, tab.sub, row.id]);
-
-  if (error) return <p className="admin-error">{error}</p>;
-  if (!turns) return <div className="skeleton" style={{ height: 90 }} />;
-
-  if (!turns.length) {
-    return (
-      <div className="admin-empty">
-        <strong>No transcript</strong>
-        {tab.key === 'calls'
-          ? 'The widget did not render one, and no call summary has been posted back.'
-          : 'No messages were recorded for this chat.'}
-      </div>
-    );
-  }
-
-  return (
-    <div className="transcript">
-      {turns.map(turn => {
-        if (turn.kind === 'state') {
-          return (
-            <div className="turn state" key={turn.id}>
-              <div className="turn-bubble">{turn.state}</div>
-            </div>
-          );
-        }
-        const isVisitor = turn.role === 'visitor';
-        return (
-          <div className={`turn ${isVisitor ? 'visitor' : 'agent'}`} key={turn.id}>
-            <div className="turn-bubble">{turn.text}</div>
-            <div className="turn-meta">
-              <span>{isVisitor ? 'Visitor' : tab.agent}</span>
-              {turn.kind === 'choice' && <span>tapped</span>}
-              {clock(turn.at) && <span>{clock(turn.at)}</span>}
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
 }
 
 export default function Conversations() {
@@ -204,7 +146,7 @@ export default function Conversations() {
           <div>
             <div className="panel-section-label">Transcript</div>
             <div style={{ marginTop: 12 }}>
-              <Transcript tab={tab} row={open} />
+              <Transcript collection={tab.key} sub={tab.sub} agent={tab.agent} id={open.id} />
             </div>
           </div>
         </Panel>

@@ -16,8 +16,7 @@
 //     phone click and a desktop click land in the same coordinate space and the
 //     click map stays meaningful across screen sizes.
 
-import { collection, doc, serverTimestamp, writeBatch } from 'firebase/firestore';
-import { db } from './firebase';
+import { firestore, warmFirestore } from './firestore';
 
 const SESSION_KEY = 'bs.sid';
 const VISITOR_KEY = 'bs.vid';
@@ -85,14 +84,16 @@ function enqueue(type, payload = {}) {
   }
   state.count += 1;
 
+  // `ts` is stamped at flush time instead of here: serverTimestamp() is a
+  // Firestore sentinel, and this runs long before the SDK is loaded. It still
+  // resolves to request.time either way, which is what the rules check.
   const event = {
     type,
     sid: state.sessionId,
     vid: state.visitorId,
     path: clean(window.location.pathname, 300) || '/',
     day: dayKey(),
-    device: device(),
-    ts: serverTimestamp()
+    device: device()
   };
 
   for (const [key, value] of Object.entries(payload)) {
@@ -110,9 +111,10 @@ async function flush() {
   const pending = state.queue.splice(0, 400);
   state.flushing = true;
   try {
-    const batch = writeBatch(db);
-    const events = collection(db, 'events');
-    for (const event of pending) batch.set(doc(events), event);
+    const { sdk, db } = await firestore();
+    const batch = sdk.writeBatch(db);
+    const events = sdk.collection(db, 'events');
+    for (const event of pending) batch.set(sdk.doc(events), { ...event, ts: sdk.serverTimestamp() });
     await batch.commit();
   } catch (error) {
     // Analytics must never break the site or spam the console on every flush.
@@ -210,6 +212,11 @@ export function startAnalytics() {
     seenSections: new Set(),
     startedForms: new Set()
   };
+
+  // Fetch the SDK during the first idle gap — early enough that a visitor who
+  // bounces in under four seconds still gets their page view recorded, late
+  // enough that it costs the initial render nothing.
+  warmFirestore();
 
   enqueue('page_view', {
     referrer: clean(document.referrer, 400),

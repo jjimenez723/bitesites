@@ -17,7 +17,19 @@
     <title>Voice AI Receptionists & AI Phone Agents | BiteSites</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Tomorrow:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <!-- Loaded as a preload and promoted to a stylesheet on arrival, so a
+         round trip to a third-party origin is not on the critical rendering
+         path. `display=swap` already means text paints in the fallback first,
+         so this changes when the page renders, not how it ends up looking. -->
+    <link
+      rel="preload"
+      as="style"
+      href="https://fonts.googleapis.com/css2?family=Tomorrow:wght@400;500;600;700;800&display=swap"
+      onload="this.rel='stylesheet'"
+    />
+    <noscript>
+      <link href="https://fonts.googleapis.com/css2?family=Tomorrow:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    </noscript>
     <script type="application/ld+json">
       {
         "@context": "https://schema.org",

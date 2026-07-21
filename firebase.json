@@ -5,7 +5,7 @@
   },
   "functions": {
     "source": "functions",
-    "ignore": ["node_modules", ".git", "*.local"]
+    "ignore": ["node_modules", ".git", "*.local", "*.test.mjs"]
   },
   "hosting": {
     "public": "dist",

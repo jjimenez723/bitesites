@@ -87,6 +87,16 @@ term into informed consent at the moment it matters.
 The Cloud Function that pushes leads into GHL is deployed but inert until you supply
 the Inbound Webhook URL. Two commands — see "Lead notifications" below.
 
+### 5. Byte's calls — done, nothing needed
+
+Byte's leads arrive via `pollVoiceCalls`, which reads the GoHighLevel Voice AI call-log
+API every 5 minutes. It is deployed and running; the history has been imported. See
+"Byte's calls, the other way" below.
+
+The `recordVoiceCall` webhook is the optional real-time alternative — it needs a Custom
+Webhook action added by hand in the GHL workflow builder. Both can run at once; the
+deterministic ids stop them duplicating each other.
+
 ---
 
 ## Data model
@@ -105,12 +115,18 @@ A lead (optional fields are omitted rather than stored empty):
   name, email, businessSize, services[], preferredContactMethod,  // required
   phone, businessName, roleInCompany, urgencyTag, projectDetails, // optional
   customAnswers: { businessSize: 'about a dozen of us' },         // free-text chat answers
-  source: 'intake_form' | 'bit_chat',
+  source: 'intake_form' | 'bit_chat' | 'byte_voice',
   status: 'new',                    // client cannot choose; admins triage afterwards
   createdAt,                        // must equal server time — a forged value is rejected
-  pagePath, referrer, userAgent
+  pagePath, referrer, userAgent,
+  voice: { callId, providerCallId, durationSec, summary, recordingUrl }  // byte_voice only
 }
 ```
+
+`byte_voice` is the one source a browser cannot write: the rules restrict client
+submissions to the other two, and Byte's leads are created server-side by
+`recordVoiceCall` through the Admin SDK. That is deliberate — otherwise anyone could
+forge a lead that looks like a booked call.
 
 ## Security model
 
@@ -187,17 +203,159 @@ If you would rather create contacts directly than go through a workflow, the v2 
 a `Version: 2021-07-28` header and a `locationId`) is a drop-in replacement for the
 `postJson` call.
 
+## Byte's calls — `recordVoiceCall`
+
+The sync above runs one way. Byte's calls run the other: GoHighLevel owns the call, the
+audio, the transcript and the contact it captures, and none of it reaches Firestore on
+its own. The browser only records the *shape* of the session — when it started, how it
+progressed, how it ended. That is why voice enquiries never appeared under **Leads**.
+
+[`functions/index.js`](functions/index.js) holds `recordVoiceCall`, an HTTPS endpoint
+GoHighLevel posts a finished call to. For each call it:
+
+* attaches the transcript, summary and recording to the matching `calls/{id}` document —
+  creating one if the call never came through the site widget, so calls placed to the
+  real number appear under **Conversations** too;
+* creates `leads/{id}` with `source: 'byte_voice'` whenever the call captured an email or
+  a phone number, so Byte's leads sit in the same list as the intake form's and Bit's;
+* links the two together, so opening a Byte lead shows the call it came from.
+
+**To switch it on:**
+
+1. Pick a long random secret and store it:
+
+```bash
+head -c 32 /dev/urandom | base64          # something to paste
+firebase functions:secrets:set VOICE_WEBHOOK_SECRET
+npm run deploy:functions                  # secrets bind at deploy time
+```
+
+2. In the GoHighLevel workflow that runs when a Byte call ends, add a **Custom Webhook**
+   action:
+
+```
+POST https://us-central1-bitesites-org.cloudfunctions.net/recordVoiceCall
+Header:  x-webhook-secret: <the secret from step 1>
+Body (JSON):
+{
+  "callId":     "{{message.id}}",
+  "email":      "{{contact.email}}",
+  "phone":      "{{contact.phone}}",
+  "name":       "{{contact.full_name}}",
+  "duration":   "{{message.duration}}",
+  "summary":    "{{message.summary}}",
+  "transcript": "{{message.transcript}}"
+}
+```
+
+Field names are flexible — `call_id`, `contact.email`, `first_name` + `last_name`,
+`recording_url`, `call_duration` and several other spellings are all understood, and
+anything nested under `contact` or `customData` is read too. Only two things matter:
+`callId` (or `call_id`) makes redelivery safe, and at least one of `email` / `phone` is
+what turns a call into a lead.
+
+**Behaviour worth knowing:**
+
+* **Fails closed.** Until `VOICE_WEBHOOK_SECRET` is a real value the endpoint answers
+  `503` to everything. It creates leads, so an open one is a spam funnel.
+* **Idempotent.** The lead id is derived from the call id, so GHL's retries cannot
+  create a duplicate lead or a doubled transcript.
+* **Retries are wanted.** Failures answer `500` precisely so GHL tries again — a dropped
+  call summary is a lost lead.
+* **Invents nothing.** No contact details means no lead, just a recorded call. Services
+  are read from `service:*` tags and left empty otherwise.
+* **No loop.** `syncLeadToGoHighLevel` skips `byte_voice` leads, since they are already
+  contacts in GHL.
+
+**Matching a call to the browser's record:** GHL never learns the id the browser
+generated, so pass `sid` back if your workflow can carry it. Failing that the function
+attaches to the most recent unclaimed call in the last two hours and logs that it did —
+exact for one call at a time, which is the reality of a marketing site.
+
+`npm run test:voice` exercises all of this against the emulator.
+
+## Byte's calls, the other way — `pollVoiceCalls`
+
+The webhook above needs a Custom Webhook action wired up by hand, because **workflows
+are read-only over the API** — there is no endpoint that creates or edits one, whatever
+scopes a token carries. So the path that actually runs today needs no GHL configuration
+at all: it reads the Voice AI call-log API on a schedule.
+
+`pollVoiceCalls` runs every 5 minutes, re-scanning a two-day window, and imports any
+call that has a way to reach someone. `importVoiceHistory` is the same code over an
+explicit date range, used once to bring the back catalogue in.
+
+**API contract**, verified against the live API in July 2026:
+
+```
+GET services.leadconnectorhq.com/voice-ai/dashboard/call-logs
+    Authorization: Bearer <private integration token>
+    Version: 2021-07-28
+    ?locationId= &page=(1-based) &pageSize=(max 50, 422 above) &startDate= &endDate=
+→ { callLogs[], total, page, pageSize }
+```
+
+A call log carries `id`, `contactId`, `createdAt`, `duration` (seconds), `summary`,
+`transcript` (`bot:` / `human:` lines), `trialCall`, `fromNumber` (real calls only), and
+`extractedData { name, email, otherDetails, address }`. Contact details come from
+`extractedData` — the agent pulls them out during the conversation — so no
+`contacts.readonly` scope is needed. **Two API quirks worth knowing:** `total` ignores
+the date filter, so paginate until a short page rather than trusting it; and there is no
+sort parameter, results come back newest first.
+
+**Setup** (already done for `bitesites-org`):
+
+```bash
+firebase functions:secrets:set GHL_API_TOKEN --data-file ~/.ghl-token
+npm run deploy:functions
+```
+
+The token is a location-scoped Private Integration token with Voice AI **read** access
+only. `GHL_LOCATION_ID` is a plain constant in the code, not a secret — it is visible in
+the GoHighLevel URL bar.
+
+**One lead per person, not per call.** Leads are keyed on GoHighLevel's `contactId`, so
+a prospect who rings four times is one lead carrying four calls, not four rows to work
+through. A repeat call fills in blanks (an email they only gave the second time) but
+never touches `status` or `createdAt` — triage belongs to whoever is working the lead,
+and `createdAt` tracks the *first* call so the list sorts by when someone actually
+turned up rather than when the import ran.
+
+**Idempotency.** The poller re-scans the same window every five minutes, so each call
+document records the lead it was counted against; a call that has already been folded in
+is never counted twice. Without that, `callCount` would climb forever.
+
+**What gets skipped:** calls under 10 seconds, and calls with neither an email nor a
+caller id — a conversation nobody left contact details on is not a lead. Website-demo
+calls (`trialCall`) *are* imported but tagged `voice.demo`, so they show a "demo" chip in
+the dashboard and can be told apart from someone who dialled the number.
+
+**Backfill** over any range — always dry-run first:
+
+```bash
+SECRET=$(firebase functions:secrets:access VOICE_WEBHOOK_SECRET)
+URL=https://us-central1-bitesites-org.cloudfunctions.net/importVoiceHistory
+curl -X POST -H "x-webhook-secret: $SECRET" \
+  "$URL?startDate=2026-01-01&endDate=2026-12-31&includeDemo=false&dryRun=true"
+```
+
+`npm run test:import` exercises the whole pipeline against the **live** GHL API (read
+only) writing into the emulator, so it catches drift in the real payload shape. It skips
+itself if `~/.ghl-token` is absent.
+
 ## Commands
 
 ```bash
 npm run dev            # Vite dev server
 npm run build          # production build to dist/
-npm run test:rules     # 45 security-rule assertions against the emulator
+npm run test:rules     # security-rule assertions against the emulator
+npm run test:voice     # recordVoiceCall against the emulator
+npm run test:import    # the GHL call-log import, live API → emulator
 npm run role -- <email> <admin|client|none>   # grant or revoke portal access
 npm run deploy         # build + deploy hosting and Firestore rules/indexes
 npm run deploy:rules   # rules and indexes only
 npm run deploy:hosting # site only
-npm run deploy:functions # the GoHighLevel lead sync
+npm run deploy:functions # the GoHighLevel lead sync and the Byte call webhook
 npm run emulators      # local Firestore/Auth emulators
 ```
 

@@ -9,7 +9,6 @@
 // which is useful for pointing a staging build at a separate project.
 
 import { initializeApp } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 import { initializeAppCheck, ReCaptchaEnterpriseProvider } from 'firebase/app-check';
 
@@ -25,8 +24,11 @@ const firebaseConfig = {
 };
 
 export const app = initializeApp(firebaseConfig);
-export const auth = getAuth(app);
 export const db = getFirestore(app);
+
+// firebase/auth is not exported from here on purpose: only the admin dashboard
+// signs anyone in, and re-exporting it would drag the whole auth SDK into any
+// bundle that only wanted `db`. See ./auth.js, which owns the instance.
 
 // App Check is what actually stops a script from hammering the public lead form.
 // The rules validate the *shape* of a lead; App Check attests that the request

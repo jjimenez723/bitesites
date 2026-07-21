@@ -81,6 +81,12 @@ const smoothStep = (start, end, value) => {
   return progress * progress * (3 - 2 * progress);
 };
 
+// Cached: this is read inside a non-passive wheel handler, and parsing the query
+// string on every wheel event is latency the compositor waits on.
+let reducedMotionQuery = null;
+const prefersReducedMotion = () =>
+  (reducedMotionQuery ||= window.matchMedia('(prefers-reduced-motion: reduce)')).matches;
+
 const PORTFOLIO_SCRUB_DISTANCE = 2200;
 const PORTFOLIO_VIDEO_START = .12;
 const PORTFOLIO_VIDEO_END = .86;
@@ -95,24 +101,37 @@ function MorphingLogo({ location = 'header', onClick }) {
   const logoRef = useRef(null);
 
   useEffect(() => {
+    const node = logoRef.current;
+    if (!node) return undefined;
+
+    const isHeader = location === 'header';
+    // Stable for the life of the component — looking them up per scroll frame
+    // was a DOM walk and a media-query evaluation for nothing.
+    const container = node.closest(isHeader ? '.site-header' : '.site-footer');
+    const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+
     let frame = 0;
+    let lastProgress = -1;
+    let lastCompact = null;
+    // The footer morph needs the footer's own geometry, which costs two rect
+    // reads. Skip them entirely while the footer is nowhere near the viewport.
+    let inRange = isHeader;
+
     const updateLogo = () => {
       frame = 0;
-      const node = logoRef.current;
-      if (!node) return;
+      if (!inRange) return;
 
-      const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      const reducedMotion = motionQuery.matches;
       const scrollTravel = Math.max(260, window.innerHeight * .34);
       // Matches the CSS breakpoint where the wings collapse into the burger menu.
       const compact = window.innerWidth <= 900;
       const startSize = compact ? 124 : 158;
       const endSize = compact ? 54 : 62;
       let rawProgress;
-      if (location === 'header') {
+      if (isHeader) {
         rawProgress = Math.min(1, Math.max(0, window.scrollY / scrollTravel));
       } else {
-        const footer = node.closest('.site-footer');
-        const footerRect = footer?.getBoundingClientRect();
+        const footerRect = container?.getBoundingClientRect();
         const footerTop = footerRect?.top ?? window.innerHeight;
         const footerHeight = footerRect?.height ?? scrollTravel;
         const logoRect = node.getBoundingClientRect();
@@ -128,12 +147,21 @@ function MorphingLogo({ location = 'header', onClick }) {
         rawProgress = 1 - Math.min(1, Math.max(0, (window.innerHeight - footerTop - enter) / travel));
       }
 
-      if (reducedMotion) rawProgress = location === 'header' ? (window.scrollY > 12 ? 1 : 0) : (rawProgress > .5 ? 1 : 0);
+      if (reducedMotion) rawProgress = isHeader ? (window.scrollY > 12 ? 1 : 0) : (rawProgress > .5 ? 1 : 0);
       const progress = smoothStep(0, 1, rawProgress);
+
+      // --logo-size and --nav-height feed layout properties, so writing them
+      // reflows everything below the header. Past the fold the morph is pinned
+      // at 1 and nothing actually changes, so bail out instead of re-dirtying
+      // layout on every remaining scroll frame.
+      const quantised = Math.round(progress * 1e3) / 1e3;
+      if (quantised === lastProgress && compact === lastCompact) return;
+      lastProgress = quantised;
+      lastCompact = compact;
+
       const size = startSize + (endSize - startSize) * progress;
       const firstMorph = smoothStep(.04, .5, progress);
       const secondMorph = smoothStep(.5, .96, progress);
-      const container = node.closest(location === 'header' ? '.site-header' : '.site-footer');
 
       node.style.setProperty('--logo-size', `${size}px`);
       node.style.setProperty('--logo-full-opacity', String(1 - firstMorph));
@@ -142,7 +170,7 @@ function MorphingLogo({ location = 'header', onClick }) {
       node.style.setProperty('--logo-full-scale', String(1 - .04 * firstMorph));
       node.style.setProperty('--logo-wordmark-scale', String(.96 + .04 * firstMorph - .04 * secondMorph));
       node.style.setProperty('--logo-mark-scale', String(.96 + .04 * secondMorph));
-      if (location === 'header') {
+      if (isHeader) {
         container?.style.setProperty('--logo-content-opacity', String(smoothStep(.2, .56, progress)));
         container?.style.setProperty('--nav-height', `${64 + (startSize + 18 - 64) * (1 - progress)}px`);
         container?.classList.toggle('logo-expanded', progress < .18);
@@ -155,12 +183,26 @@ function MorphingLogo({ location = 'header', onClick }) {
       if (!frame) frame = window.requestAnimationFrame(updateLogo);
     };
 
+    // The footer logo only has work to do once the footer is within about a
+    // viewport of the fold; before that its two rect reads are pure waste.
+    let rangeObserver = null;
+    if (!isHeader && container) {
+      rangeObserver = new IntersectionObserver(([entry]) => {
+        inRange = entry.isIntersecting;
+        if (inRange) queueUpdate();
+      }, { rootMargin: '100% 0px' });
+      rangeObserver.observe(container);
+    }
+
     updateLogo();
     window.addEventListener('scroll', queueUpdate, { passive: true });
     window.addEventListener('resize', queueUpdate);
+    motionQuery.addEventListener('change', queueUpdate);
     return () => {
+      rangeObserver?.disconnect();
       window.removeEventListener('scroll', queueUpdate);
       window.removeEventListener('resize', queueUpdate);
+      motionQuery.removeEventListener('change', queueUpdate);
       if (frame) window.cancelAnimationFrame(frame);
     };
   }, [location]);
@@ -374,17 +416,23 @@ function App() {
   const [receptionistNudge, setReceptionistNudge] = useState(false);
   const [chatOrigin, setChatOrigin] = useState(null);
   const [receptionistInitialAnswer, setReceptionistInitialAnswer] = useState(null);
-  const [portfolioProgress, setPortfolioProgress] = useState(0);
-  const [portfolioVideoDuration, setPortfolioVideoDuration] = useState(0);
-  const [portfolioVideoTime, setPortfolioVideoTime] = useState(0);
+  // The scrub used to hold progress and playhead in state, so every wheel event
+  // re-rendered this whole component — the entire marketing page — and did it up
+  // to 20 times a second. The continuous values now live in refs and are written
+  // straight onto the section as CSS custom properties; only the handful of
+  // thresholds that genuinely change the markup stay in React state.
+  const [portfolioPhase, setPortfolioPhase] = useState({
+    demo: false, story: false, complete: false, hideIntro: false, storyFocusable: false
+  });
   const portfolioTrack = useRef(null);
   const portfolioSection = useRef(null);
   const portfolioVideo = useRef(null);
   const portfolioProgressRef = useRef(0);
   const portfolioVideoDurationRef = useRef(0);
+  const portfolioVideoTimeRef = useRef(0);
   const portfolioTargetTimeRef = useRef(0);
   const portfolioScrubFrameRef = useRef(0);
-  const portfolioLastTimeUpdateRef = useRef(0);
+  const portfolioVisualFrameRef = useRef(0);
   const portfolioExitReadyRef = useRef(false);
   const portfolioExitTimerRef = useRef(0);
 
@@ -416,6 +464,7 @@ function App() {
 
   useEffect(() => () => {
     if (portfolioScrubFrameRef.current) window.cancelAnimationFrame(portfolioScrubFrameRef.current);
+    if (portfolioVisualFrameRef.current) window.cancelAnimationFrame(portfolioVisualFrameRef.current);
     if (portfolioExitTimerRef.current) window.clearTimeout(portfolioExitTimerRef.current);
   }, []);
 
@@ -423,11 +472,9 @@ function App() {
     portfolioProgressRef.current = 0;
     portfolioTargetTimeRef.current = 0;
     portfolioVideoDurationRef.current = 0;
-    portfolioLastTimeUpdateRef.current = 0;
+    portfolioVideoTimeRef.current = 0;
     portfolioExitReadyRef.current = false;
-    setPortfolioProgress(0);
-    setPortfolioVideoDuration(0);
-    setPortfolioVideoTime(0);
+    applyPortfolioVisuals();
     if (portfolioScrubFrameRef.current) {
       window.cancelAnimationFrame(portfolioScrubFrameRef.current);
       portfolioScrubFrameRef.current = 0;
@@ -481,31 +528,100 @@ function App() {
     const closest = cards.reduce((best, card, index) => Math.abs(card.offsetLeft + card.offsetWidth / 2 - center) < Math.abs(cards[best].offsetLeft + cards[best].offsetWidth / 2 - center) ? index : best, 0);
     setActiveProject(closest);
   };
+  // Writes the scrub's continuous values straight onto the section. Everything
+  // here is a CSS custom property the stylesheet already reads, so no React
+  // render is involved; only the threshold flags below can trigger one.
+  const applyPortfolioVisuals = () => {
+    const section = portfolioSection.current;
+    if (!section) return;
+
+    const progress = portfolioProgressRef.current;
+    const duration = portfolioVideoDurationRef.current;
+    const videoTime = portfolioVideoTimeRef.current;
+
+    const expand = smoothStep(.01, .15, progress);
+    const carousel = 1 - smoothStep(.025, .13, progress);
+    const storyStart = Math.max(0, duration - PORTFOLIO_DESCRIPTION_LEAD);
+    const story = duration ? smoothStep(storyStart, Math.min(duration, storyStart + .7), videoTime) : 0;
+    const exit = 0;
+
+    const set = (name, value) => section.style.setProperty(name, String(value));
+    set('--portfolio-expand', expand);
+    set('--portfolio-carousel', carousel);
+    set('--portfolio-story', story);
+    set('--portfolio-exit', exit);
+    set('--portfolio-clip-y', `${27 * (1 - expand)}%`);
+    set('--portfolio-clip-x', `${18 * (1 - expand)}%`);
+    set('--portfolio-radius', `${28 * (1 - expand)}px`);
+    set('--portfolio-stage-opacity', 1 - exit);
+    set('--portfolio-stage-scale', 1 - .08 * exit);
+    set('--portfolio-stage-radius', `${30 * exit}px`);
+    set('--portfolio-demo-opacity', smoothStep(.035, .16, progress) * (1 - exit));
+    set('--portfolio-story-opacity', story * (1 - exit));
+    set('--portfolio-story-y', `${42 * (1 - story)}px`);
+    set('--portfolio-playback-opacity', Math.max(0, expand - story) * (1 - exit));
+    set('--portfolio-intro-y', `${-18 * (1 - carousel)}px`);
+    set('--portfolio-rail-y', `${-24 * (1 - carousel)}px`);
+
+    // Returning the existing object makes React bail out of the re-render, so
+    // scrubbing only costs one when a threshold is actually crossed.
+    const next = {
+      demo: progress > .08,
+      story: story > .02,
+      complete: progress >= PORTFOLIO_VIDEO_END,
+      hideIntro: progress > .25,
+      storyFocusable: story > .5
+    };
+    setPortfolioPhase(current =>
+      current.demo === next.demo
+      && current.story === next.story
+      && current.complete === next.complete
+      && current.hideIntro === next.hideIntro
+      && current.storyFocusable === next.storyFocusable
+        ? current
+        : next);
+  };
+  const queuePortfolioVisuals = () => {
+    if (portfolioVisualFrameRef.current) return;
+    portfolioVisualFrameRef.current = window.requestAnimationFrame(() => {
+      portfolioVisualFrameRef.current = 0;
+      applyPortfolioVisuals();
+    });
+  };
   const scrubPortfolioVideoTo = targetTime => {
     portfolioTargetTimeRef.current = targetTime;
     if (portfolioScrubFrameRef.current) return;
 
-    const tick = timestamp => {
+    const tick = () => {
       const video = portfolioVideo.current;
       if (!video) {
         portfolioScrubFrameRef.current = 0;
         return;
       }
 
-      video.pause();
+      // Overwriting currentTime while a seek is still in flight throws away the
+      // decode the browser had already started and makes it restart from the
+      // nearest keyframe. Waiting for the pending one to land is what turns this
+      // from a stall into a scrub.
+      if (video.seeking) {
+        portfolioScrubFrameRef.current = window.requestAnimationFrame(tick);
+        return;
+      }
+
+      if (!video.paused) video.pause();
       const distance = portfolioTargetTimeRef.current - video.currentTime;
-      if (Math.abs(distance) < .025) {
-        video.currentTime = portfolioTargetTimeRef.current;
-        setPortfolioVideoTime(video.currentTime);
+      // Below roughly one frame there is no different picture to seek to, so
+      // chasing the remainder is decode work nobody can see.
+      if (Math.abs(distance) < .04) {
+        portfolioVideoTimeRef.current = video.currentTime;
+        applyPortfolioVisuals();
         portfolioScrubFrameRef.current = 0;
         return;
       }
 
       video.currentTime += distance * .24;
-      if (timestamp - portfolioLastTimeUpdateRef.current >= 50) {
-        portfolioLastTimeUpdateRef.current = timestamp;
-        setPortfolioVideoTime(video.currentTime);
-      }
+      portfolioVideoTimeRef.current = video.currentTime;
+      applyPortfolioVisuals();
       portfolioScrubFrameRef.current = window.requestAnimationFrame(tick);
     };
 
@@ -525,8 +641,8 @@ function App() {
     video.currentTime = 0;
     portfolioVideoDurationRef.current = duration;
     portfolioTargetTimeRef.current = 0;
-    setPortfolioVideoDuration(duration);
-    setPortfolioVideoTime(0);
+    portfolioVideoTimeRef.current = 0;
+    applyPortfolioVisuals();
     updatePortfolioScrubTarget(portfolioProgressRef.current);
   };
   const waitForFreshPortfolioGesture = () => {
@@ -549,14 +665,13 @@ function App() {
     }
     portfolioProgressRef.current = 0;
     portfolioTargetTimeRef.current = 0;
-    portfolioLastTimeUpdateRef.current = 0;
+    portfolioVideoTimeRef.current = 0;
     portfolioExitReadyRef.current = false;
     if (portfolioExitTimerRef.current) {
       window.clearTimeout(portfolioExitTimerRef.current);
       portfolioExitTimerRef.current = 0;
     }
-    setPortfolioProgress(0);
-    setPortfolioVideoTime(0);
+    applyPortfolioVisuals();
     if (returnFocus) window.requestAnimationFrame(() => portfolioTrack.current?.focus({ preventScroll: true }));
   };
   const handlePortfolioInteractionWheel = event => {
@@ -581,7 +696,8 @@ function App() {
         portfolioScrubFrameRef.current = 0;
         const currentTime = portfolioVideo.current?.currentTime ?? 0;
         portfolioTargetTimeRef.current = currentTime;
-        setPortfolioVideoTime(currentTime);
+        portfolioVideoTimeRef.current = currentTime;
+        queuePortfolioVisuals();
       }
       return;
     }
@@ -591,13 +707,13 @@ function App() {
       waitForFreshPortfolioGesture();
       return;
     }
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    if (prefersReducedMotion()) return;
 
     event.preventDefault();
     const deltaScale = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? window.innerHeight : 1;
     const nextProgress = Math.min(PORTFOLIO_VIDEO_END, portfolioProgressRef.current + (event.deltaY * deltaScale) / PORTFOLIO_SCRUB_DISTANCE);
     portfolioProgressRef.current = nextProgress;
-    setPortfolioProgress(nextProgress);
+    queuePortfolioVisuals();
     updatePortfolioScrubTarget(nextProgress);
     if (nextProgress >= PORTFOLIO_VIDEO_END) waitForFreshPortfolioGesture();
   };
@@ -607,6 +723,43 @@ function App() {
     section.addEventListener('wheel', handlePortfolioInteractionWheel, { passive: false });
     return () => section.removeEventListener('wheel', handlePortfolioInteractionWheel);
   }, [activeProject]);
+
+  // The rail's clips used to carry `autoPlay`, so three decoders ran from page
+  // load onwards — off screen, in a background tab, and straight through the
+  // scrub, which is the one moment the decoder is needed elsewhere.
+  useEffect(() => {
+    const section = portfolioSection.current;
+    const track = portfolioTrack.current;
+    if (!section || !track) return undefined;
+
+    let near = false;
+    const sync = () => {
+      const play = near && !portfolioPhase.demo && !document.hidden && !prefersReducedMotion();
+      for (const video of track.querySelectorAll('video')) {
+        // Autoplay policy only permits play() on a muted element. React assigns
+        // `muted` as a property rather than an attribute, so assert it here
+        // rather than trust that it survived the render.
+        video.muted = true;
+        if (play) video.play().catch(() => {});
+        else video.pause();
+      }
+    };
+    const observer = new IntersectionObserver(([entry]) => {
+      near = entry.isIntersecting;
+      // Only worth fetching the demo clip in full once the visitor is close
+      // enough to plausibly scrub it.
+      const demo = portfolioVideo.current;
+      if (near && demo && demo.preload !== 'auto') demo.preload = 'auto';
+      sync();
+    }, { rootMargin: '25% 0px' });
+
+    observer.observe(section);
+    document.addEventListener('visibilitychange', sync);
+    return () => {
+      observer.disconnect();
+      document.removeEventListener('visibilitychange', sync);
+    };
+  }, [portfolioPhase.demo]);
   const submit = async event => {
     event.preventDefault();
     const form = event.currentTarget;
@@ -618,13 +771,6 @@ function App() {
     setStatus({ text: 'Sending…', kind: '' });
     try { await submitLead(payload, 'intake_form'); form.reset(); trackEvent('form_submit', { label: 'Start your project' }); setStatus({ text: 'Thanks — your project request has been received. We’ll be in touch soon.', kind: 'success' }); } catch (error) { setStatus({ text: error.message || 'Unable to submit the form. Please try again.', kind: 'error' }); }
   };
-
-  const portfolioExpand = smoothStep(.01, .15, portfolioProgress);
-  const portfolioCarousel = 1 - smoothStep(.025, .13, portfolioProgress);
-  const portfolioStoryStart = Math.max(0, portfolioVideoDuration - PORTFOLIO_DESCRIPTION_LEAD);
-  const portfolioStory = portfolioVideoDuration ? smoothStep(portfolioStoryStart, Math.min(portfolioVideoDuration, portfolioStoryStart + .7), portfolioVideoTime) : 0;
-  const portfolioComplete = portfolioProgress >= PORTFOLIO_VIDEO_END;
-  const portfolioExit = 0;
 
   return <>
     <header className="site-header"><nav><div className="nav-wing nav-wing-left">{navigationItems.slice(0, 4).map(([label, href]) => <a key={label} href={href}>{label}</a>)}</div><MorphingLogo onClick={closeMenu} /><div className="nav-wing nav-wing-right">{navigationItems.slice(4).map(([label, href]) => <a key={label} href={href}>{label}</a>)}<Button href="#start" variant="ai">Start Your Project</Button></div><button className="menu-toggle" onClick={() => setMenuOpen(!menuOpen)} aria-label={menuOpen ? 'Close menu' : 'Open menu'} aria-expanded={menuOpen} aria-controls="mobile-nav"><span className="menu-toggle-bars" aria-hidden="true"><i /><i /><i /></span></button></nav></header>
@@ -703,37 +849,22 @@ function App() {
       </section>
       <section className="pad" id="ai"><div className="wrap"><SectionHead label="Our focus" title="AI that actually runs your business." gradient>This is where we spend most of our time now — designing AI systems that answer the phone, qualify leads, and handle repetitive work, so your team doesn’t have to.</SectionHead><div className="ai-grid">{aiSolutions.map(([icon, title, text]) => <article className="ai-card reveal" key={title}><div className="ai-icon">{icon}</div><h3>{title}</h3><p>{text}</p></article>)}</div></div></section>
       <section className="pad alt" id="services"><div className="wrap"><SectionHead label="What we do" title="Digital services built around growth, not filler.">Three connected service lines that help businesses build a stronger presence, reach the right people, and reduce the manual work holding growth back.</SectionHead><div className="services-grid">{services.map((service, index) => <article className={`service-card reveal ${service.key} ${index === 0 ? 'featured' : ''}`} key={service.key}>{service.badge && <span className="service-badge">{service.badge}</span>}<div className="service-icon">{['✦','□','↻'][index]}</div><h3>{service.title}</h3><p className="desc">{service.text}</p><ul>{service.bullets.map(item => <li key={item}>{item}</li>)}</ul><button className="text-link" onClick={() => setModal(service.key)}>Explore {service.title} →</button></article>)}</div><div className="segments reveal">{[['Small business','Build a credible online presence, stay visible, and reduce repetitive admin work without adding complexity.'],['Medium business','Connect campaigns, service lines, and internal workflows as growing volume creates more moving parts.'],['Large business','Coordinate more stakeholders and more complex processes without sacrificing speed.']].map(([title, text]) => <div className="segment" key={title}><div className="tag">{title}</div><p>{text}</p></div>)}</div></div></section>
+      {/* No inline style object: the custom properties below it are written
+          imperatively by applyPortfolioVisuals so that scrubbing does not
+          re-render the page. Adding a style prop back here would fight it. */}
       <section
-        className={`portfolio-section ${portfolioProgress > .08 ? 'portfolio-demo-active' : ''} ${portfolioStory > .02 ? 'portfolio-story-visible' : ''}`}
+        className={`portfolio-section ${portfolioPhase.demo ? 'portfolio-demo-active' : ''} ${portfolioPhase.story ? 'portfolio-story-visible' : ''}`}
         id="portfolio"
         ref={portfolioSection}
-        style={{
-          '--portfolio-expand': portfolioExpand,
-          '--portfolio-carousel': portfolioCarousel,
-          '--portfolio-story': portfolioStory,
-          '--portfolio-exit': portfolioExit,
-          '--portfolio-clip-y': `${27 * (1 - portfolioExpand)}%`,
-          '--portfolio-clip-x': `${18 * (1 - portfolioExpand)}%`,
-          '--portfolio-radius': `${28 * (1 - portfolioExpand)}px`,
-          '--portfolio-stage-opacity': 1 - portfolioExit,
-          '--portfolio-stage-scale': 1 - .08 * portfolioExit,
-          '--portfolio-stage-radius': `${30 * portfolioExit}px`,
-          '--portfolio-demo-opacity': smoothStep(.035, .16, portfolioProgress) * (1 - portfolioExit),
-          '--portfolio-story-opacity': portfolioStory * (1 - portfolioExit),
-          '--portfolio-story-y': `${42 * (1 - portfolioStory)}px`,
-          '--portfolio-playback-opacity': Math.max(0, portfolioExpand - portfolioStory) * (1 - portfolioExit),
-          '--portfolio-intro-y': `${-18 * (1 - portfolioCarousel)}px`,
-          '--portfolio-rail-y': `${-24 * (1 - portfolioCarousel)}px`
-        }}
       >
         <div className="portfolio-stage">
-          <div className="portfolio-intro wrap" aria-hidden={portfolioProgress > .25}>
+          <div className="portfolio-intro wrap" aria-hidden={portfolioPhase.hideIntro}>
             <Eyebrow>Featured work</Eyebrow>
             <h2>Work worth stepping into.</h2>
             <p>Scroll sideways to choose a project. Scroll down over the selected demo to scrub through it.</p>
           </div>
 
-          <div className="portfolio-rail" aria-hidden={portfolioProgress > .25}>
+          <div className="portfolio-rail" aria-hidden={portfolioPhase.hideIntro}>
             <div
               className="portfolio-track"
               ref={portfolioTrack}
@@ -746,7 +877,9 @@ function App() {
               aria-label="Featured projects. Scroll left or right to browse; scroll down over the selected project to scrub its demo."
             >
               {projects.map((project, index) => <article className={`portfolio-project ${activeProject === index ? 'active' : ''}`} key={project.title}>
-                <video autoPlay muted loop playsInline preload="metadata" aria-hidden="true"><source src={project.video} type="video/mp4" /></video>
+                {/* Autoplay is driven by the rail effect, not the attribute: three
+                    looping decoders running behind a scrub is what made it stutter. */}
+                <video muted loop playsInline preload="metadata" aria-hidden="true"><source src={project.video} type="video/mp4" /></video>
                 <div className="portfolio-project-shade" />
                 <span className="project-number">0{index + 1}</span>
                 <div className="portfolio-project-title"><span>Selected project</span><h3>{project.title}</h3></div>
@@ -755,14 +888,17 @@ function App() {
           </div>
 
           <div className="portfolio-demo">
-            <video key={projects[activeProject].video} ref={portfolioVideo} muted playsInline preload="auto" onLoadedMetadata={handlePortfolioMetadata} aria-label={`${projects[activeProject].title} project demo`} src={projects[activeProject].video} />
+            {/* preload starts at metadata — enough for the scrub maths — and the
+                rail effect upgrades it to auto once the section nears the fold.
+                At preload="auto" this pulled the full clip on every page load. */}
+            <video key={projects[activeProject].video} ref={portfolioVideo} muted playsInline preload="metadata" onLoadedMetadata={handlePortfolioMetadata} aria-label={`${projects[activeProject].title} project demo`} src={projects[activeProject].video} />
             <div className="portfolio-demo-vignette" />
             <div className="portfolio-playback" aria-hidden="true"><span /> Scroll to scrub</div>
-            <button className={`portfolio-back ${portfolioComplete ? 'visible' : ''}`} type="button" onClick={() => resetPortfolioDemo(true)} tabIndex={portfolioComplete ? 0 : -1} aria-hidden={!portfolioComplete}>
+            <button className={`portfolio-back ${portfolioPhase.complete ? 'visible' : ''}`} type="button" onClick={() => resetPortfolioDemo(true)} tabIndex={portfolioPhase.complete ? 0 : -1} aria-hidden={!portfolioPhase.complete}>
               <span aria-hidden="true">←</span>
               <span>All projects<small>or scroll sideways</small></span>
             </button>
-            <article className="portfolio-story" aria-hidden={portfolioStory < .02}>
+            <article className="portfolio-story" aria-hidden={!portfolioPhase.story}>
               <div className="portfolio-story-heading">
                 <span>0{activeProject + 1} / 0{projects.length}</span>
                 <h3>{projects[activeProject].title}</h3>
@@ -771,12 +907,12 @@ function App() {
                 <p>{projects[activeProject].text}</p>
                 <ul>{projects[activeProject].bullets.map(item => <li key={item}>{item}</li>)}</ul>
                 <div className="stack-pills">{projects[activeProject].stack.map(item => <span className="pill" key={item}>{item}</span>)}</div>
-                <a href={projects[activeProject].url} target="_blank" rel="noreferrer" tabIndex={portfolioStory > .5 ? 0 : -1}>Visit the live project <span aria-hidden="true">↗</span></a>
+                <a href={projects[activeProject].url} target="_blank" rel="noreferrer" tabIndex={portfolioPhase.storyFocusable ? 0 : -1}>Visit the live project <span aria-hidden="true">↗</span></a>
               </div>
             </article>
           </div>
 
-          <div className="portfolio-footer wrap" aria-hidden={portfolioProgress > .25}>
+          <div className="portfolio-footer wrap" aria-hidden={portfolioPhase.hideIntro}>
             <div className="portfolio-count"><span>0{activeProject + 1}</span><i /><span>0{projects.length}</span></div>
             <div className="portfolio-dots" role="tablist" aria-label="Choose project">{projects.map((project, index) => <button type="button" key={project.title} className={activeProject === index ? 'active' : ''} onClick={() => showProject(index)} aria-label={`View ${project.title}`} aria-selected={activeProject === index} role="tab" />)}</div>
             <p><span className="gesture-sideways">↔ Browse</span><span>↓ Scrub demo</span></p>

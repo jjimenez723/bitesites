@@ -13,10 +13,7 @@
 // Every write is best-effort: a logging failure must never break the visitor's
 // conversation, so nothing here throws.
 
-import {
-  addDoc, collection, doc, serverTimestamp, setDoc, updateDoc
-} from 'firebase/firestore';
-import { db } from './firebase';
+import { firestore } from './firestore';
 import { sessionId } from './analytics';
 
 const clean = (value, maxLen) =>
@@ -29,19 +26,25 @@ const context = () => ({
   userAgent: clean(navigator?.userAgent, 400)
 });
 
-const quiet = (label, promise) =>
-  promise.catch(error => { console.warn(`[conversations] ${label} failed`, error); return null; });
+// Every writer below reaches Firestore through the lazy loader, so each one
+// takes the SDK namespace as its first argument. `quiet` does that resolution
+// too, keeping the "a logging failure must never break the conversation"
+// contract over the load as well as the write.
+const quiet = (label, write) =>
+  firestore()
+    .then(({ sdk, db }) => write(sdk, db))
+    .catch(error => { console.warn(`[conversations] ${label} failed`, error); return null; });
 
 // --------------------------------------------------------------- Bit (chat)
 
 /** Opens a transcript document. Returns its id, or '' if logging is unavailable. */
 export async function startChat() {
-  const reference = await quiet('startChat', addDoc(collection(db, 'chats'), {
+  const reference = await quiet('startChat', (sdk, db) => sdk.addDoc(sdk.collection(db, 'chats'), {
     agent: 'bit',
     channel: 'chat',
     status: 'open',
     messageCount: 0,
-    startedAt: serverTimestamp(),
+    startedAt: sdk.serverTimestamp(),
     ...context()
   }));
   return reference?.id || '';
@@ -55,51 +58,53 @@ export async function startChat() {
 export function logChatMessage(chatId, { role, text, kind = 'text', questionKey = '' }) {
   if (!chatId) return Promise.resolve(null);
 
-  const message = {
-    role: role === 'visitor' ? 'visitor' : 'bit',
-    kind: ['text', 'choice', 'prompt', 'system'].includes(kind) ? kind : 'text',
-    text: clean(text, 2000),
-    at: serverTimestamp()
-  };
-  if (questionKey) message.questionKey = clean(questionKey, 60);
-
-  return quiet('logChatMessage', addDoc(collection(db, 'chats', chatId, 'messages'), message));
+  return quiet('logChatMessage', (sdk, db) => {
+    const message = {
+      role: role === 'visitor' ? 'visitor' : 'bit',
+      kind: ['text', 'choice', 'prompt', 'system'].includes(kind) ? kind : 'text',
+      text: clean(text, 2000),
+      at: sdk.serverTimestamp()
+    };
+    if (questionKey) message.questionKey = clean(questionKey, 60);
+    return sdk.addDoc(sdk.collection(db, 'chats', chatId, 'messages'), message);
+  });
 }
 
 /** Closes the transcript out with how it ended and what it produced. */
 export function finishChat(chatId, { outcome, leadId = '', answers = null, messageCount = 0 }) {
   if (!chatId) return Promise.resolve(null);
 
-  const update = {
-    status: ['converted', 'abandoned', 'failed'].includes(outcome) ? outcome : 'abandoned',
-    endedAt: serverTimestamp(),
-    messageCount
-  };
-  if (leadId) update.leadId = clean(leadId, 60);
-  // The structured answers are what makes a transcript scannable at a glance —
-  // the dashboard shows these as chips above the message list.
-  if (answers) {
-    update.answers = Object.fromEntries(
-      Object.entries(answers)
-        .filter(([, value]) => typeof value === 'string' && value)
-        .slice(0, 8)
-        .map(([key, value]) => [clean(key, 40), clean(value, 500)])
-    );
-  }
-
-  return quiet('finishChat', updateDoc(doc(db, 'chats', chatId), update));
+  return quiet('finishChat', (sdk, db) => {
+    const update = {
+      status: ['converted', 'abandoned', 'failed'].includes(outcome) ? outcome : 'abandoned',
+      endedAt: sdk.serverTimestamp(),
+      messageCount
+    };
+    if (leadId) update.leadId = clean(leadId, 60);
+    // The structured answers are what makes a transcript scannable at a glance —
+    // the dashboard shows these as chips above the message list.
+    if (answers) {
+      update.answers = Object.fromEntries(
+        Object.entries(answers)
+          .filter(([, value]) => typeof value === 'string' && value)
+          .slice(0, 8)
+          .map(([key, value]) => [clean(key, 40), clean(value, 500)])
+      );
+    }
+    return sdk.updateDoc(sdk.doc(db, 'chats', chatId), update);
+  });
 }
 
 // -------------------------------------------------------------- Byte (voice)
 
 /** Opens a call record when the visitor asks Byte to start talking. */
 export async function startCall() {
-  const reference = await quiet('startCall', addDoc(collection(db, 'calls'), {
+  const reference = await quiet('startCall', (sdk, db) => sdk.addDoc(sdk.collection(db, 'calls'), {
     agent: 'byte',
     channel: 'voice',
     status: 'open',
     provider: 'gohighlevel',
-    startedAt: serverTimestamp(),
+    startedAt: sdk.serverTimestamp(),
     ...context()
   }));
   return reference?.id || '';
@@ -111,21 +116,21 @@ export async function startCall() {
  */
 export function logCallState(callId, state) {
   if (!callId) return Promise.resolve(null);
-  return quiet('logCallState', addDoc(collection(db, 'calls', callId, 'turns'), {
+  return quiet('logCallState', (sdk, db) => sdk.addDoc(sdk.collection(db, 'calls', callId, 'turns'), {
     kind: 'state',
     state: clean(state, 40),
-    at: serverTimestamp()
+    at: sdk.serverTimestamp()
   }));
 }
 
 /** Records a line of transcript scraped from the widget, if it renders one. */
 export function logCallTranscript(callId, { role, text }) {
   if (!callId || !text) return Promise.resolve(null);
-  return quiet('logCallTranscript', addDoc(collection(db, 'calls', callId, 'turns'), {
+  return quiet('logCallTranscript', (sdk, db) => sdk.addDoc(sdk.collection(db, 'calls', callId, 'turns'), {
     kind: 'transcript',
     role: role === 'visitor' ? 'visitor' : 'byte',
     text: clean(text, 2000),
-    at: serverTimestamp()
+    at: sdk.serverTimestamp()
   }));
 }
 
@@ -133,12 +138,13 @@ export function logCallTranscript(callId, { role, text }) {
 export function finishCall(callId, { outcome, durationSec = 0, error = '' }) {
   if (!callId) return Promise.resolve(null);
 
-  const update = {
-    status: ['completed', 'abandoned', 'failed', 'blocked'].includes(outcome) ? outcome : 'abandoned',
-    endedAt: serverTimestamp(),
-    durationSec: Math.max(0, Math.round(durationSec))
-  };
-  if (error) update.error = clean(error, 300);
-
-  return quiet('finishCall', setDoc(doc(db, 'calls', callId), update, { merge: true }));
+  return quiet('finishCall', (sdk, db) => {
+    const update = {
+      status: ['completed', 'abandoned', 'failed', 'blocked'].includes(outcome) ? outcome : 'abandoned',
+      endedAt: sdk.serverTimestamp(),
+      durationSec: Math.max(0, Math.round(durationSec))
+    };
+    if (error) update.error = clean(error, 300);
+    return sdk.setDoc(sdk.doc(db, 'calls', callId), update, { merge: true });
+  });
 }

@@ -1,4 +1,5 @@
-// Every enquiry from the intake form and the Bit chat, with triage.
+// Every enquiry, whichever way it arrived — the intake form, Bit's chat, or a
+// call with Byte — with triage.
 //
 // Status is the only field this screen writes. firestore.rules holds createdAt
 // and email immutable on update, so triage can never quietly rewrite who a lead
@@ -7,8 +8,20 @@
 import React, { useMemo, useState } from 'react';
 import { useLeads, setLeadStatus, toDate } from './data';
 import { Panel, DetailRows, Pill } from './Panel';
+import Transcript from './Transcript';
 
 const STATUSES = ['new', 'contacted', 'qualified', 'won', 'lost'];
+
+// Byte's leads are written server-side by the recordVoiceCall webhook, so a
+// source this screen does not recognise is a real possibility — fall back to
+// showing the raw value rather than silently filing it under "Intake form".
+const SOURCE_LABELS = {
+  intake_form: 'Intake form',
+  bit_chat: 'Bit chat',
+  byte_voice: 'Byte call'
+};
+
+const sourceLabel = lead => SOURCE_LABELS[lead.source] || lead.source || 'Unknown';
 
 const SERVICE_LABELS = {
   web_development: 'Web development',
@@ -38,8 +51,20 @@ const when = (value, withTime = true) => {
 
 const services = lead => (lead.services || []).map(s => SERVICE_LABELS[s] || s).join(', ');
 
+// A voice call rarely captures both, so the list shows whichever the caller left.
+const contact = lead => lead.email || lead.phone || '';
+
+const callLength = seconds => {
+  if (typeof seconds !== 'number' || seconds <= 0) return '';
+  const minutes = Math.floor(seconds / 60);
+  return minutes ? `${minutes}m ${seconds % 60}s` : `${seconds}s`;
+};
+
 function CrmState({ crm }) {
   if (!crm) return <p className="admin-note">No sync recorded yet.</p>;
+  if (crm.reason === 'origin-gohighlevel') {
+    return <p className="admin-note">Came from GoHighLevel — already a contact there.</p>;
+  }
   if (crm.synced) return <p className="admin-note">Synced to GoHighLevel · {when(crm.at)}</p>;
   if (crm.reason === 'not-configured') {
     return <p className="admin-note">Not sent — no GoHighLevel webhook is configured.</p>;
@@ -51,6 +76,7 @@ export default function Leads() {
   const { rows, loading, error, refresh } = useLeads();
   const [openId, setOpenId] = useState(null);
   const [filter, setFilter] = useState('all');
+  const [sourceFilter, setSourceFilter] = useState('all');
   const [search, setSearch] = useState('');
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
@@ -64,16 +90,23 @@ export default function Leads() {
     return map;
   }, [rows]);
 
+  const sourceCounts = useMemo(() => {
+    const map = new Map();
+    for (const lead of rows) map.set(lead.source, (map.get(lead.source) || 0) + 1);
+    return map;
+  }, [rows]);
+
   const visible = useMemo(() => {
     const term = search.trim().toLowerCase();
     return rows.filter(lead => {
       if (filter !== 'all' && (lead.status || 'new') !== filter) return false;
+      if (sourceFilter !== 'all' && lead.source !== sourceFilter) return false;
       if (!term) return true;
-      return [lead.name, lead.email, lead.businessName, lead.projectDetails]
+      return [lead.name, lead.email, lead.phone, lead.businessName, lead.projectDetails, lead.voice?.summary]
         .filter(Boolean)
         .some(value => value.toLowerCase().includes(term));
     });
-  }, [rows, filter, search]);
+  }, [rows, filter, sourceFilter, search]);
 
   const open = rows.find(lead => lead.id === openId) || null;
 
@@ -118,6 +151,19 @@ export default function Leads() {
               </option>
             ))}
           </select>
+          <select
+            className="admin-select"
+            value={sourceFilter}
+            onChange={event => setSourceFilter(event.target.value)}
+            aria-label="Source"
+          >
+            <option value="all">All sources</option>
+            {Object.entries(SOURCE_LABELS).map(([value, label]) => (
+              <option key={value} value={value}>
+                {label} {sourceCounts.get(value) ? `(${sourceCounts.get(value)})` : ''}
+              </option>
+            ))}
+          </select>
           <button className="btn-admin" type="button" onClick={refresh}>Refresh</button>
         </div>
       </header>
@@ -156,10 +202,15 @@ export default function Leads() {
                     >
                       <td>
                         <div className="cell-strong">{lead.name}</div>
-                        <div className="cell-dim">{lead.email}</div>
+                        <div className="cell-dim">{contact(lead)}</div>
                       </td>
-                      <td className="cell-wrap">{services(lead)}</td>
-                      <td className="cell-dim">{lead.source === 'bit_chat' ? 'Bit chat' : 'Intake form'}</td>
+                      <td className="cell-wrap">{services(lead) || '—'}</td>
+                      <td className="cell-dim">
+                        {sourceLabel(lead)}
+                        {/* A website-demo caller is still a lead, but worth
+                            telling apart from someone who dialled the number. */}
+                        {lead.voice?.demo && <span className="chip" style={{ marginLeft: 6 }}>demo</span>}
+                      </td>
                       <td><Pill kind={lead.status || 'new'}>{lead.status || 'new'}</Pill></td>
                       <td className="cell-dim">
                         {lead.crm?.synced ? 'Synced' : lead.crm?.error ? 'Failed' : '—'}
@@ -177,7 +228,7 @@ export default function Leads() {
       {open && (
         <Panel
           title={open.name}
-          subtitle={`${open.source === 'bit_chat' ? 'Bit chat' : 'Intake form'} · ${when(open.createdAt)}`}
+          subtitle={`${sourceLabel(open)} · ${when(open.createdAt)}`}
           onClose={() => setOpenId(null)}
         >
           <div>
@@ -199,7 +250,7 @@ export default function Leads() {
 
           <DetailRows
             rows={[
-              ['Email', <a href={`mailto:${open.email}`}>{open.email}</a>],
+              ['Email', open.email ? <a href={`mailto:${open.email}`}>{open.email}</a> : ''],
               ['Phone', open.phone ? <a href={`tel:${open.phone}`}>{open.phone}</a> : ''],
               ['Company', open.businessName],
               ['Role', open.roleInCompany],
@@ -216,6 +267,33 @@ export default function Leads() {
             <div>
               <div className="panel-section-label">Project details</div>
               <p style={{ marginTop: 8, whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{open.projectDetails}</p>
+            </div>
+          )}
+
+          {open.voice && (
+            <div>
+              <div className="panel-section-label">The call</div>
+              <DetailRows
+                rows={[
+                  // Only meaningful once someone has rung more than once.
+                  ['Calls', open.voice.callCount > 1 ? `${open.voice.callCount} calls` : ''],
+                  ['Last call', open.voice.lastCallAt ? when(open.voice.lastCallAt) : ''],
+                  ['Length', callLength(open.voice.durationSec)],
+                  ['Placed from', open.voice.demo ? 'Website demo' : open.phone ? 'Phone' : ''],
+                  ['Recording', open.voice.recordingUrl
+                    ? <a href={open.voice.recordingUrl} target="_blank" rel="noreferrer">Listen</a>
+                    : ''],
+                  ['GoHighLevel call', open.voice.providerCallId]
+                ]}
+              />
+              {open.voice.summary && (
+                <p style={{ marginTop: 8, whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{open.voice.summary}</p>
+              )}
+              {open.voice.callId && (
+                <div style={{ marginTop: 12 }}>
+                  <Transcript collection="calls" sub="turns" agent="Byte" id={open.voice.callId} />
+                </div>
+              )}
             </div>
           )}
 
