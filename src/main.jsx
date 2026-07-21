@@ -19,21 +19,33 @@ import logoMark from './assets/bitesites-logo-mark.webp';
 // /assets/ with a content hash in the name. That is what retired the manual
 // ?v= cache-buster: a re-encoded clip gets a new filename, so no cache
 // anywhere — Firebase, Cloudflare, or the browser — can serve the old bytes.
+// The -portrait pair is a separate capture of each site's *mobile* layout, not a
+// re-crop of the landscape master — see scripts/capture-portfolio.mjs.
 import cliftonClip from './assets/portfolio/cliftonaveanimalhospital.mp4';
 import cliftonClip720 from './assets/portfolio/cliftonaveanimalhospital-720.mp4';
+import cliftonClipPortrait from './assets/portfolio/cliftonaveanimalhospital-portrait.mp4';
 import cliftonPoster from './assets/portfolio/cliftonaveanimalhospital-poster.webp';
+import cliftonPosterPortrait from './assets/portfolio/cliftonaveanimalhospital-portrait-poster.webp';
 import stoneClip from './assets/portfolio/stonebellisimo.mp4';
 import stoneClip720 from './assets/portfolio/stonebellisimo-720.mp4';
+import stoneClipPortrait from './assets/portfolio/stonebellisimo-portrait.mp4';
 import stonePoster from './assets/portfolio/stonebellisimo-poster.webp';
+import stonePosterPortrait from './assets/portfolio/stonebellisimo-portrait-poster.webp';
 import nexusClip from './assets/portfolio/nexusverium.mp4';
 import nexusClip720 from './assets/portfolio/nexusverium-720.mp4';
+import nexusClipPortrait from './assets/portfolio/nexusverium-portrait.mp4';
 import nexusPoster from './assets/portfolio/nexusverium-poster.webp';
+import nexusPosterPortrait from './assets/portfolio/nexusverium-portrait-poster.webp';
 import bodegaClip from './assets/portfolio/bodegaproject.mp4';
 import bodegaClip720 from './assets/portfolio/bodegaproject-720.mp4';
+import bodegaClipPortrait from './assets/portfolio/bodegaproject-portrait.mp4';
 import bodegaPoster from './assets/portfolio/bodegaproject-poster.webp';
+import bodegaPosterPortrait from './assets/portfolio/bodegaproject-portrait-poster.webp';
 import stockroomClip from './assets/portfolio/stockroomnj.mp4';
 import stockroomClip720 from './assets/portfolio/stockroomnj-720.mp4';
+import stockroomClipPortrait from './assets/portfolio/stockroomnj-portrait.mp4';
 import stockroomPoster from './assets/portfolio/stockroomnj-poster.webp';
+import stockroomPosterPortrait from './assets/portfolio/stockroomnj-portrait-poster.webp';
 import './styles.css';
 import './service-colors.css';
 import './bit.css';
@@ -86,11 +98,11 @@ const services = [
 // panel stays blank. See PORTFOLIO_PLAN.md §6 for the recipe, and verify with
 // ffprobe before adding a clip.
 const projects = [
-  { title: 'Clifton Ave Animal Hospital', video: cliftonClip, video720: cliftonClip720, poster: cliftonPoster, text: 'Full-service veterinary care in Clifton, NJ — a warm, modern practice site that turns “every stage of your pet’s life” into booked wellness, dental, and same-day urgent visits.', bullets: ['Online booking wired straight into the IDEXX Vello scheduling platform', 'Service paths for wellness, dental, imaging, cardiology, and laser surgery', 'Client portal, pharmacy refills, and Cherry financing in one flow'], stack: ['WordPress', 'Custom PHP Theme', 'Vanilla JS', 'IDEXX Vello'], url: 'https://cliftonaveanimalhospital.com' },
-  { title: 'Stone Bellisimo', video: stoneClip, video720: stoneClip720, poster: stonePoster, text: 'Custom stone fabrication in Union City, NJ — a showroom-grade site that turns granite, quartz, and marble work into booked in-home measurements across the Northeast.', bullets: ['Five-step estimate wizard capturing material, size, and timeline', 'Project gallery built for kitchens, vanities, and custom surrounds', '“Bella” 24/7 AI voice agent booking quotes around the clock'], stack: ['React', 'Vite', 'Tailwind CSS', 'AI Voice Agent'], url: 'https://stonebellisimollc.com' },
-  { title: 'Nexus Verium', video: nexusClip, video720: nexusClip720, poster: nexusPoster, text: 'Restoration systems & environmental engineering — integrating AI and environmental science to heal ecosystems through the River Veins initiative.', bullets: ['River Veins monitoring network — floating AI wetlands, sensors, drones', 'Digital twin models of the Meadowlands for planning', 'Continuous AI-driven water quality analysis'], stack: ['Next.js', 'Tailwind CSS', 'Turbopack'], url: 'https://nexusverium.tech' },
-  { title: 'Rutgers Newark Bodega Project', video: bodegaClip, video720: bodegaClip720, poster: bodegaPoster, text: 'Sustainable food supply chains — a Newark pilot that links rooftop hydroponics, community gardens, and backyard plots to neighbours looking for fresh produce a few blocks away.', bullets: ['Harvest listings with walking distance, price, and how recently it was picked', 'Local map plus a “My Harvest” flow for residents listing their own produce', 'Community impact tracked as CO₂e saved across the neighbourhood each week'], stack: ['Next.js', 'React', 'Tailwind CSS'], url: 'https://jjimenez723.github.io/the-bodega-project-demo/' },
-  { title: 'StockRoom NJ', video: stockroomClip, video720: stockroomClip720, poster: stockroomPoster, text: 'A hobby and collectibles shop in Wallington, NJ — cards, video games, consoles, and figures, with the counter’s real stock searchable online and every new drop live the moment it lands.', bullets: ['Live Firestore inventory, so new arrivals appear online as they hit the shelf', 'Search across product name, category, description, and price', 'Multi-photo product galleries, cart checkout, and an in-store events calendar'], stack: ['React', 'Vite', 'Firebase', 'Cloud Firestore'], url: 'https://stockroomnj.com' }
+  { title: 'Clifton Ave Animal Hospital', video: cliftonClip, video720: cliftonClip720, videoPortrait: cliftonClipPortrait, poster: cliftonPoster, posterPortrait: cliftonPosterPortrait, text: 'Full-service veterinary care in Clifton, NJ — a warm, modern practice site that turns “every stage of your pet’s life” into booked wellness, dental, and same-day urgent visits.', bullets: ['Online booking wired straight into the IDEXX Vello scheduling platform', 'Service paths for wellness, dental, imaging, cardiology, and laser surgery', 'Client portal, pharmacy refills, and Cherry financing in one flow'], stack: ['WordPress', 'Custom PHP Theme', 'Vanilla JS', 'IDEXX Vello'], url: 'https://cliftonaveanimalhospital.com' },
+  { title: 'Stone Bellisimo', video: stoneClip, video720: stoneClip720, videoPortrait: stoneClipPortrait, poster: stonePoster, posterPortrait: stonePosterPortrait, text: 'Custom stone fabrication in Union City, NJ — a showroom-grade site that turns granite, quartz, and marble work into booked in-home measurements across the Northeast.', bullets: ['Five-step estimate wizard capturing material, size, and timeline', 'Project gallery built for kitchens, vanities, and custom surrounds', '“Bella” 24/7 AI voice agent booking quotes around the clock'], stack: ['React', 'Vite', 'Tailwind CSS', 'AI Voice Agent'], url: 'https://stonebellisimollc.com' },
+  { title: 'Nexus Verium', video: nexusClip, video720: nexusClip720, videoPortrait: nexusClipPortrait, poster: nexusPoster, posterPortrait: nexusPosterPortrait, text: 'Restoration systems & environmental engineering — integrating AI and environmental science to heal ecosystems through the River Veins initiative.', bullets: ['River Veins monitoring network — floating AI wetlands, sensors, drones', 'Digital twin models of the Meadowlands for planning', 'Continuous AI-driven water quality analysis'], stack: ['Next.js', 'Tailwind CSS', 'Turbopack'], url: 'https://nexusverium.tech' },
+  { title: 'Rutgers Newark Bodega Project', video: bodegaClip, video720: bodegaClip720, videoPortrait: bodegaClipPortrait, poster: bodegaPoster, posterPortrait: bodegaPosterPortrait, text: 'Sustainable food supply chains — a Newark pilot that links rooftop hydroponics, community gardens, and backyard plots to neighbours looking for fresh produce a few blocks away.', bullets: ['Harvest listings with walking distance, price, and how recently it was picked', 'Local map plus a “My Harvest” flow for residents listing their own produce', 'Community impact tracked as CO₂e saved across the neighbourhood each week'], stack: ['Next.js', 'React', 'Tailwind CSS'], url: 'https://jjimenez723.github.io/the-bodega-project-demo/' },
+  { title: 'StockRoom NJ', video: stockroomClip, video720: stockroomClip720, videoPortrait: stockroomClipPortrait, poster: stockroomPoster, posterPortrait: stockroomPosterPortrait, text: 'A hobby and collectibles shop in Wallington, NJ — cards, video games, consoles, and figures, with the counter’s real stock searchable online and every new drop live the moment it lands.', bullets: ['Live Firestore inventory, so new arrivals appear online as they hit the shelf', 'Search across product name, category, description, and price', 'Multi-photo product galleries, cart checkout, and an in-store events calendar'], stack: ['React', 'Vite', 'Firebase', 'Cloud Firestore'], url: 'https://stockroomnj.com' }
 ];
 
 const prices = {
@@ -116,13 +128,34 @@ let reducedMotionQuery = null;
 const prefersReducedMotion = () =>
   (reducedMotionQuery ||= window.matchMedia('(prefers-reduced-motion: reduce)')).matches;
 
-// Phones were downloading the same 1880px master as desktops. Resolved once per
-// page load and deliberately *not* reactive: changing a <video> src mid-session
-// reloads the clip and drops the playhead, so a device that gets rotated keeps
-// the variant it started on rather than restarting the demo under the visitor.
-let compactViewportQuery = null;
-const portfolioClip = project =>
-  ((compactViewportQuery ||= window.matchMedia('(max-width: 760px)')).matches ? project.video720 : project.video);
+// Three tiers, keyed on the shape of the viewport rather than its width.
+//
+// Aspect ratio is the right test because the defect was never resolution — it
+// was that a 1.74:1 clip inside a 0.46:1 stage loses ~73% of every frame to
+// `object-fit: cover`. Any viewport taller than it is wide has that problem, so
+// portrait tablets get the portrait clip too; the old `max-width: 760px` test
+// missed them entirely and served a 768px iPad the 1880px master *and* a 44%
+// crop. Below the portrait tier the split is pure bytes.
+//
+// Latched on first call, not merely read from a live MediaQueryList: swapping a
+// <video> src mid-session reloads the clip and drops the playhead, so a device
+// that gets rotated keeps the variant it started on rather than restarting the
+// demo under the visitor.
+let portfolioTierValue = null;
+const portfolioTier = () => (portfolioTierValue ||= (
+  window.matchMedia('(max-aspect-ratio: 1/1)').matches ? 'portrait'
+    : window.matchMedia('(max-width: 1100px), (max-height: 500px)').matches ? 'compact'
+      : 'full'));
+
+// Each falls back a tier when an asset is missing, so a project can ship without
+// a portrait capture rather than 404ing.
+const portfolioClip = project => {
+  const tier = portfolioTier();
+  if (tier === 'portrait' && project.videoPortrait) return project.videoPortrait;
+  return tier === 'full' ? project.video : project.video720;
+};
+const portfolioPoster = project =>
+  (portfolioTier() === 'portrait' && project.posterPortrait) ? project.posterPortrait : project.poster;
 
 // Every pacing number here is a *fraction of the clip*, never an absolute time.
 // The previous build mapped whatever duration a clip happened to have onto a
@@ -1109,7 +1142,7 @@ function App() {
               {projects.map((project, index) => <article className={`portfolio-project ${activeProject === index ? 'active' : ''}`} key={project.title}>
                 {/* Autoplay is driven by the rail effect, not the attribute: four
                     looping decoders running behind the demo is what made it stutter. */}
-                <video muted loop playsInline preload="metadata" poster={project.poster} aria-hidden="true"><source src={portfolioClip(project)} type="video/mp4" /></video>
+                <video muted loop playsInline preload="metadata" poster={portfolioPoster(project)} aria-hidden="true"><source src={portfolioClip(project)} type="video/mp4" /></video>
                 <div className="portfolio-project-shade" />
                 <span className="project-number">0{index + 1}</span>
                 <div className="portfolio-project-title"><span>Selected project</span><h3>{project.title}</h3></div>
@@ -1132,7 +1165,7 @@ function App() {
                 At preload="auto" this pulled the full clip on every page load. */}
             {/* Looping is motion in its own right, so under reduced motion the
                 clip plays once and hands the play control back on ended. */}
-            <video key={projects[activeProject].video} ref={portfolioVideo} muted loop={!prefersReducedMotion()} playsInline preload="metadata" poster={projects[activeProject].poster} onLoadedMetadata={handlePortfolioMetadata} onTimeUpdate={handlePortfolioTimeUpdate} onWaiting={handlePortfolioWaiting} onPlaying={handlePortfolioPlaying} onEnded={() => { if (prefersReducedMotion()) { portfolioConsentedRef.current = false; setPortfolioNeedsPlay(true); } }} aria-label={`${projects[activeProject].title} project demo`} src={portfolioClip(projects[activeProject])} />
+            <video key={projects[activeProject].video} ref={portfolioVideo} muted loop={!prefersReducedMotion()} playsInline preload="metadata" poster={portfolioPoster(projects[activeProject])} onLoadedMetadata={handlePortfolioMetadata} onTimeUpdate={handlePortfolioTimeUpdate} onWaiting={handlePortfolioWaiting} onPlaying={handlePortfolioPlaying} onEnded={() => { if (prefersReducedMotion()) { portfolioConsentedRef.current = false; setPortfolioNeedsPlay(true); } }} aria-label={`${projects[activeProject].title} project demo`} src={portfolioClip(projects[activeProject])} />
             <div className="portfolio-demo-vignette" />
             <div className="portfolio-playback" aria-hidden="true"><span /> Playing</div>
             {portfolioNeedsPlay && <button className="portfolio-demo-play" type="button" onClick={startPortfolioDemo}>

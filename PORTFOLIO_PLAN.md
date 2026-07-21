@@ -642,3 +642,92 @@ drag-scrub → resume still works at every one. `npm run build` clean.
 > **Do not reintroduce a percentage `top` on the track.** That coupling is the
 > defect. If the rail needs to move, move it by changing what surrounds it or
 > by `--portfolio-card-height`, both of which the column keeps honest.
+
+---
+
+## 13. Portrait clips — 2026-07-21
+
+### 13.1 The defect §2.5 missed
+
+"No responsive variants" was diagnosed as a *bytes* problem and fixed with the
+720p tier. It was also an **aspect-ratio** problem, and that half went unfixed.
+The masters are 1880×1080 (1.74:1); the expanded stage on a 390×844 phone is
+0.46:1. With `object-fit: cover` ([portfolio.css:183](src/portfolio.css#L183)):
+
+| Viewport | Container | Frame visible |
+|---|---|---|
+| Desktop 1440×800 | demo 1.80:1 | 97% |
+| Phone 390×844 | rail card 0.53:1 | 30% |
+| Phone 390×844 | expanded demo 0.46:1 | **27%** |
+
+Phones were seeing roughly a quarter of every frame — a vertical slice through
+the middle of a desktop layout. No re-encode at any resolution moves that number.
+
+### 13.2 Capture, not re-crop
+
+[scripts/capture-portfolio.mjs](scripts/capture-portfolio.mjs) records each site's
+**mobile layout** in Playwright's WebKit at 405×877 CSS / dpr 2 → 810×1754, which
+is 0.4618 against the stage's 0.4621. It scrolls at a fixed 9 px/frame, screenshots
+each frame as lossless PNG, and pipes the sequence to ffmpeg — one lossy generation,
+no rescale, no device UI to crop off.
+
+WebKit rather than Chromium deliberately: these clips are evidence the sites work
+on a phone, and Chrome device emulation is desktop Blink with a resized viewport.
+It will render a layout that is broken in Safari.
+
+Two deviations from §6.1, both forced by PNG input:
+- **`-pix_fmt yuv420p` is mandatory.** x264 defaults to yuv444p from RGB; Safari
+  refuses to decode it and the clip ships black.
+- **No `scale` filter** — frames are already at target size.
+
+### 13.3 Inventory
+
+All five verified: 810×1754, yuv420p, 0.5s GOP, `moov` before `mdat`, no audio.
+
+| Project | Duration | Portrait | Poster | Page covered |
+|---|---|---|---|---|
+| Clifton Ave Animal Hospital | 26.00s | 7.2 MB | 80 KB | 94% |
+| Stone Bellisimo | 26.00s | 6.4 MB | 69 KB | **41%** |
+| Nexus Verium | 26.00s | 9.7 MB | 109 KB | **67%** |
+| Rutgers Newark Bodega Project | **7.47s** | 2.9 MB | 103 KB | 100% |
+| StockRoom NJ | 21.37s | 5.6 MB | 77 KB | 100% |
+
+**31.8 MB added; 86.4 MB in the tree.** Only one tier is ever fetched per visitor.
+
+> ⚠️ **Pacing is unresolved — see §13.5.** Holding velocity constant across all
+> five was a deliberate choice, and it produced a 3.5× duration spread and three
+> clips that stop partway down the page. This is a taste call, not a bug.
+
+### 13.4 Tier selection
+
+`portfolioTier()` in [src/main.jsx](src/main.jsx) replaces the `max-width: 760px`
+test with `(max-aspect-ratio: 1/1)` → `(max-width: 1100px), (max-height: 500px)`
+→ full. Aspect ratio is the correct axis because *any* viewport taller than it is
+wide has the crop problem — the old width test served a 768px portrait iPad the
+1880px master **and** a 44% crop.
+
+The tier is now **latched on first call** rather than read live from the
+MediaQueryList. The comment at the old `portfolioClip` promised a rotated device
+keeps its variant, but `.matches` is live, so a rotation that crossed 760px
+already swapped the `src` and dropped the playhead. Aspect ratio flips on every
+rotation, which would have made that pre-existing bug fire every time.
+
+Both helpers fall back a tier when an asset is missing, so a project can ship
+without a portrait capture rather than 404ing.
+
+No CSS changed. `object-fit: cover; object-position: center top` is correct for
+all three tiers — on the rail card a portrait clip crops 12% off the bottom, and
+on a portrait iPad 38%, both top-anchored.
+
+### 13.5 Open
+
+- **Pacing.** Constant velocity gives a consistent feel but a 7.5s clip next to
+  three 26s clips, and Stone Bellisimo — a 16651px page — stops at 41%. Options:
+  per-project `travelPx` to curate the strongest stretch (keeps velocity honest),
+  a lower global cap, or per-project velocity (breaks cross-clip consistency).
+- **On-page animation speed.** Frames are captured at 50–91ms of wall clock but
+  played at 33ms, so any animation still running plays back 1.5–2.7× fast. The
+  `prewarm` pass hides most of it by settling one-shot scroll reveals before
+  capture; `timeScale` is the escape hatch if a specific site needs it.
+- **Real-device pass still outstanding** (§12.6). WebKit-in-Playwright is much
+  closer to iOS Safari than Chrome emulation, but it is not an iPhone.
