@@ -34,7 +34,6 @@ const teamMembers = [
     bio: 'Turns conversations into relationships and makes complex ideas easy to understand. Simply put: the guy can talk.',
     poster: nusseinPoster,
     video: nusseinVideo,
-    mediaPosition: 'center 24%',
     color: '#80e3cf'
   },
   {

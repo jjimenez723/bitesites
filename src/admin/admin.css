@@ -448,6 +448,12 @@
 .admin-auth-msg { font-size: 12.5px; text-align: center; min-height: 18px; }
 .admin-auth-msg.error { color: #f0a3a3; }
 .admin-auth-msg.success { color: #7fd67f; }
+.admin-auth-back {
+  display: block; margin-top: 18px; padding-top: 16px;
+  border-top: 1px solid var(--line);
+  color: var(--ink-3); font-size: 12.5px; text-align: center; text-decoration: none;
+}
+.admin-auth-back:hover { color: var(--ink-2); text-decoration: underline; }
 
 .admin-denied { text-align: center; }
 .admin-denied h1 { font-size: 20px; margin-bottom: 8px; }

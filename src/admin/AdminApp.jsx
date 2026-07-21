@@ -8,7 +8,7 @@
 // past this screen would still get permission-denied on every query.
 
 import React, { useEffect, useState } from 'react';
-import { NavLink, Navigate, Route, Routes } from 'react-router-dom';
+import { Link, NavLink, Navigate, Route, Routes } from 'react-router-dom';
 import { watchSession, signIn, signOutUser, resetPassword, friendlyAuthError } from '../lib/auth';
 import logoMark from '../assets/bitesites-logo-mark.webp';
 import Overview from './Overview';
@@ -81,6 +81,7 @@ function SignIn() {
             </button>
             <p className={`admin-auth-msg ${status.kind}`} aria-live="polite">{status.text}</p>
           </form>
+          <Link className="admin-auth-back" to="/">← Back to homepage</Link>
         </div>
       </div>
     </div>
