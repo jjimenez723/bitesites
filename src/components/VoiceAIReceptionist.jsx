@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { endVoiceCall, isLiveState, loadVoiceAgent, observeVoiceState, startVoiceCall } from '../lib/ghl-voice';
+import {
+  endVoiceCall, isLiveState, loadVoiceAgent, observeVoiceState,
+  observeVoiceTranscript, startVoiceCall
+} from '../lib/ghl-voice';
+import { finishCall, logCallState, logCallTranscript, startCall } from '../lib/conversations';
+import { trackEvent } from '../lib/analytics';
 
 function MicIcon({ muted = false }) {
   return <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -156,14 +161,35 @@ export function VoiceAIReceptionist({ open, onClose }) {
   const [error, setError] = useState('');
   const shellRef = useRef(null);
   const sawConnectingRef = useRef(false);
+  // Call logging state. Refs rather than state: nothing here renders, and the
+  // cleanup paths (unmount, page close) need the current value, not a snapshot.
+  const callIdRef = useRef('');
+  const callStartRef = useRef(0);
+  const callConnectedRef = useRef(false);
 
   const live = isLiveState(callState);
   const connected = callState === 'listening' || callState === 'speaking';
+
+  // Closes the open call record exactly once, whichever path got us here.
+  const closeCallRecord = (outcome, message = '') => {
+    const callId = callIdRef.current;
+    if (!callId) return;
+    callIdRef.current = '';
+    const durationSec = callStartRef.current ? (Date.now() - callStartRef.current) / 1000 : 0;
+    finishCall(callId, {
+      outcome: outcome === 'auto' ? (callConnectedRef.current ? 'completed' : 'abandoned') : outcome,
+      durationSec,
+      error: message
+    });
+    callStartRef.current = 0;
+    callConnectedRef.current = false;
+  };
 
   const stopSession = () => {
     setStarting(false);
     setElapsed(0);
     setError('');
+    closeCallRecord('auto');
     endVoiceCall();
   };
 
@@ -180,9 +206,13 @@ export function VoiceAIReceptionist({ open, onClose }) {
     sawConnectingRef.current = false;
     try {
       await startVoiceCall();
+      callStartRef.current = Date.now();
+      callConnectedRef.current = false;
+      callIdRef.current = await startCall();
     } catch {
       setStarting(false);
       setError('We could not reach the voice agent. Please refresh and try again.');
+      closeCallRecord('failed', 'voice widget did not start');
     }
   };
 
@@ -210,7 +240,22 @@ export function VoiceAIReceptionist({ open, onClose }) {
 
   useEffect(() => {
     if (!open) return undefined;
+    trackEvent('call_open', { label: 'Byte voice agent' });
     return observeVoiceState(setCallState);
+  }, [open]);
+
+  // Two logging subscriptions, both no-ops until a call record exists: the state
+  // timeline (always available) and the transcript the widget renders (only in
+  // some GHL configurations — see observeVoiceTranscript).
+  useEffect(() => {
+    if (!callIdRef.current) return;
+    if (connected) callConnectedRef.current = true;
+    logCallState(callIdRef.current, callState);
+  }, [callState, connected]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    return observeVoiceTranscript(line => logCallTranscript(callIdRef.current, line));
   }, [open]);
 
   // The widget drops back to idle when it cannot connect — a denied microphone
@@ -224,12 +269,16 @@ export function VoiceAIReceptionist({ open, onClose }) {
     if (callState === 'unavailable') {
       setStarting(false);
       setError('The voice agent is unavailable right now. Please try again in a moment.');
+      closeCallRecord('failed', 'voice agent unavailable');
       return;
     }
     if (starting && callState === 'idle' && sawConnectingRef.current) {
       setStarting(false);
       sawConnectingRef.current = false;
       setError('The call could not start. Check that your browser allows microphone access, then try again.');
+      // Overwhelmingly a denied microphone prompt — worth its own outcome so the
+      // dashboard can separate "wouldn't talk to us" from "couldn't".
+      closeCallRecord('blocked', 'call did not connect — microphone likely denied');
     }
   }, [callState, connected, starting]);
 
@@ -239,10 +288,13 @@ export function VoiceAIReceptionist({ open, onClose }) {
     return () => window.clearInterval(timer);
   }, [connected]);
 
-  // Never leave a call running behind a closed panel.
+  // Never leave a call running — or a call record open — behind a closed panel.
   useEffect(() => {
     if (!open) return undefined;
-    return () => { endVoiceCall(); };
+    return () => {
+      closeCallRecord('auto');
+      endVoiceCall();
+    };
   }, [open]);
 
   if (!open) return null;

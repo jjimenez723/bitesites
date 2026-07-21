@@ -11,7 +11,7 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
-import { initializeAppCheck, ReCaptchaV3Provider } from 'firebase/app-check';
+import { initializeAppCheck, ReCaptchaEnterpriseProvider } from 'firebase/app-check';
 
 const env = import.meta.env;
 
@@ -29,20 +29,27 @@ export const auth = getAuth(app);
 export const db = getFirestore(app);
 
 // App Check is what actually stops a script from hammering the public lead form.
-// It stays off until a reCAPTCHA v3 site key is provided so local dev and
-// previews keep working without extra setup. See FIREBASE_SETUP.md step 4.
-const recaptchaSiteKey = env.VITE_RECAPTCHA_SITE_KEY;
+// The rules validate the *shape* of a lead; App Check attests that the request
+// came from this site in a real browser. A reCAPTCHA Enterprise site key is
+// public — it is embedded in the page by design — so it ships as the default.
+const recaptchaSiteKey =
+  env.VITE_RECAPTCHA_SITE_KEY || '6Lf0cV0tAAAAAGZIrvImMY7t-5MYmA6Xd2tGBC3M';
 
-if (recaptchaSiteKey) {
-  if (env.DEV && env.VITE_APPCHECK_DEBUG_TOKEN) {
-    self.FIREBASE_APPCHECK_DEBUG_TOKEN = env.VITE_APPCHECK_DEBUG_TOKEN;
-  }
-  try {
-    initializeAppCheck(app, {
-      provider: new ReCaptchaV3Provider(recaptchaSiteKey),
-      isTokenAutoRefreshEnabled: true
-    });
-  } catch (error) {
-    console.warn('[firebase] App Check failed to initialise', error);
-  }
+// On localhost, register a debug token in the Firebase console instead of
+// solving a live reCAPTCHA challenge. Set the var to `true` to have the SDK
+// print a fresh token to the browser console on first run.
+if (env.DEV && env.VITE_APPCHECK_DEBUG_TOKEN) {
+  self.FIREBASE_APPCHECK_DEBUG_TOKEN =
+    env.VITE_APPCHECK_DEBUG_TOKEN === 'true' ? true : env.VITE_APPCHECK_DEBUG_TOKEN;
+}
+
+try {
+  initializeAppCheck(app, {
+    provider: new ReCaptchaEnterpriseProvider(recaptchaSiteKey),
+    isTokenAutoRefreshEnabled: true
+  });
+} catch (error) {
+  // Never let attestation failure blank the marketing site — a lead that cannot
+  // be attested should surface as a failed submit, not a broken page.
+  console.warn('[firebase] App Check failed to initialise', error);
 }

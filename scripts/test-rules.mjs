@@ -261,6 +261,157 @@ await it('client cannot write a project', () =>
 await it('admin can write a project', () =>
   assertSucceeds(updateDoc(doc(adminByDoc, 'projects', 'proj1'), { name: 'Site build v2' })));
 
+// --------------------------------------------------------------- analytics
+// `events` takes anonymous writes from every visitor, so it has the same threat
+// model as `leads`: the negative cases below are what stop it becoming free,
+// unbounded object storage.
+
+const validEvent = () => ({
+  type: 'page_view',
+  sid: 'session-1',
+  vid: 'visitor-1',
+  path: '/',
+  day: '2026-07-21',
+  device: 'desktop',
+  ts: serverTimestamp()
+});
+
+describe('events — anonymous analytics writes');
+await it('anonymous visitor can record an event', () =>
+  assertSucceeds(addDoc(collection(anon, 'events'), validEvent())));
+
+await it('accepts a click with position and label', () =>
+  assertSucceeds(addDoc(collection(anon, 'events'), {
+    ...validEvent(), type: 'click', label: 'Start Your Project',
+    section: 'start', interactive: true, x: 0.5, y: 0.25, vw: 1440, vh: 900
+  })));
+
+await it('rejects an unknown event type', () =>
+  assertFails(addDoc(collection(anon, 'events'), { ...validEvent(), type: 'exfiltrate' })));
+
+await it('rejects an unknown field', () =>
+  assertFails(addDoc(collection(anon, 'events'), { ...validEvent(), payload: 'x'.repeat(400) })));
+
+await it('rejects a forged timestamp', () =>
+  assertFails(addDoc(collection(anon, 'events'), { ...validEvent(), ts: new Date(0) })));
+
+await it('rejects a malformed day key', () =>
+  assertFails(addDoc(collection(anon, 'events'), { ...validEvent(), day: 'yesterday' })));
+
+await it('rejects an unknown device class', () =>
+  assertFails(addDoc(collection(anon, 'events'), { ...validEvent(), device: 'fridge' })));
+
+await it('rejects a click position outside 0..1', () =>
+  assertFails(addDoc(collection(anon, 'events'), { ...validEvent(), type: 'click', x: 42 })));
+
+await it('rejects an oversized label', () =>
+  assertFails(addDoc(collection(anon, 'events'), { ...validEvent(), type: 'click', label: 'x'.repeat(81) })));
+
+await it('anonymous visitor cannot read events back', () =>
+  assertFails(getDocs(collection(anon, 'events'))));
+
+await it('admin can read events', () =>
+  assertSucceeds(getDocs(collection(adminByDoc, 'events'))));
+
+// ------------------------------------------------------------ conversations
+
+const openChat = () => ({
+  agent: 'bit', channel: 'chat', status: 'open',
+  startedAt: serverTimestamp(), sid: 'session-1', path: '/'
+});
+
+const openCall = () => ({
+  agent: 'byte', channel: 'voice', status: 'open', provider: 'gohighlevel',
+  startedAt: serverTimestamp(), sid: 'session-1', path: '/'
+});
+
+await testEnv.withSecurityRulesDisabled(async context => {
+  const db = context.firestore();
+  await setDoc(doc(db, 'chats', 'chat_open'), { ...openChat(), startedAt: new Date() });
+  await setDoc(doc(db, 'chats', 'chat_done'), {
+    ...openChat(), startedAt: new Date(), status: 'converted', endedAt: new Date()
+  });
+  await setDoc(doc(db, 'calls', 'call_open'), { ...openCall(), startedAt: new Date() });
+});
+
+describe('chats — a visitor may open and append, never read');
+await it('anonymous visitor can open a chat', () =>
+  assertSucceeds(addDoc(collection(anon, 'chats'), openChat())));
+
+await it('rejects a chat claiming to be the voice agent', () =>
+  assertFails(addDoc(collection(anon, 'chats'), { ...openChat(), agent: 'byte' })));
+
+await it('rejects a chat that starts already closed', () =>
+  assertFails(addDoc(collection(anon, 'chats'), { ...openChat(), status: 'converted' })));
+
+await it('rejects a backdated chat', () =>
+  assertFails(addDoc(collection(anon, 'chats'), { ...openChat(), startedAt: new Date(0) })));
+
+await it('anonymous visitor can append a message', () =>
+  assertSucceeds(addDoc(collection(anon, 'chats', 'chat_open', 'messages'), {
+    role: 'visitor', kind: 'text', text: 'I need a website', at: serverTimestamp()
+  })));
+
+await it('rejects a message with an unknown kind', () =>
+  assertFails(addDoc(collection(anon, 'chats', 'chat_open', 'messages'), {
+    role: 'visitor', kind: 'exfiltrate', text: 'x', at: serverTimestamp()
+  })));
+
+await it('rejects an oversized message', () =>
+  assertFails(addDoc(collection(anon, 'chats', 'chat_open', 'messages'), {
+    role: 'visitor', kind: 'text', text: 'x'.repeat(2001), at: serverTimestamp()
+  })));
+
+await it('anonymous visitor cannot read a chat', () =>
+  assertFails(getDoc(doc(anon, 'chats', 'chat_open'))));
+
+await it('anonymous visitor cannot read its messages', () =>
+  assertFails(getDocs(collection(anon, 'chats', 'chat_open', 'messages'))));
+
+await it('admin can read chats', () =>
+  assertSucceeds(getDocs(collection(adminByDoc, 'chats'))));
+
+await it('visitor can close their own chat out', () =>
+  assertSucceeds(updateDoc(doc(anon, 'chats', 'chat_open'), {
+    status: 'converted', endedAt: serverTimestamp(), messageCount: 6
+  })));
+
+await it('close-out cannot reassign the session', () =>
+  assertFails(updateDoc(doc(anon, 'chats', 'chat_done'), {
+    status: 'abandoned', endedAt: serverTimestamp(), sid: 'someone-else'
+  })));
+
+await it('a closed chat cannot be reopened or re-closed', () =>
+  assertFails(updateDoc(doc(anon, 'chats', 'chat_done'), {
+    status: 'abandoned', endedAt: serverTimestamp()
+  })));
+
+await it('a message cannot be edited after the fact', () =>
+  assertFails(updateDoc(doc(anon, 'chats', 'chat_open', 'messages', 'nope'), { text: 'rewritten' })));
+
+describe('calls — same shape, voice agent');
+await it('anonymous visitor can open a call', () =>
+  assertSucceeds(addDoc(collection(anon, 'calls'), openCall())));
+
+await it('rejects a call claiming to be the chat agent', () =>
+  assertFails(addDoc(collection(anon, 'calls'), { ...openCall(), agent: 'bit' })));
+
+await it('anonymous visitor can log a state turn', () =>
+  assertSucceeds(addDoc(collection(anon, 'calls', 'call_open', 'turns'), {
+    kind: 'state', state: 'listening', at: serverTimestamp()
+  })));
+
+await it('rejects an implausible call duration', () =>
+  assertFails(updateDoc(doc(anon, 'calls', 'call_open'), {
+    status: 'completed', endedAt: serverTimestamp(), durationSec: 999999
+  })));
+
+await it('anonymous visitor cannot read calls', () =>
+  assertFails(getDocs(collection(anon, 'calls'))));
+
+await it('admin can read calls', () =>
+  assertSucceeds(getDocs(collection(adminByDoc, 'calls'))));
+
 describe('catch-all — undeclared collections are closed');
 await it('nobody can write to an arbitrary collection', () =>
   assertFails(setDoc(doc(anon, 'anything', 'x'), { a: 1 })));

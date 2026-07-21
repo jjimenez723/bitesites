@@ -1,7 +1,9 @@
-import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { Suspense, lazy, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
 import { submitLead } from './lib/leads';
+import { startAnalytics, trackEvent } from './lib/analytics';
+import { finishChat, logChatMessage, startChat } from './lib/conversations';
 import Terms from './pages/Terms';
 import Privacy from './pages/Privacy';
 import { BitMascot } from './components/BitMascot';
@@ -57,8 +59,8 @@ const services = [
 ];
 
 const projects = [
+  { title: 'Stone Bellisimo', video: '/portfolio/stonebellisimo.mp4', text: 'Custom stone fabrication in Union City, NJ — a showroom-grade site that turns granite, quartz, and marble work into booked in-home measurements across the Northeast.', bullets: ['Five-step estimate wizard capturing material, size, and timeline', 'Project gallery built for kitchens, vanities, and custom surrounds', '“Bella” 24/7 AI voice agent booking quotes around the clock'], stack: ['React', 'Vite', 'Tailwind CSS', 'AI Voice Agent'], url: 'https://stonebellisimollc.com' },
   { title: 'Nexus Verium', video: 'https://bitesites.org/portfolio/nexusverium.mp4', text: 'Restoration systems & environmental engineering — integrating AI and environmental science to heal ecosystems through the River Veins initiative.', bullets: ['River Veins monitoring network — floating AI wetlands, sensors, drones', 'Digital twin models of the Meadowlands for planning', 'Continuous AI-driven water quality analysis'], stack: ['Next.js', 'Tailwind CSS', 'Turbopack'], url: 'https://nexusverium.tech' },
-  { title: "These Freakin' Empanadas & More", video: 'https://bitesites.org/portfolio/freakinempanadas.mp4', text: "Bold, crispy, freakin' delicious — a Wood-Ridge empanada hub built to sell hand-held flavor bombs and sandwiches online and in-store.", bullets: ['Full menu with classics, cannoli, spinach artichoke, and General Tso’s chicken', 'Combos and family packs built into ordering', 'Takeout, delivery, and Uber Eats integration'], stack: ['React', 'Tailwind CSS', 'Vite', 'Uber Eats API'], url: 'https://freakinempanadas.com' },
   { title: 'Rutgers Newark Bodega Project', video: 'https://bitesites.org/portfolio/BodegaProject.mp4', text: 'Sustainable food supply chains — a data-informed, hyperlocal network linking local farms and school gardens to Newark’s bodegas.', bullets: ['“Fast vs. Fresh Food” interactive map and KPI builder', 'Data visualization tools for research and community outreach', 'Promotes indoor vertical farming for year-round production'], stack: ['Vite', 'Chart.js', 'Leaflet', 'Mapbox'], url: 'https://jjimenez723.github.io/Bodega-Project-2' }
 ];
 
@@ -101,7 +103,8 @@ function MorphingLogo({ location = 'header', onClick }) {
 
       const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
       const scrollTravel = Math.max(260, window.innerHeight * .34);
-      const compact = window.innerWidth <= 700;
+      // Matches the CSS breakpoint where the wings collapse into the burger menu.
+      const compact = window.innerWidth <= 900;
       const startSize = compact ? 124 : 158;
       const endSize = compact ? 54 : 62;
       let rawProgress;
@@ -207,6 +210,67 @@ function AiReceptionist({ onClose, origin, initialAnswer }) {
   const hasRenderedRef = useRef(false);
   const question = receptionistQuestions[step];
 
+  // Transcript capture. The chat document is created asynchronously, so turns
+  // that happen before it exists are buffered and replayed once it does —
+  // otherwise a fast first tap would be missing from the transcript.
+  const chatIdRef = useRef('');
+  const bufferRef = useRef([]);
+  const closedRef = useRef(false);
+  const countRef = useRef(0);
+  const outcomeRef = useRef('abandoned');
+  const leadIdRef = useRef('');
+  const answersRef = useRef(answers);
+  answersRef.current = answers;
+
+  const record = (role, text, kind = 'text', questionKey = '') => {
+    if (!text) return;
+    countRef.current += 1;
+    const turn = { role, text, kind, questionKey };
+    if (chatIdRef.current) logChatMessage(chatIdRef.current, turn);
+    else bufferRef.current.push(turn);
+  };
+
+  useEffect(() => {
+    trackEvent('chat_open', { label: 'Bit chat receptionist' });
+
+    // Bit can be opened straight from the card preview, where the visitor has
+    // already answered question one. Replay that exchange into the transcript.
+    if (initialAnswer) {
+      record('bit', receptionistQuestions[0].prompt, 'prompt', 'services');
+      record('visitor', initialAnswer.label, 'choice', 'services');
+    }
+
+    startChat().then(id => {
+      if (!id) return;
+      if (closedRef.current) {
+        // Opened and closed before the document landed — close it out now so it
+        // is not left hanging as an "open" conversation forever.
+        finishChat(id, { outcome: outcomeRef.current, messageCount: countRef.current });
+        return;
+      }
+      chatIdRef.current = id;
+      for (const turn of bufferRef.current.splice(0)) logChatMessage(id, turn);
+    });
+
+    return () => {
+      closedRef.current = true;
+      finishChat(chatIdRef.current, {
+        outcome: outcomeRef.current,
+        leadId: leadIdRef.current,
+        answers: answersRef.current,
+        messageCount: countRef.current
+      });
+    };
+  }, []);
+
+  // Log Bit's side as it is shown, so the transcript reads in the order the
+  // visitor actually saw it rather than as answers with no questions.
+  useEffect(() => {
+    if (step === -1) record('bit', 'Hi — I’m Bit, BiteSites’ mascot and AI receptionist. I’ll ask a few quick questions so our team can point you in the right direction.', 'system');
+    else if (question) record('bit', question.prompt, 'prompt', question.key);
+    else if (step === receptionistQuestions.length) record('bit', 'Thanks — I have the essentials. Where should we send your tailored next step?', 'prompt');
+  }, [step]);
+
   useEffect(() => {
     const timer = window.setInterval(() => setThinkingLine(line => (line + 1) % thinkingLines.length), 1100);
     return () => window.clearInterval(timer);
@@ -238,6 +302,7 @@ function AiReceptionist({ onClose, origin, initialAnswer }) {
     const nextAnswers = { ...answers, [question.key]: value };
     setAnswers(nextAnswers);
     setMessages(current => [...current, { role: 'user', text: label }]);
+    record('visitor', label, 'choice', question.key);
     setStep(step + 1);
   };
   const choose = (value, label) => advance(value, label);
@@ -248,6 +313,7 @@ function AiReceptionist({ onClose, origin, initialAnswer }) {
     setDraft('');
     setMessages(current => [...current, { role: 'user', text: response }]);
     setAnswers(current => ({ ...current, [question.key]: response }));
+    record('visitor', response, 'text', question.key);
     setIsThinking(true);
     window.setTimeout(() => {
       setIsThinking(false);
@@ -259,10 +325,14 @@ function AiReceptionist({ onClose, origin, initialAnswer }) {
     const data = new FormData(event.currentTarget);
     const payload = { ...answers, ...Object.fromEntries(data.entries()), services: [answers.services], preferredContactMethod: 'email' };
     setStatus({ text: 'Sending your project notes…', kind: '' });
+    record('visitor', [payload.name, payload.email, payload.phone, payload.projectDetails].filter(Boolean).join(' · '), 'text', 'contact');
     try {
-      await submitLead(payload, 'bit_chat');
+      leadIdRef.current = await submitLead(payload, 'bit_chat');
+      outcomeRef.current = 'converted';
+      trackEvent('form_submit', { label: 'Bit chat — project notes' });
       setStatus({ text: 'You’re all set. Our team will follow up shortly.', kind: 'success' });
     } catch (error) {
+      outcomeRef.current = 'failed';
       setStatus({ text: error.message || 'Unable to send your request. Please try again.', kind: 'error' });
     }
   };
@@ -272,7 +342,7 @@ function AiReceptionist({ onClose, origin, initialAnswer }) {
 
   return <aside className="bit-window" onAnimationEnd={finishReveal} style={{ '--bit-x': `${origin?.x ?? window.innerWidth - 58}px`, '--bit-y': `${origin?.y ?? window.innerHeight - 52}px` }} aria-labelledby="receptionist-title" role="dialog" aria-modal="true">
     <div className="bit-noise" aria-hidden="true" />
-    <header className="bit-topbar"><a className="bit-wordmark" href="#top" onClick={onClose}>BiteSites<span>✦</span></a><div className="bit-agent"><span className="chat-presence" /> Bit is here</div><button type="button" className="bit-close" onClick={onClose} aria-label="Close Bit">Close <span>×</span></button></header>
+    <header className="bit-topbar"><a className="bit-wordmark" href="#top" onClick={onClose} aria-label="BiteSites — back to site"><img src={logoWordmark} alt="BiteSites" width="500" height="500" /></a><div className="bit-agent"><span className="chat-presence" /> Bit is here</div><button type="button" className="bit-close" onClick={onClose} aria-label="Close Bit">Close <span>×</span></button></header>
     <div className="bit-stage" ref={bodyRef}>
       <div className="bit-intro">
         <div className="chat-avatar bit-avatar" aria-hidden="true"><BitMascot /></div>
@@ -317,6 +387,10 @@ function App() {
   const portfolioLastTimeUpdateRef = useRef(0);
   const portfolioExitReadyRef = useRef(false);
   const portfolioExitTimerRef = useRef(0);
+
+  // Behavioural capture for the admin dashboard. Started once, for the life of
+  // the marketing page — see src/lib/analytics.js for what it records.
+  useEffect(() => startAnalytics(), []);
 
   useEffect(() => {
     const header = document.querySelector('.site-header');
@@ -365,6 +439,23 @@ function App() {
   }, [activeProject]);
 
   const closeMenu = () => setMenuOpen(false);
+
+  // The mobile menu is a full-height panel: hold the page still behind it, close it on Escape,
+  // and drop it if the viewport grows back to the desktop nav.
+  useEffect(() => {
+    document.body.classList.toggle('menu-open', menuOpen);
+    if (!menuOpen) return;
+    const onKeyDown = event => { if (event.key === 'Escape') setMenuOpen(false); };
+    const onResize = () => { if (window.innerWidth > 900) setMenuOpen(false); };
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('resize', onResize);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('resize', onResize);
+    };
+  }, [menuOpen]);
+  useEffect(() => () => document.body.classList.remove('menu-open'), []);
+
   const openReceptionist = (event, initialAnswer = null) => {
     const button = event?.currentTarget;
     const rect = button?.getBoundingClientRect();
@@ -525,7 +616,7 @@ function App() {
     if (!payload.services.length) return setStatus({ text: 'Please select at least one service.', kind: 'error' });
     if (payload.preferredContactMethod === 'phone' && !payload.phone.trim()) return setStatus({ text: 'Please include a phone number if you prefer a phone call.', kind: 'error' });
     setStatus({ text: 'Sending…', kind: '' });
-    try { await submitLead(payload, 'intake_form'); form.reset(); setStatus({ text: 'Thanks — your project request has been received. We’ll be in touch soon.', kind: 'success' }); } catch (error) { setStatus({ text: error.message || 'Unable to submit the form. Please try again.', kind: 'error' }); }
+    try { await submitLead(payload, 'intake_form'); form.reset(); trackEvent('form_submit', { label: 'Start your project' }); setStatus({ text: 'Thanks — your project request has been received. We’ll be in touch soon.', kind: 'success' }); } catch (error) { setStatus({ text: error.message || 'Unable to submit the form. Please try again.', kind: 'error' }); }
   };
 
   const portfolioExpand = smoothStep(.01, .15, portfolioProgress);
@@ -536,9 +627,21 @@ function App() {
   const portfolioExit = 0;
 
   return <>
-    <header className="site-header"><nav><div className="nav-wing nav-wing-left">{navigationItems.slice(0, 4).map(([label, href]) => <a key={label} href={href}>{label}</a>)}</div><MorphingLogo onClick={closeMenu} /><div className="nav-wing nav-wing-right">{navigationItems.slice(4).map(([label, href]) => <a key={label} href={href}>{label}</a>)}<Button href="#start" variant="ai">Start Your Project</Button></div><button className="menu-toggle" onClick={() => setMenuOpen(!menuOpen)} aria-label="Toggle menu">{menuOpen ? '×' : '☰'}</button><div className={`navlinks navlinks-mobile ${menuOpen ? 'open' : ''}`}>{navigationItems.map(([label, href]) => <a key={label} href={href} onClick={closeMenu}>{label}</a>)}<Button href="#start" variant="ai" onClick={closeMenu}>Start Your Project</Button></div></nav></header>
+    <header className="site-header"><nav><div className="nav-wing nav-wing-left">{navigationItems.slice(0, 4).map(([label, href]) => <a key={label} href={href}>{label}</a>)}</div><MorphingLogo onClick={closeMenu} /><div className="nav-wing nav-wing-right">{navigationItems.slice(4).map(([label, href]) => <a key={label} href={href}>{label}</a>)}<Button href="#start" variant="ai">Start Your Project</Button></div><button className="menu-toggle" onClick={() => setMenuOpen(!menuOpen)} aria-label={menuOpen ? 'Close menu' : 'Open menu'} aria-expanded={menuOpen} aria-controls="mobile-nav"><span className="menu-toggle-bars" aria-hidden="true"><i /><i /><i /></span></button></nav></header>
+    {/* The drawer sits outside <header> on purpose: the header's backdrop-filter would otherwise
+        become the containing block for these fixed panels and collapse them to nothing. */}
+    <div className={`nav-drawer-backdrop ${menuOpen ? 'open' : ''}`} onClick={closeMenu} aria-hidden="true" />
+    <aside id="mobile-nav" className={`nav-drawer ${menuOpen ? 'open' : ''}`} aria-label="Main menu" aria-hidden={!menuOpen}>
+      <div className="nav-drawer-head">
+        <span>Menu</span>
+        <button className="nav-drawer-close" onClick={closeMenu} aria-label="Close menu" tabIndex={menuOpen ? undefined : -1}>×</button>
+      </div>
+      <nav className="nav-drawer-links">{navigationItems.map(([label, href]) => <a key={label} href={href} onClick={closeMenu} tabIndex={menuOpen ? undefined : -1}>{label}</a>)}</nav>
+      <Button href="#start" variant="ai" onClick={closeMenu} tabIndex={menuOpen ? undefined : -1}>Start Your Project</Button>
+    </aside>
     <main id="top">
-      <section className="hero"><div className="hero-bg"><InteractiveNebulaShader /><div className="hero-overlay" /></div><div className="wrap hero-content"><Eyebrow gradient>AI-powered digital solutions</Eyebrow><h1>Intelligence built<br />into your <span className="gradient-text">business.</span></h1><p className="lead">BiteSites builds Voice AI receptionists, websites, and automations that answer faster, capture more leads, and take repetitive work off your team.</p><div className="hero-actions"><Button href="#start" variant="ai">Start Your Project</Button><Button href="#ai-receptionist" variant="ghost">Meet Byte &amp; Bit</Button></div><div className="hero-meta"><div><span>Voice AI</span> receptionists</div><div><span>Web</span> development</div><div><span>AI</span> automation</div></div></div></section>
+      <section className="hero"><div className="hero-bg"><InteractiveNebulaShader /><div className="hero-overlay" /></div><div className="wrap hero-content"><Eyebrow gradient>AI-powered digital solutions</Eyebrow><h1>Intelligence built<br />into your <span className="gradient-text">business.</span></h1><p className="lead">BiteSites builds Voice AI receptionists, websites, and automations that answer faster, capture more leads, and take repetitive work off your team.</p><div className="hero-actions"><Button href="#start" variant="ai">Start Your Project</Button><Button href="#ai-receptionist" variant="ghost">Meet Byte &amp; Bit</Button></div></div></section>
+      <section className="intake" id="start"><div className="wrap intake-grid"><div className="section-head reveal"><Eyebrow gradient>Start your project</Eyebrow><h2>Tell us what you need.</h2><p>Use one form for web development, social media management, or AI automation. We only ask for the details needed to route your project and follow up.</p></div><form className="intake-form reveal" onSubmit={submit}><div className="form-row"><Field label="Name" name="name" required /><Field label="Email" name="email" type="email" required /></div><div className="form-row"><Field label="Phone (optional)" name="phone" type="tel" /><Field label="Business / Company (optional)" name="businessName" /></div><div className="form-row"><Field label="Role in company (optional)" name="roleInCompany" /><label className="field"><span>Business size</span><select name="businessSize" required defaultValue=""><option value="" disabled>Select size</option><option value="solo">Solo / Freelancer</option><option value="small">2-10 employees</option><option value="growing">11-50 employees</option><option value="established">51-200 employees</option><option value="enterprise">200+ employees</option></select></label></div><label className="field"><span>Timeline (optional)</span><select name="urgencyTag" defaultValue=""><option value="">No urgency selected</option><option value="asap">ASAP</option><option value="2_4_weeks">2-4 weeks</option><option value="1_2_months">1-2 months</option><option value="flexible">Flexible</option></select></label><fieldset className="field"><legend>Services <small>(select all that apply)</small></legend><div className="choices">{[['web_development','Web Development'],['social_media_management','Social Media Management'],['ai_automation','AI Automation']].map(([value, label]) => <label className="choice" key={value}><input type="checkbox" name="services" value={value} />{label}</label>)}</div></fieldset><fieldset className="field"><legend>Preferred contact method</legend><div className="choices"><label className="choice"><input type="radio" name="preferredContactMethod" value="email" defaultChecked />Email</label><label className="choice"><input type="radio" name="preferredContactMethod" value="phone" />Phone</label></div></fieldset><label className="field"><span>Project details</span><textarea name="projectDetails" placeholder="What are you looking to accomplish?" /></label><Button variant="ai" type="submit">Start Your Project</Button><p className={`form-status ${status.kind}`}>{status.text}</p></form></div></section>
       <div className="strip" aria-label="What we do"><div className="ticker"><div className="ticker-track">{[0, 1].map(copy => <div className="ticker-group" key={copy} aria-hidden={copy === 1 ? 'true' : undefined}>{tickerServices.map(service => <span key={service}>{service}</span>)}</div>)}</div></div></div>
       <section className="voice-receptionist-section" id="ai-receptionist" aria-labelledby="voice-receptionist-heading">
         <div className="wrap">
@@ -684,10 +787,9 @@ function App() {
       <section className="pad" id="about"><div className="wrap"><SectionHead label="About BiteSites" title="Small team. Serious digital work.">We combine thoughtful design, practical engineering, and emerging AI tools to help businesses move forward.</SectionHead><div className="mission reveal"><p>We believe technology should make your business feel lighter — clearer systems, better experiences, and less work lost in the cracks.</p></div><div className="values-grid">{[['Passion for Excellence','Exceptional websites and systems that make a lasting impact.'],['Timely Delivery','We respect your time and deliver projects on schedule.'],['Open Communication','Transparent updates that keep you informed every step of the way.'],['Innovation','We explore new technologies and design trends to stay ahead.']].map(([title, text]) => <div className="value-item reveal" key={title}><h4>{title}</h4><p>{text}</p></div>)}</div></div></section>
       <TeamSection />
       <section className="pad alt" id="consultation"><div className="wrap"><SectionHead label="Consultation" title="Let’s talk through what your business needs.">Tell us what you are trying to solve. We’ll recommend the right service direction and follow up to confirm a conversation.</SectionHead><div className="segments reveal" style={{ marginTop: 0 }}>{[['01 · Tell us what you need','Share your business, goals, preferred services, and the best way to contact you.'],['02 · We review the scope','We identify the right service mix and prepare practical next steps.'],['03 · We follow up','If the fit is right, we confirm the consultation details with you directly.']].map(([title, text]) => <div className="segment" key={title}><div className="tag">{title}</div><p>{text}</p></div>)}</div><div className="hero-actions reveal"><Button href="https://calendar.app.google/bKKKvGWBSgvV8rodA" variant="ai" target="_blank" rel="noreferrer">Schedule a free consultation</Button><Button href="#pricing" variant="ghost">See pricing</Button></div></div></section>
-      <section className="intake" id="start"><div className="wrap intake-grid"><div className="section-head reveal"><Eyebrow gradient>Start your project</Eyebrow><h2>Tell us what you need.</h2><p>Use one form for web development, social media management, or AI automation. We only ask for the details needed to route your project and follow up.</p></div><form className="intake-form reveal" onSubmit={submit}><div className="form-row"><Field label="Name" name="name" required /><Field label="Email" name="email" type="email" required /></div><div className="form-row"><Field label="Phone (optional)" name="phone" type="tel" /><Field label="Business / Company (optional)" name="businessName" /></div><div className="form-row"><Field label="Role in company (optional)" name="roleInCompany" /><label className="field"><span>Business size</span><select name="businessSize" required defaultValue=""><option value="" disabled>Select size</option><option value="solo">Solo / Freelancer</option><option value="small">2-10 employees</option><option value="growing">11-50 employees</option><option value="established">51-200 employees</option><option value="enterprise">200+ employees</option></select></label></div><label className="field"><span>Timeline (optional)</span><select name="urgencyTag" defaultValue=""><option value="">No urgency selected</option><option value="asap">ASAP</option><option value="2_4_weeks">2-4 weeks</option><option value="1_2_months">1-2 months</option><option value="flexible">Flexible</option></select></label><fieldset className="field"><legend>Services <small>(select all that apply)</small></legend><div className="choices">{[['web_development','Web Development'],['social_media_management','Social Media Management'],['ai_automation','AI Automation']].map(([value, label]) => <label className="choice" key={value}><input type="checkbox" name="services" value={value} />{label}</label>)}</div></fieldset><fieldset className="field"><legend>Preferred contact method</legend><div className="choices"><label className="choice"><input type="radio" name="preferredContactMethod" value="email" defaultChecked />Email</label><label className="choice"><input type="radio" name="preferredContactMethod" value="phone" />Phone</label></div></fieldset><label className="field"><span>Project details</span><textarea name="projectDetails" placeholder="What are you looking to accomplish?" /></label><Button variant="ai" type="submit">Start Your Project</Button><p className={`form-status ${status.kind}`}>{status.text}</p></form></div></section>
       <section className="pad"><div className="wrap"><div className="cta-final reveal"><Eyebrow>Get started</Eyebrow><h2>Ready to build what is next?</h2><p>Tell us what you need, choose services, and let us know how you want to be contacted.</p><div className="hero-actions"><Button href="#start" variant="ai">Start Your Project</Button><Button href="#pricing" variant="ghost">View Pricing</Button></div></div></div></section>
     </main>
-    <footer className="site-footer"><div className="wrap footer-inner"><MorphingLogo location="footer" /><div className="footer-links"><a href="#services">Services</a><a href="#about">About</a><a href="#team">Team</a><a href="#pricing">Pricing</a><a href="#start">Start a Project</a><Link to="/terms">Terms</Link><Link to="/privacy">Privacy</Link></div><div className="footer-copy">© 2026 BiteSites. All rights reserved.</div></div></footer>
+    <footer className="site-footer"><div className="wrap footer-inner"><div className="footer-links footer-links-left"><a href="#services">Services</a><a href="#about">About</a><a href="#team">Team</a><a href="#pricing">Pricing</a></div><MorphingLogo location="footer" /><div className="footer-links footer-links-right"><a href="#start">Start a Project</a><Link to="/terms">Terms</Link><Link to="/privacy">Privacy</Link></div><div className="footer-copy">© 2026 BiteSites. All rights reserved.</div></div></footer>
     {modal && <div className="modal-backdrop" onClick={() => setModal(null)}><div className="detail-panel" role="dialog" aria-modal="true" onClick={event => event.stopPropagation()}><button className="close" onClick={() => setModal(null)} aria-label="Close">×</button><div className="detail-hero"><Eyebrow gradient={modal === 'ai'}>Services</Eyebrow><h2>{detailCopy[modal][0]}</h2><p>{detailCopy[modal][1]}</p></div><div className="detail-content"><h3>What’s included</h3><ul className="detail-list">{detailCopy[modal][2].map(item => <li key={item}>{item}</li>)}</ul><div className="hero-actions"><Button href="#start" variant="ai" onClick={() => setModal(null)}>Start Your Project</Button><Button href="#pricing" variant="ghost" onClick={() => setModal(null)}>See pricing</Button></div></div></div></div>}
     <VoiceAIReceptionist open={voiceAgentOpen} onClose={() => setVoiceAgentOpen(false)} />
     {receptionistOpen && <AiReceptionist origin={chatOrigin} initialAnswer={receptionistInitialAnswer} onClose={closeReceptionist} />}
@@ -697,11 +799,20 @@ function App() {
 
 function Field({ label, name, type = 'text', required = false }) { return <label className="field"><span>{label}</span><input name={name} type={type} required={required} /></label>; }
 
+// The dashboard is a separate bundle: it pulls in Firebase Auth, the admin
+// stylesheet and every chart, none of which a visitor to the marketing site
+// should have to download. It only loads once someone navigates to /admin.
+const AdminApp = lazy(() => import('./admin/AdminApp'));
+
 createRoot(document.getElementById('root')).render(
   <BrowserRouter>
     <Routes>
       <Route path="/terms" element={<Terms />} />
       <Route path="/privacy" element={<Privacy />} />
+      <Route
+        path="/admin/*"
+        element={<Suspense fallback={<div className="admin-boot">Loading dashboard…</div>}><AdminApp /></Suspense>}
+      />
       {/* Everything else renders the marketing page, which navigates by hash anchor. */}
       <Route path="*" element={<App />} />
     </Routes>

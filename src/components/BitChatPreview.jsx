@@ -30,7 +30,6 @@ export function BitChatPreview({ onOpen }) {
   }, []);
 
   return <button className="bitchat-preview" type="button" onClick={onOpen} aria-label="Open Bit, BiteSites' AI chat receptionist">
-    <span className="bitchat-glow" aria-hidden="true" />
     <span className="bitchat-sparkles" aria-hidden="true">
       {sparkles.map(sparkle => <i key={sparkle.left + sparkle.top} style={{ left: sparkle.left, top: sparkle.top, animationDelay: sparkle.delay, fontSize: sparkle.size }}>✦</i>)}
     </span>

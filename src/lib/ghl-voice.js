@@ -140,6 +140,76 @@ export async function startVoiceCall() {
   readControls()?.start?.click();
 }
 
+// The widget renders a live transcript in some configurations and not others,
+// and it does not version its class names for us. Rather than pin one selector
+// that will rot, scan the shadow root for anything that looks like a transcript
+// line and infer the speaker from its class list. If the widget stops rendering
+// text entirely this returns nothing, which is the correct outcome: the
+// authoritative transcript is the one GoHighLevel posts to `recordVoiceCall`.
+const TRANSCRIPT_CONTAINER = '[class*="transcript"], [class*="messages"], [class*="conversation"]';
+const TRANSCRIPT_LINE = '[class*="message"], [class*="transcript-item"], [class*="bubble"], li, p';
+const VISITOR_HINTS = ['user', 'visitor', 'human', 'customer', 'you', 'outgoing', 'right'];
+
+/**
+ * Best-effort read of the transcript the widget has rendered so far.
+ * @returns {Array<{role: 'visitor'|'byte', text: string}>}
+ */
+export function readVoiceTranscript() {
+  const root = readControls()?.root;
+  if (!root) return [];
+
+  const container = root.querySelector(TRANSCRIPT_CONTAINER);
+  if (!container) return [];
+
+  const lines = [];
+  for (const node of container.querySelectorAll(TRANSCRIPT_LINE)) {
+    // Only take leaf-ish nodes, or a nested wrapper repeats its parent's text.
+    if (node.querySelector(TRANSCRIPT_LINE)) continue;
+
+    const text = node.textContent?.trim().replace(/\s+/g, ' ') ?? '';
+    if (!text || text.length > 2000) continue;
+
+    const signature = `${node.className} ${node.parentElement?.className ?? ''}`.toLowerCase();
+    const role = VISITOR_HINTS.some(hint => signature.includes(hint)) ? 'visitor' : 'byte';
+    lines.push({ role, text });
+  }
+  return lines;
+}
+
+/**
+ * Calls `listener` with each newly rendered transcript line.
+ * @returns {() => void} cleanup
+ */
+export function observeVoiceTranscript(listener) {
+  let observer;
+  let cancelled = false;
+  let seen = 0;
+
+  const emit = () => {
+    const lines = readVoiceTranscript();
+    // The widget re-renders the whole list, so track progress by count and only
+    // forward what is new. A line that is edited in place is not re-sent.
+    if (lines.length <= seen) {
+      if (lines.length < seen) seen = lines.length;
+      return;
+    }
+    for (const line of lines.slice(seen)) listener(line);
+    seen = lines.length;
+  };
+
+  loadVoiceAgent().then(controls => {
+    if (cancelled) return;
+    emit();
+    observer = new MutationObserver(emit);
+    observer.observe(controls.root, { subtree: true, childList: true, characterData: true });
+  }).catch(() => { /* no widget, no transcript — the webhook fills the gap */ });
+
+  return () => {
+    cancelled = true;
+    observer?.disconnect();
+  };
+}
+
 /** Hangs up, retrying because the widget ignores a hangup while it connects. */
 export function endVoiceCall() {
   if (!loadPromise) return Promise.resolve();

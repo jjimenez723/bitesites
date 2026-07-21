@@ -142,6 +142,136 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // ----------------------------------------------------------------- events
+    // First-party analytics written by every visitor (see src/lib/analytics.js).
+    // Same threat model as `leads`: anonymous writes, so every field is
+    // whitelisted, typed and capped, and nothing can read them back but an admin.
+    // Append-only — a visitor cannot revise or erase what they did.
+
+    function validEvent(data) {
+      return data.keys().hasAll(['type', 'sid', 'vid', 'path', 'day', 'device', 'ts'])
+        && data.keys().hasOnly([
+             'type', 'sid', 'vid', 'path', 'day', 'device', 'ts',
+             'label', 'section', 'interactive', 'x', 'y', 'vw', 'vh',
+             'value', 'referrer', 'query', 'href'
+           ])
+        && data.type in ['page_view', 'click', 'section_view', 'scroll_depth',
+                         'form_start', 'form_submit', 'chat_open', 'call_open', 'outbound']
+        && str(data, 'sid', 40)
+        && str(data, 'vid', 40)
+        && str(data, 'path', 300)
+        && data.day is string && data.day.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && data.device in ['mobile', 'tablet', 'desktop']
+        && data.ts == request.time
+
+        && optStr(data, 'label', 80)
+        && optStr(data, 'section', 60)
+        && optStr(data, 'referrer', 400)
+        && optStr(data, 'query', 300)
+        && optStr(data, 'href', 300)
+        && (!('interactive' in data) || data.interactive is bool)
+        // Click positions are fractions of the viewport/page, never pixels.
+        && (!('x' in data) || (data.x is number && data.x >= 0 && data.x <= 1))
+        && (!('y' in data) || (data.y is number && data.y >= 0 && data.y <= 1))
+        && (!('vw' in data) || (data.vw is int && data.vw >= 0 && data.vw <= 20000))
+        && (!('vh' in data) || (data.vh is int && data.vh >= 0 && data.vh <= 20000))
+        && (!('value' in data) || (data.value is number && data.value >= 0 && data.value <= 100000));
+    }
+
+    match /events/{eventId} {
+      allow create: if validEvent(request.resource.data);
+      allow read:   if isAdmin();
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+
+    // ------------------------------------------------- conversations (Bit/Byte)
+    // Transcripts of the chat and voice agents. A visitor may open a conversation
+    // and append to it, and may close their own out — but only through the narrow
+    // update below, which cannot rewrite when it started or who it belonged to,
+    // and never gains read access to anyone's conversation including their own.
+
+    function validConversationOpen(data, agentName, channelName) {
+      return data.keys().hasAll(['agent', 'channel', 'status', 'startedAt', 'sid', 'path'])
+        && data.keys().hasOnly([
+             'agent', 'channel', 'status', 'startedAt', 'sid', 'path',
+             'referrer', 'userAgent', 'messageCount', 'provider'
+           ])
+        && data.agent == agentName
+        && data.channel == channelName
+        && data.status == 'open'
+        && data.startedAt == request.time
+        && str(data, 'sid', 40)
+        && optStr(data, 'path', 300)
+        && optStr(data, 'referrer', 400)
+        && optStr(data, 'userAgent', 400)
+        && optStr(data, 'provider', 60)
+        && (!('messageCount' in data) || (data.messageCount is int && data.messageCount >= 0));
+    }
+
+    // The close-out. Deliberately not a general update: the immutable fields are
+    // compared against what is already stored, so a passer-by cannot reassign a
+    // conversation or backdate it, and only terminal states are writable.
+    function validConversationClose(data, previous) {
+      return data.diff(previous).affectedKeys().hasOnly([
+               'status', 'endedAt', 'messageCount', 'durationSec', 'leadId', 'answers', 'error'
+             ])
+        && data.status in ['converted', 'abandoned', 'failed', 'completed', 'blocked']
+        && previous.status == 'open'
+        && data.endedAt == request.time
+        && optStr(data, 'leadId', 60)
+        && optStr(data, 'error', 300)
+        && (!('messageCount' in data) || (data.messageCount is int && data.messageCount >= 0 && data.messageCount <= 500))
+        && (!('durationSec' in data) || (data.durationSec is int && data.durationSec >= 0 && data.durationSec <= 86400))
+        // The three Bit questions, capped per key — same rule as customAnswers on
+        // a lead, so a close-out cannot become 1MB of free object storage either.
+        && (!('answers' in data) || validCustomAnswers(data.answers));
+    }
+
+    function validTurn(data) {
+      return data.keys().hasAll(['at'])
+        && data.keys().hasOnly(['role', 'kind', 'text', 'state', 'questionKey', 'at'])
+        && data.at == request.time
+        && (!('role' in data) || data.role in ['visitor', 'bit', 'byte'])
+        && (!('kind' in data) || data.kind in ['text', 'choice', 'prompt', 'system', 'state', 'transcript'])
+        && optStr(data, 'text', 2000)
+        && optStr(data, 'state', 40)
+        && optStr(data, 'questionKey', 60);
+    }
+
+    match /chats/{chatId} {
+      allow create: if validConversationOpen(request.resource.data, 'bit', 'chat');
+      allow update: if isAdmin()
+                    || validConversationClose(request.resource.data, resource.data);
+      allow read:   if isAdmin();
+      allow delete: if isAdmin();
+
+      match /messages/{messageId} {
+        allow create: if validTurn(request.resource.data);
+        allow read:   if isAdmin();
+        allow update: if false;
+        allow delete: if isAdmin();
+      }
+    }
+
+    match /calls/{callId} {
+      allow create: if validConversationOpen(request.resource.data, 'byte', 'voice');
+      allow update: if isAdmin()
+                    || validConversationClose(request.resource.data, resource.data);
+      allow read:   if isAdmin();
+      allow delete: if isAdmin();
+
+      // Turns cover both the state timeline and any transcript the widget
+      // renders. The authoritative transcript arrives server-side from the
+      // GoHighLevel webhook, which runs with the Admin SDK and bypasses rules.
+      match /turns/{turnId} {
+        allow create: if validTurn(request.resource.data);
+        allow read:   if isAdmin();
+        allow update: if false;
+        allow delete: if isAdmin();
+      }
+    }
+
     // ------------------------------------------------------------------ roles
     // The authoritative access-control store. Deliberately unwritable by the
     // account it describes — bootstrap your first admin from the Firebase console.
