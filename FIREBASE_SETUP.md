@@ -291,7 +291,7 @@ explicit date range, used once to bring the back catalogue in.
 GET services.leadconnectorhq.com/voice-ai/dashboard/call-logs
     Authorization: Bearer <private integration token>
     Version: 2021-07-28
-    ?locationId= &page=(1-based) &pageSize=(max 50, 422 above) &startDate= &endDate=
+    ?locationId= &page=(1-based) &pageSize=(max 50, 422 above)
 → { callLogs[], total, page, pageSize }
 ```
 
@@ -299,9 +299,22 @@ A call log carries `id`, `contactId`, `createdAt`, `duration` (seconds), `summar
 `transcript` (`bot:` / `human:` lines), `trialCall`, `fromNumber` (real calls only), and
 `extractedData { name, email, otherDetails, address }`. Contact details come from
 `extractedData` — the agent pulls them out during the conversation — so no
-`contacts.readonly` scope is needed. **Two API quirks worth knowing:** `total` ignores
-the date filter, so paginate until a short page rather than trusting it; and there is no
-sort parameter, results come back newest first.
+`contacts.readonly` scope is needed.
+
+**Three API traps, all of them silent:**
+
+1. **`startDate` / `endDate` do nothing.** They are accepted without complaint — no 422,
+   no warning — and then ignored: asking for March alone returns July calls. All date
+   filtering happens in `fetchCallLogs`, not in the query.
+2. **`total` is not filter-aware either**, so it cannot be used to drive pagination. A
+   short page is the only reliable end.
+3. **There is no sort parameter.** Results come back newest first, which is the one
+   helpful accident — it is what lets `fetchCallLogs` stop as soon as it runs past the
+   window instead of re-downloading the whole history every five minutes.
+
+Trap 1 is easy to "verify" wrongly: because results are newest-first, page one of a
+recent-dates query looks correctly filtered whether or not the filter works. Check a
+window that should be *empty* (a future year) or an old one, never a recent one.
 
 **Setup** (already done for `bitesites-org`):
 

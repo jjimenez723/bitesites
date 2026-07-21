@@ -62,6 +62,19 @@ console.log('\nguards');
 check('rejects a bad secret', (await run(RANGE, { secret: 'wrong' })).code === 401);
 check('requires startDate', (await run({})).code === 400);
 
+// The API accepts startDate/endDate and then ignores them, so the window is
+// applied client-side. If that ever regresses, the poller silently goes back to
+// re-scanning the entire history every five minutes.
+console.log('\ndate window is actually applied');
+const wide = await run({ ...RANGE, includeDemo: 'true', dryRun: 'true' });
+const narrow = await run({ startDate: '2026-03-01', endDate: '2026-03-31', includeDemo: 'true', dryRun: 'true' });
+const future = await run({ startDate: '2030-01-01', endDate: '2030-12-31', includeDemo: 'true', dryRun: 'true' });
+check('a narrow window scans fewer calls than a wide one',
+  narrow.body?.scanned < wide.body?.scanned,
+  `March=${narrow.body?.scanned} vs all=${wide.body?.scanned}`);
+check('a window with no calls in it scans none',
+  future.body?.scanned === 0, `${future.body?.scanned} scanned`);
+
 console.log('\ndry run (writes nothing)');
 const dry = await run({ ...RANGE, includeDemo: 'false', dryRun: 'true' });
 check('returns 200', dry.code === 200, JSON.stringify(dry.body));

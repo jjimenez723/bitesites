@@ -866,10 +866,11 @@ export const pollVoiceCalls = onSchedule(
         // `voice.demo` flag keeps them separable in the dashboard.
         includeDemo: true
       });
-      // Only worth a log line when it actually did something.
-      if (stats.leadsCreated || stats.leadsUpdated) {
-        console.log('[voice-poll]', JSON.stringify(stats));
-      }
+      // Logged on every run, including quiet ones. A scheduled job that only
+      // speaks up when it finds something is indistinguishable from one that
+      // has silently stopped working — which is exactly the state this function
+      // was in when its date window was broken and nothing looked wrong.
+      console.log('[voice-poll]', JSON.stringify(stats));
     } catch (error) {
       console.error('[voice-poll] failed:', error.message);
       throw error;   // let the schedule retry

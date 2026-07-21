@@ -37,7 +37,9 @@
 .agent-card-bit .agent-card-actions .btn{border-color:transparent;background:linear-gradient(135deg,#cbaaff,#8f6bff);color:#fff;box-shadow:0 14px 36px rgba(143,107,255,.3)}
 .agent-card-bit .agent-card-actions .btn:hover{background:linear-gradient(135deg,#d8bcff,#9d7cff)}
 .agent-card-actions small{max-width:200px;color:rgba(255,255,255,.38);font-size:11px;line-height:1.45}
-.agent-card .voice-preview{aspect-ratio:1.2;min-height:300px}
+/* min-width:0 or the aspect ratio turns min-height into a floor on the card's
+   width, which is what stopped the page from shrinking past ~430px. */
+.agent-card .voice-preview{aspect-ratio:1.2;min-width:0;min-height:300px}
 
 /* Byte's face is a tiny SVG so it can blink and bob beside Bit. */
 .byte-avatar{display:block;width:54px;height:54px;flex:0 0 auto}
@@ -61,7 +63,7 @@
 .agent-avatar-bit{display:grid;width:54px;height:54px;flex:0 0 auto;place-items:center;overflow:hidden;border:1px solid rgba(201,167,255,.34);border-radius:50%;background:#000;box-shadow:0 0 0 4px rgba(201,167,255,.07)}
 .agent-avatar-bit .bit-mascot{width:100%;height:100%}
 
-.bitchat-preview{position:relative;display:flex;width:100%;aspect-ratio:1.2;min-height:300px;flex-direction:column;align-items:center;justify-content:flex-end;gap:9px;padding:0 18px 44px;overflow:hidden;border:1px solid rgba(201,167,255,.2);border-radius:28px;background:#000;box-shadow:0 34px 90px rgba(0,0,0,.55);color:#fff;cursor:pointer;isolation:isolate;transition:transform .45s cubic-bezier(.2,.8,.2,1),border-color .3s,box-shadow .45s}
+.bitchat-preview{position:relative;display:flex;width:100%;aspect-ratio:1.2;min-width:0;min-height:300px;flex-direction:column;align-items:center;justify-content:flex-end;gap:9px;padding:42px 18px 44px;overflow:hidden;border:1px solid rgba(201,167,255,.2);border-radius:28px;background:#000;box-shadow:0 34px 90px rgba(0,0,0,.55);color:#fff;cursor:pointer;isolation:isolate;transition:transform .45s cubic-bezier(.2,.8,.2,1),border-color .3s,box-shadow .45s}
 .bitchat-preview:hover{transform:translateY(-5px);border-color:rgba(214,186,255,.5);box-shadow:0 42px 105px rgba(0,0,0,.66),0 0 0 1px rgba(214,186,255,.12)}
 .bitchat-preview:focus-visible{outline:2px solid #cbaaff;outline-offset:5px}
 .bitchat-sparkles i{position:absolute;color:#ffd9f2;font-style:normal;line-height:1;opacity:0;animation:bitchatSparkle 3.8s ease-in-out infinite}
@@ -69,12 +71,14 @@
 .bitchat-tools i{width:7px;height:7px;border-radius:50%;background:rgba(255,158,203,.55)}
 .bitchat-tools i:nth-child(2){background:rgba(255,226,138,.5)}
 .bitchat-tools i:nth-child(3){background:rgba(158,231,255,.5)}
-.bitchat-stage{position:absolute;left:50%;top:43%;display:flex;width:min(84%,320px);transform:translate(-50%,-50%);flex-direction:column;align-items:center}
-.bitchat-say{position:relative;max-width:100%;margin-bottom:15px;padding:10px 16px;border-radius:17px 17px 17px 6px;background:linear-gradient(135deg,#fff,#f0e7ff);box-shadow:0 14px 32px rgba(0,0,0,.4);color:#241a3d;font-size:13px;font-weight:800;line-height:1.35;text-align:center;animation:bitchatPop .5s cubic-bezier(.2,.9,.3,1.5)}
+/* Bit sits in the flow rather than pinned to a percentage of the card, so a
+   quick-reply row that wraps pushes him up instead of landing on top of him. */
+.bitchat-stage{position:relative;display:flex;flex:1 1 auto;width:min(84%,320px);min-height:0;flex-direction:column;align-items:center;justify-content:center}
+.bitchat-say{position:relative;flex:0 0 auto;max-width:100%;margin-bottom:15px;padding:10px 16px;border-radius:17px 17px 17px 6px;background:linear-gradient(135deg,#fff,#f0e7ff);box-shadow:0 14px 32px rgba(0,0,0,.4);color:#241a3d;font-size:13px;font-weight:800;line-height:1.35;text-align:center;animation:bitchatPop .5s cubic-bezier(.2,.9,.3,1.5)}
 .bitchat-say:after{content:"";position:absolute;left:19px;bottom:-4px;width:11px;height:11px;border-radius:0 0 3px;background:#f2e9ff;transform:rotate(45deg)}
-.bitchat-mascot{display:block;width:min(58%,172px);animation:bitchatFloat 5.2s ease-in-out infinite}
+.bitchat-mascot{display:block;width:min(58%,172px);min-height:0;animation:bitchatFloat 5.2s ease-in-out infinite}
 .bitchat-mascot .bit-mascot{width:100%;height:100%;filter:drop-shadow(0 20px 32px rgba(0,0,0,.6))}
-.bitchat-shadow{width:44%;height:11px;margin-top:2px;border-radius:50%;background:radial-gradient(ellipse at center,rgba(186,150,255,.4),transparent 70%);animation:bitchatShadow 5.2s ease-in-out infinite}
+.bitchat-shadow{flex:0 0 auto;width:44%;height:11px;margin-top:2px;border-radius:50%;background:radial-gradient(ellipse at center,rgba(186,150,255,.4),transparent 70%);animation:bitchatShadow 5.2s ease-in-out infinite}
 .bitchat-chips{display:flex;flex-wrap:wrap;justify-content:center;gap:7px}
 .bitchat-chips i{padding:7px 12px;border:1px solid rgba(255,255,255,.15);border-radius:100px;background:rgba(255,255,255,.055);color:rgba(255,255,255,.7);font-size:11px;font-style:normal;font-weight:700;transition:border-color .3s,background .3s,color .3s}
 .bitchat-preview:hover .bitchat-chips i{border-color:rgba(214,186,255,.45);background:rgba(186,150,255,.16);color:#fff}
@@ -93,5 +97,9 @@
 
 @media(max-width:940px){.agent-duo-grid{grid-template-columns:minmax(0,1fr);gap:20px}.agent-card{max-width:720px;margin:0 auto}.agent-card .voice-preview,.bitchat-preview{min-height:340px}}
 @media(max-width:700px){.agent-duo-head{margin-bottom:36px}.agent-duo-head h2{font-size:38px}.agent-duo-head>p{font-size:15px}.agent-card{padding:19px 18px 22px;border-radius:28px}.agent-card-head{gap:11px}.agent-chip{display:none}.agent-card .voice-preview,.bitchat-preview{min-height:300px;border-radius:22px}.bitchat-mascot{width:min(56%,148px)}.agent-card-actions{align-items:flex-start;flex-direction:column;gap:12px}.agent-card-actions small{max-width:none}.voice-seo-points{grid-template-columns:1fr}}
-@media(max-width:420px){.agent-card .voice-preview,.bitchat-preview{min-height:262px}.bitchat-say{font-size:12px}}
+/* Around here the three quick replies stop fitting on one line. A fixed 1.2 card
+   ratio cannot hold a two-row chip stack and Bit apart, so the card takes its
+   height from its content from this width down. */
+@media(max-width:620px){.bitchat-preview{aspect-ratio:auto;padding-top:34px}}
+@media(max-width:420px){.agent-card .voice-preview,.bitchat-preview{min-height:262px}.bitchat-say{font-size:12px}.bitchat-preview{padding:28px 14px 34px}.bitchat-chips{gap:6px}.bitchat-chips i{padding:6px 10px;font-size:10.5px}}
 @media(prefers-reduced-motion:reduce){.agent-card,.bitchat-preview,.bitchat-chips i{transition:none}.byte-avatar svg,.byte-eyes,.byte-waves,.byte-spark,.agent-chip i,.bitchat-sparkles i,.bitchat-mascot,.bitchat-shadow,.bitchat-say,.bitchat-typing i{animation:none}.bitchat-sparkles i{opacity:.5}}

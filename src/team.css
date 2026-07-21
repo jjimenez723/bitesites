@@ -118,7 +118,9 @@
 
 @media (max-width: 430px) {
   .team-section { padding-bottom: 72px; }
-  .team-orbit-shell { --orbit-size: 430px; left: 50%; transform: translateX(-50%); }
+  /* Capped at the viewport so the orbit and its name labels stay on screen
+     rather than being clipped by the section on phones under 430px. */
+  .team-orbit-shell { --orbit-size: min(430px, 100vw); left: 50%; transform: translateX(-50%); }
   .team-node { transform: rotate(var(--node-angle)) translateX(calc(var(--orbit-size) * .39)); }
   .team-node-name { max-width: 86px; }
   .team-member-card { width: 270px; }
