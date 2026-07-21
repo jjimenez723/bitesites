@@ -1,25 +1,16 @@
-/* Scroll-expanded portfolio: horizontal intent browses, vertical intent advances the native page timeline. */
-body.portfolio-immersive > #root > header {
-  transform: translateY(-105%);
-}
-
-body.portfolio-immersive .chat-launcher {
-  opacity: 0;
-  transform: translateY(140%);
-  pointer-events: none;
-}
+/* The page keeps its native scroll; downward input is captured only over the visible project video. */
 
 .portfolio-section {
   position: relative;
-  height: 440svh;
+  height: 100vh;
+  height: 100svh;
   padding: 0;
   overflow: clip;
   background: #f5f5f7;
 }
 
 .portfolio-stage {
-  position: sticky;
-  top: 0;
+  position: relative;
   height: 100vh;
   height: 100svh;
   overflow: hidden;
@@ -75,7 +66,7 @@ body.portfolio-immersive .chat-launcher {
   overflow-y: hidden;
   padding: 0 18vw;
   scroll-padding-inline: 18vw;
-  scroll-snap-type: x mandatory;
+  scroll-snap-type: x proximity;
   scrollbar-width: none;
   overscroll-behavior-x: contain;
   touch-action: pan-x pan-y;
@@ -94,7 +85,6 @@ body.portfolio-immersive .chat-launcher {
   border: 1px solid rgba(255,255,255,.18);
   border-radius: 28px;
   scroll-snap-align: center;
-  scroll-snap-stop: always;
   background: #101117;
   box-shadow: 0 30px 90px rgba(0,0,0,.45);
   opacity: .47;
@@ -131,6 +121,8 @@ body.portfolio-immersive .chat-launcher {
   will-change: clip-path, opacity;
 }
 
+.portfolio-section.portfolio-demo-active .portfolio-demo { pointer-events: auto; }
+
 .portfolio-demo > video { display: block; width: 100%; height: 100%; object-fit: cover; object-position: center top; filter: saturate(.9) contrast(1.05); }
 .portfolio-demo-vignette { position: absolute; inset: 0; background: linear-gradient(90deg,rgba(2,3,7,.7) 0%,rgba(2,3,7,.08) 43%,rgba(2,3,7,.12) 62%,rgba(2,3,7,.72) 100%),linear-gradient(180deg,rgba(2,3,7,.2),rgba(2,3,7,.2) 55%,rgba(2,3,7,.7)); opacity: var(--portfolio-story); }
 
@@ -166,8 +158,10 @@ body.portfolio-immersive .chat-launcher {
   padding: clamp(96px,12vw,170px) clamp(28px,7vw,104px) clamp(58px,8vh,92px);
   opacity: var(--portfolio-story-opacity);
   transform: translateY(var(--portfolio-story-y));
-  pointer-events: auto;
+  pointer-events: none;
 }
+
+.portfolio-section.portfolio-story-visible .portfolio-story { pointer-events: auto; }
 
 .portfolio-story-heading > span { display: block; margin-bottom: 16px; color: #a8b7ff; font-size: 11px; font-weight: 800; letter-spacing: .18em; }
 .portfolio-story-heading h3 { max-width: 760px; font-size: clamp(50px,7.4vw,116px); line-height: .85; letter-spacing: -.075em; text-wrap: balance; }
@@ -202,7 +196,7 @@ body.portfolio-immersive .chat-launcher {
 .portfolio-stage > .portfolio-footer > p span { white-space: nowrap; }
 
 @media (max-width: 760px) {
-  .portfolio-section { height: 410svh; }
+  .portfolio-section { height: 100svh; }
   .portfolio-intro { top: 84px; padding-inline: 22px; }
   .portfolio-intro h2 { font-size: 36px; }
   .portfolio-intro p { max-width: 320px; font-size: 12px; }

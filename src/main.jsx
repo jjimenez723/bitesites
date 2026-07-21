@@ -2,11 +2,13 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BitMascot } from './components/BitMascot';
 import { InteractiveNebulaShader } from './components/InteractiveNebulaShader';
+import { TeamSection } from './components/TeamSection';
 import './styles.css';
 import './bit.css';
 import './typography.css';
 import './portfolio.css';
 import './pricing-badge.css';
+import './team.css';
 
 const logo = 'https://bitesites.org/_next/image?url=%2Fmainlogo2.png&w=3840&q=75';
 
@@ -44,6 +46,11 @@ const smoothStep = (start, end, value) => {
   const progress = Math.min(1, Math.max(0, (value - start) / (end - start)));
   return progress * progress * (3 - 2 * progress);
 };
+
+const PORTFOLIO_SCRUB_DISTANCE = 2200;
+const PORTFOLIO_VIDEO_START = .12;
+const PORTFOLIO_VIDEO_END = .86;
+const PORTFOLIO_DESCRIPTION_LEAD = 3.5;
 
 function Button({ children, variant = 'primary', href, ...props }) { return href ? <a className={`btn btn-${variant}`} href={href} {...props}>{children}</a> : <button className={`btn btn-${variant}`} {...props}>{children}</button>; }
 function Eyebrow({ children, gradient = false }) { return <div className={`eyebrow ${gradient ? 'gradient' : ''}`}>{children}</div>; }
@@ -183,10 +190,16 @@ function App() {
   const [chatOrigin, setChatOrigin] = useState(null);
   const [receptionistInitialAnswer, setReceptionistInitialAnswer] = useState(null);
   const [portfolioProgress, setPortfolioProgress] = useState(0);
+  const [portfolioVideoDuration, setPortfolioVideoDuration] = useState(0);
+  const [portfolioVideoTime, setPortfolioVideoTime] = useState(0);
   const portfolioTrack = useRef(null);
   const portfolioSection = useRef(null);
   const portfolioVideo = useRef(null);
   const portfolioProgressRef = useRef(0);
+  const portfolioVideoDurationRef = useRef(0);
+  const portfolioTargetTimeRef = useRef(0);
+  const portfolioScrubFrameRef = useRef(0);
+  const portfolioLastTimeUpdateRef = useRef(0);
 
   useEffect(() => {
     const header = document.querySelector('header');
@@ -202,37 +215,23 @@ function App() {
     return () => window.clearTimeout(nudgeTimer);
   }, []);
 
-  useEffect(() => {
-    let frame = 0;
-    const updatePortfolio = () => {
-      frame = 0;
-      const section = portfolioSection.current;
-      if (!section) return;
-      const rect = section.getBoundingClientRect();
-      const range = Math.max(1, section.offsetHeight - window.innerHeight);
-      const nextProgress = Math.min(1, Math.max(0, -rect.top / range));
-      if (Math.abs(nextProgress - portfolioProgressRef.current) > .001) {
-        portfolioProgressRef.current = nextProgress;
-        setPortfolioProgress(nextProgress);
-      }
-      if (portfolioVideo.current) {
-        portfolioVideo.current.playbackRate = 1 + smoothStep(.2, .64, nextProgress) * 2;
-      }
-      document.body.classList.toggle('portfolio-immersive', nextProgress > .075 && nextProgress < .94);
-    };
-    const requestUpdate = () => {
-      if (!frame) frame = window.requestAnimationFrame(updatePortfolio);
-    };
-    updatePortfolio();
-    window.addEventListener('scroll', requestUpdate, { passive: true });
-    window.addEventListener('resize', requestUpdate);
-    return () => {
-      if (frame) window.cancelAnimationFrame(frame);
-      window.removeEventListener('scroll', requestUpdate);
-      window.removeEventListener('resize', requestUpdate);
-      document.body.classList.remove('portfolio-immersive');
-    };
+  useEffect(() => () => {
+    if (portfolioScrubFrameRef.current) window.cancelAnimationFrame(portfolioScrubFrameRef.current);
   }, []);
+
+  useEffect(() => {
+    portfolioProgressRef.current = 0;
+    portfolioTargetTimeRef.current = 0;
+    portfolioVideoDurationRef.current = 0;
+    portfolioLastTimeUpdateRef.current = 0;
+    setPortfolioProgress(0);
+    setPortfolioVideoDuration(0);
+    setPortfolioVideoTime(0);
+    if (portfolioScrubFrameRef.current) {
+      window.cancelAnimationFrame(portfolioScrubFrameRef.current);
+      portfolioScrubFrameRef.current = 0;
+    }
+  }, [activeProject]);
 
   const closeMenu = () => setMenuOpen(false);
   const openReceptionist = (event, initialAnswer = null) => {
@@ -260,12 +259,85 @@ function App() {
     const closest = cards.reduce((best, card, index) => Math.abs(card.offsetLeft + card.offsetWidth / 2 - center) < Math.abs(cards[best].offsetLeft + cards[best].offsetWidth / 2 - center) ? index : best, 0);
     setActiveProject(closest);
   };
-  const handlePortfolioWheel = event => {
-    const horizontalIntent = Math.abs(event.deltaX) > Math.abs(event.deltaY) || event.shiftKey;
-    if (!horizontalIntent) return;
-    event.preventDefault();
-    event.currentTarget.scrollLeft += event.shiftKey ? event.deltaY : event.deltaX;
+  const scrubPortfolioVideoTo = targetTime => {
+    portfolioTargetTimeRef.current = targetTime;
+    if (portfolioScrubFrameRef.current) return;
+
+    const tick = timestamp => {
+      const video = portfolioVideo.current;
+      if (!video) {
+        portfolioScrubFrameRef.current = 0;
+        return;
+      }
+
+      video.pause();
+      const distance = portfolioTargetTimeRef.current - video.currentTime;
+      if (Math.abs(distance) < .025) {
+        video.currentTime = portfolioTargetTimeRef.current;
+        setPortfolioVideoTime(video.currentTime);
+        portfolioScrubFrameRef.current = 0;
+        return;
+      }
+
+      video.currentTime += distance * .24;
+      if (timestamp - portfolioLastTimeUpdateRef.current >= 50) {
+        portfolioLastTimeUpdateRef.current = timestamp;
+        setPortfolioVideoTime(video.currentTime);
+      }
+      portfolioScrubFrameRef.current = window.requestAnimationFrame(tick);
+    };
+
+    portfolioScrubFrameRef.current = window.requestAnimationFrame(tick);
   };
+  const updatePortfolioScrubTarget = progress => {
+    const duration = portfolioVideoDurationRef.current;
+    if (!duration) return;
+    const videoProgress = Math.min(1, Math.max(0, (progress - PORTFOLIO_VIDEO_START) / (PORTFOLIO_VIDEO_END - PORTFOLIO_VIDEO_START)));
+    const targetTime = videoProgress * Math.max(0, duration - .04);
+    scrubPortfolioVideoTo(targetTime);
+  };
+  const handlePortfolioMetadata = event => {
+    const video = event.currentTarget;
+    const duration = Number.isFinite(video.duration) ? video.duration : 0;
+    video.pause();
+    video.currentTime = 0;
+    portfolioVideoDurationRef.current = duration;
+    portfolioTargetTimeRef.current = 0;
+    setPortfolioVideoDuration(duration);
+    setPortfolioVideoTime(0);
+    updatePortfolioScrubTarget(portfolioProgressRef.current);
+  };
+  const handlePortfolioInteractionWheel = event => {
+    const horizontalIntent = Math.abs(event.deltaX) > Math.abs(event.deltaY) || event.shiftKey;
+    if (horizontalIntent) return;
+
+    const overActiveVideo = event.target.closest?.('.portfolio-project.active, .portfolio-demo');
+    if (event.deltaY <= 0 || !overActiveVideo) {
+      if (event.deltaY < 0 && portfolioScrubFrameRef.current) {
+        window.cancelAnimationFrame(portfolioScrubFrameRef.current);
+        portfolioScrubFrameRef.current = 0;
+        const currentTime = portfolioVideo.current?.currentTime ?? 0;
+        portfolioTargetTimeRef.current = currentTime;
+        setPortfolioVideoTime(currentTime);
+      }
+      return;
+    }
+    if (portfolioProgressRef.current >= 1) return;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+    event.preventDefault();
+    const deltaScale = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? window.innerHeight : 1;
+    const nextProgress = Math.min(1, portfolioProgressRef.current + (event.deltaY * deltaScale) / PORTFOLIO_SCRUB_DISTANCE);
+    portfolioProgressRef.current = nextProgress;
+    setPortfolioProgress(nextProgress);
+    updatePortfolioScrubTarget(nextProgress);
+  };
+  useEffect(() => {
+    const section = portfolioSection.current;
+    if (!section) return undefined;
+    section.addEventListener('wheel', handlePortfolioInteractionWheel, { passive: false });
+    return () => section.removeEventListener('wheel', handlePortfolioInteractionWheel);
+  }, [activeProject]);
   const submit = async event => {
     event.preventDefault();
     const form = event.currentTarget;
@@ -278,13 +350,14 @@ function App() {
     try { const response = await fetch('/api/lead', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); const result = await response.json(); if (!response.ok || !result.success) throw new Error(result.error); form.reset(); setStatus({ text: 'Thanks — your project request has been received. We’ll be in touch soon.', kind: 'success' }); } catch (error) { setStatus({ text: error.message || 'Unable to submit the form. Please try again.', kind: 'error' }); }
   };
 
-  const portfolioExpand = smoothStep(.015, .27, portfolioProgress);
-  const portfolioCarousel = 1 - smoothStep(.035, .17, portfolioProgress);
-  const portfolioStory = smoothStep(.48, .68, portfolioProgress);
-  const portfolioExit = smoothStep(.84, .99, portfolioProgress);
+  const portfolioExpand = smoothStep(.01, .15, portfolioProgress);
+  const portfolioCarousel = 1 - smoothStep(.025, .13, portfolioProgress);
+  const portfolioStoryStart = Math.max(0, portfolioVideoDuration - PORTFOLIO_DESCRIPTION_LEAD);
+  const portfolioStory = portfolioVideoDuration ? smoothStep(portfolioStoryStart, Math.min(portfolioVideoDuration, portfolioStoryStart + .7), portfolioVideoTime) : 0;
+  const portfolioExit = 0;
 
   return <>
-    <header><nav><a href="#top" className="brand" onClick={closeMenu}><img src={logo} alt="BiteSites" /></a><div className={`navlinks ${menuOpen ? 'open' : ''}`}>{[['AI Receptionist','#ai-receptionist'],['Services','#services'],['Portfolio','#portfolio'],['Pricing','#pricing'],['About','#about'],['Consultation','#consultation']].map(([label, href]) => <a key={label} href={href} onClick={closeMenu}>{label}</a>)}</div><div className="navcta"><Button href="#start" variant="ai">Start Your Project</Button><button className="menu-toggle" onClick={() => setMenuOpen(!menuOpen)} aria-label="Toggle menu">{menuOpen ? '×' : '☰'}</button></div></nav></header>
+    <header><nav><a href="#top" className="brand" onClick={closeMenu}><img src={logo} alt="BiteSites" /></a><div className={`navlinks ${menuOpen ? 'open' : ''}`}>{[['AI Receptionist','#ai-receptionist'],['Services','#services'],['Portfolio','#portfolio'],['Pricing','#pricing'],['About','#about'],['Team','#team'],['Consultation','#consultation']].map(([label, href]) => <a key={label} href={href} onClick={closeMenu}>{label}</a>)}</div><div className="navcta"><Button href="#start" variant="ai">Start Your Project</Button><button className="menu-toggle" onClick={() => setMenuOpen(!menuOpen)} aria-label="Toggle menu">{menuOpen ? '×' : '☰'}</button></div></nav></header>
     <main id="top">
       <section className="hero"><div className="hero-bg"><InteractiveNebulaShader /><div className="hero-overlay" /></div><div className="wrap hero-content"><Eyebrow gradient>AI-powered digital solutions</Eyebrow><h1>Intelligence built<br />into your <span className="gradient-text">business.</span></h1><p className="lead">BiteSites helps businesses grow with websites, social media management, and AI automation that solves the work slowing your team down.</p><div className="hero-actions"><Button href="#start" variant="ai">Start Your Project</Button><Button href="#services" variant="ghost">Explore Services</Button></div><div className="hero-meta"><div><span>Web</span> development</div><div><span>Social</span> media management</div><div><span>AI</span> automation</div></div></div></section>
       <div className="strip"><div className="wrap"><span>Web Development</span><span>Social Media Management</span><span>AI Automation</span></div></div>
@@ -292,7 +365,7 @@ function App() {
       <section className="receptionist-section" id="ai-receptionist"><div className="wrap receptionist-grid"><div className="receptionist-copy reveal"><Eyebrow gradient>Meet Bit</Eyebrow><h2>Start with a conversation, not a complicated form.</h2><p>Bit is the BiteSites mascot and AI receptionist for project inquiries. He asks the right questions about your goals, timeline, and team, then sends your project details to the right BiteSites specialist.</p><ul><li>Quick project qualification, any time</li><li>Clear service recommendations based on your needs</li><li>A human follow-up with the right context already included</li></ul><Button variant="ai" onClick={openReceptionist}>Talk to Bit <span aria-hidden="true">→</span></Button></div><div className="receptionist-preview bit-preview reveal" aria-label="Bit, the BiteSites mascot"><BitMascot className="bit-preview-mascot" /><div className="preview-head"><span className="chat-presence" /> Bit is online</div><div className="preview-bubble">Hi! What are you hoping to improve?</div><button className="preview-choice" type="button" onClick={event => openReceptionist(event, { value: 'web_development', label: 'A website that brings in leads' })}>A website that brings in leads <span aria-hidden="true">→</span></button><button className="preview-choice" type="button" onClick={event => openReceptionist(event, { value: 'ai_automation', label: 'Lead response or team workflows' })}>Lead response or team workflows <span aria-hidden="true">→</span></button><div className="preview-foot">Usually replies instantly <span>•</span> No pressure</div></div></div></section>
       <section className="pad alt" id="services"><div className="wrap"><SectionHead label="What we do" title="Digital services built around growth, not filler.">Three connected service lines that help businesses build a stronger presence, reach the right people, and reduce the manual work holding growth back.</SectionHead><div className="services-grid">{services.map((service, index) => <article className={`service-card reveal ${index === 0 ? 'featured' : ''}`} key={service.key}>{service.badge && <span className="service-badge">{service.badge}</span>}<div className="service-icon">{['✦','□','↻'][index]}</div><h3>{service.title}</h3><p className="desc">{service.text}</p><ul>{service.bullets.map(item => <li key={item}>{item}</li>)}</ul><button className="text-link" onClick={() => setModal(service.key)}>Explore {service.title} →</button></article>)}</div><div className="segments reveal">{[['Small business','Build a credible online presence, stay visible, and reduce repetitive admin work without adding complexity.'],['Medium business','Connect campaigns, service lines, and internal workflows as growing volume creates more moving parts.'],['Large business','Coordinate more stakeholders and more complex processes without sacrificing speed.']].map(([title, text]) => <div className="segment" key={title}><div className="tag">{title}</div><p>{text}</p></div>)}</div></div></section>
       <section
-        className="portfolio-section"
+        className={`portfolio-section ${portfolioProgress > .08 ? 'portfolio-demo-active' : ''} ${portfolioStory > .02 ? 'portfolio-story-visible' : ''}`}
         id="portfolio"
         ref={portfolioSection}
         style={{
@@ -318,7 +391,7 @@ function App() {
           <div className="portfolio-intro wrap" aria-hidden={portfolioProgress > .25}>
             <Eyebrow>Featured work</Eyebrow>
             <h2>Work worth stepping into.</h2>
-            <p>Swipe sideways to choose a project. Swipe up or scroll to expand the selected demo.</p>
+            <p>Scroll sideways to choose a project. Scroll down over the selected demo to scrub through it.</p>
           </div>
 
           <div className="portfolio-rail" aria-hidden={portfolioProgress > .25}>
@@ -326,13 +399,12 @@ function App() {
               className="portfolio-track"
               ref={portfolioTrack}
               onScroll={handlePortfolioScroll}
-              onWheel={handlePortfolioWheel}
               onKeyDown={event => {
                 if (event.key === 'ArrowLeft') showProject(Math.max(0, activeProject - 1));
                 if (event.key === 'ArrowRight') showProject(Math.min(projects.length - 1, activeProject + 1));
               }}
               tabIndex="0"
-              aria-label="Featured projects. Swipe left or right to browse; swipe up to expand the selected demo."
+              aria-label="Featured projects. Scroll left or right to browse; scroll down over the selected project to scrub its demo."
             >
               {projects.map((project, index) => <article className={`portfolio-project ${activeProject === index ? 'active' : ''}`} key={project.title}>
                 <video autoPlay muted loop playsInline preload="metadata" aria-hidden="true"><source src={project.video} type="video/mp4" /></video>
@@ -344,10 +416,10 @@ function App() {
           </div>
 
           <div className="portfolio-demo">
-            <video key={projects[activeProject].video} ref={portfolioVideo} autoPlay muted loop playsInline preload="auto" aria-label={`${projects[activeProject].title} project demo`} src={projects[activeProject].video} />
+            <video key={projects[activeProject].video} ref={portfolioVideo} muted playsInline preload="auto" onLoadedMetadata={handlePortfolioMetadata} aria-label={`${projects[activeProject].title} project demo`} src={projects[activeProject].video} />
             <div className="portfolio-demo-vignette" />
-            <div className="portfolio-playback" aria-hidden="true"><span /> {`${(1 + smoothStep(.2, .64, portfolioProgress) * 2).toFixed(1)}×`} playback</div>
-            <article className="portfolio-story" aria-hidden={portfolioProgress < .55}>
+            <div className="portfolio-playback" aria-hidden="true"><span /> Scroll to scrub</div>
+            <article className="portfolio-story" aria-hidden={portfolioStory < .02}>
               <div className="portfolio-story-heading">
                 <span>0{activeProject + 1} / 0{projects.length}</span>
                 <h3>{projects[activeProject].title}</h3>
@@ -356,7 +428,7 @@ function App() {
                 <p>{projects[activeProject].text}</p>
                 <ul>{projects[activeProject].bullets.map(item => <li key={item}>{item}</li>)}</ul>
                 <div className="stack-pills">{projects[activeProject].stack.map(item => <span className="pill" key={item}>{item}</span>)}</div>
-                <a href={projects[activeProject].url} target="_blank" rel="noreferrer" tabIndex={portfolioProgress > .58 && portfolioProgress < .96 ? 0 : -1}>Visit the live project <span aria-hidden="true">↗</span></a>
+                <a href={projects[activeProject].url} target="_blank" rel="noreferrer" tabIndex={portfolioStory > .5 ? 0 : -1}>Visit the live project <span aria-hidden="true">↗</span></a>
               </div>
             </article>
           </div>
@@ -364,17 +436,18 @@ function App() {
           <div className="portfolio-footer wrap" aria-hidden={portfolioProgress > .25}>
             <div className="portfolio-count"><span>0{activeProject + 1}</span><i /><span>0{projects.length}</span></div>
             <div className="portfolio-dots" role="tablist" aria-label="Choose project">{projects.map((project, index) => <button type="button" key={project.title} className={activeProject === index ? 'active' : ''} onClick={() => showProject(index)} aria-label={`View ${project.title}`} aria-selected={activeProject === index} role="tab" />)}</div>
-            <p><span className="gesture-sideways">↔ Browse</span><span>↑ Expand</span></p>
+            <p><span className="gesture-sideways">↔ Browse</span><span>↓ Scrub demo</span></p>
           </div>
         </div>
       </section>
       <section className="pad alt" id="pricing"><div className="wrap"><SectionHead label="Pricing" title="Packages built to scale with you.">Compare scope quickly and move into the right engagement without guesswork. Custom quotes are available for hybrid or larger rollouts.</SectionHead><div className="tabbar reveal">{[['web','Web Development'],['social','Social Media'],['ai','AI Automation']].map(([key, label]) => <button className={`tabbtn ${tab === key ? 'active' : ''}`} onClick={() => setTab(key)} key={key}>{label}</button>)}</div><div className="price-grid">{prices[tab].map(([title, desc, price, items, popular]) => <article className={`price-card reveal ${popular ? 'popular' : ''}`} key={title}>{popular && <span className="badge">Popular</span>}<h4>{title}</h4><p className="plandesc">{desc}</p><div className="price">{price}</div><div className="pricenote">{tab === 'social' ? 'monthly engagement' : 'project scope'}</div><ul>{items.map(item => <li key={item}>{item}</li>)}</ul><Button href="#start" variant="ghost">Start Project</Button></article>)}</div><p className="pricing-note">All packages are starting points. We’ll tailor scope to your goals, timeline, and existing tools.</p></div></section>
       <section className="pad" id="about"><div className="wrap"><SectionHead label="About BiteSites" title="Small team. Serious digital work.">We combine thoughtful design, practical engineering, and emerging AI tools to help businesses move forward.</SectionHead><div className="mission reveal"><p>We believe technology should make your business feel lighter — clearer systems, better experiences, and less work lost in the cracks.</p></div><div className="values-grid">{[['Passion for Excellence','Exceptional websites and systems that make a lasting impact.'],['Timely Delivery','We respect your time and deliver projects on schedule.'],['Open Communication','Transparent updates that keep you informed every step of the way.'],['Innovation','We explore new technologies and design trends to stay ahead.']].map(([title, text]) => <div className="value-item reveal" key={title}><h4>{title}</h4><p>{text}</p></div>)}</div></div></section>
+      <TeamSection />
       <section className="pad alt" id="consultation"><div className="wrap"><SectionHead label="Consultation" title="Let’s talk through what your business needs.">Tell us what you are trying to solve. We’ll recommend the right service direction and follow up to confirm a conversation.</SectionHead><div className="segments reveal" style={{ marginTop: 0 }}>{[['01 · Tell us what you need','Share your business, goals, preferred services, and the best way to contact you.'],['02 · We review the scope','We identify the right service mix and prepare practical next steps.'],['03 · We follow up','If the fit is right, we confirm the consultation details with you directly.']].map(([title, text]) => <div className="segment" key={title}><div className="tag">{title}</div><p>{text}</p></div>)}</div><div className="hero-actions reveal"><Button href="https://calendar.app.google/bKKKvGWBSgvV8rodA" variant="ai" target="_blank" rel="noreferrer">Schedule a free consultation</Button><Button href="#pricing" variant="ghost">See pricing</Button></div></div></section>
       <section className="intake" id="start"><div className="wrap intake-grid"><div className="section-head reveal"><Eyebrow gradient>Start your project</Eyebrow><h2>Tell us what you need.</h2><p>Use one form for web development, social media management, or AI automation. We only ask for the details needed to route your project and follow up.</p></div><form className="intake-form reveal" onSubmit={submit}><div className="form-row"><Field label="Name" name="name" required /><Field label="Email" name="email" type="email" required /></div><div className="form-row"><Field label="Phone (optional)" name="phone" type="tel" /><Field label="Business / Company (optional)" name="businessName" /></div><div className="form-row"><Field label="Role in company (optional)" name="roleInCompany" /><label className="field"><span>Business size</span><select name="businessSize" required defaultValue=""><option value="" disabled>Select size</option><option value="solo">Solo / Freelancer</option><option value="small">2-10 employees</option><option value="growing">11-50 employees</option><option value="established">51-200 employees</option><option value="enterprise">200+ employees</option></select></label></div><label className="field"><span>Timeline (optional)</span><select name="urgencyTag" defaultValue=""><option value="">No urgency selected</option><option value="asap">ASAP</option><option value="2_4_weeks">2-4 weeks</option><option value="1_2_months">1-2 months</option><option value="flexible">Flexible</option></select></label><fieldset className="field"><legend>Services <small>(select all that apply)</small></legend><div className="choices">{[['web_development','Web Development'],['social_media_management','Social Media Management'],['ai_automation','AI Automation']].map(([value, label]) => <label className="choice" key={value}><input type="checkbox" name="services" value={value} />{label}</label>)}</div></fieldset><fieldset className="field"><legend>Preferred contact method</legend><div className="choices"><label className="choice"><input type="radio" name="preferredContactMethod" value="email" defaultChecked />Email</label><label className="choice"><input type="radio" name="preferredContactMethod" value="phone" />Phone</label></div></fieldset><label className="field"><span>Project details</span><textarea name="projectDetails" placeholder="What are you looking to accomplish?" /></label><Button variant="ai" type="submit">Start Your Project</Button><p className={`form-status ${status.kind}`}>{status.text}</p></form></div></section>
       <section className="pad"><div className="wrap"><div className="cta-final reveal"><Eyebrow>Get started</Eyebrow><h2>Ready to build what is next?</h2><p>Tell us what you need, choose services, and let us know how you want to be contacted.</p><div className="hero-actions"><Button href="#start" variant="ai">Start Your Project</Button><Button href="#pricing" variant="ghost">View Pricing</Button></div></div></div></section>
     </main>
-    <footer><div className="wrap footer-inner"><a href="#top" className="brand"><img src={logo} alt="BiteSites" /></a><div className="footer-links"><a href="#services">Services</a><a href="#about">About</a><a href="#pricing">Pricing</a><a href="#start">Start a Project</a></div><div className="footer-copy">© 2026 BiteSites. All rights reserved.</div></div></footer>
+    <footer><div className="wrap footer-inner"><a href="#top" className="brand"><img src={logo} alt="BiteSites" /></a><div className="footer-links"><a href="#services">Services</a><a href="#about">About</a><a href="#team">Team</a><a href="#pricing">Pricing</a><a href="#start">Start a Project</a></div><div className="footer-copy">© 2026 BiteSites. All rights reserved.</div></div></footer>
     {modal && <div className="modal-backdrop" onClick={() => setModal(null)}><div className="detail-panel" role="dialog" aria-modal="true" onClick={event => event.stopPropagation()}><button className="close" onClick={() => setModal(null)} aria-label="Close">×</button><div className="detail-hero"><Eyebrow gradient={modal === 'ai'}>Services</Eyebrow><h2>{detailCopy[modal][0]}</h2><p>{detailCopy[modal][1]}</p></div><div className="detail-content"><h3>What’s included</h3><ul className="detail-list">{detailCopy[modal][2].map(item => <li key={item}>{item}</li>)}</ul><div className="hero-actions"><Button href="#start" variant="ai" onClick={() => setModal(null)}>Start Your Project</Button><Button href="#pricing" variant="ghost" onClick={() => setModal(null)}>See pricing</Button></div></div></div></div>}
     {receptionistOpen && <AiReceptionist origin={chatOrigin} initialAnswer={receptionistInitialAnswer} onClose={closeReceptionist} />}
     {!receptionistOpen && <div className={`chat-launcher ${receptionistNudge ? 'nudged' : ''}`}><p>Need help scoping a project?</p><button type="button" onClick={openReceptionist} aria-label="Open Bit, the AI receptionist"><BitMascot className="bit-launcher-avatar" /><em>Chat with Bit</em></button></div>}
