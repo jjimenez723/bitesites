@@ -492,6 +492,11 @@ function App() {
   // section re-renders during playback, and a milestone that setState'd would
   // re-render the whole marketing page mid-clip.
   const portfolioViewStartRef = useRef(0);
+  // The observer effect reports on the project that was on screen, but it must
+  // not re-subscribe every time the rail snaps to a new card — so the active
+  // index reaches it through a ref rather than through its dependency list.
+  const portfolioActiveRef = useRef(0);
+  const portfolioNearRef = useRef(false);
   const portfolioMarksRef = useRef(new Set());
   const portfolioHealthRef = useRef({ requestedAt: 0, firstFrameMs: -1, stalls: 0, sent: false });
 
@@ -542,7 +547,10 @@ function App() {
     writePortfolioProgress(0);
     setPortfolioPhase(current => (current.story ? { ...current, story: false } : current));
 
-    portfolioViewStartRef.current = performance.now();
+    portfolioActiveRef.current = activeProject;
+    // Zero unless the section is on screen right now: an off-screen card that
+    // becomes active has not been viewed, and must not start accruing dwell.
+    portfolioViewStartRef.current = portfolioNearRef.current ? performance.now() : 0;
     portfolioMarksRef.current.clear();
     portfolioHealthRef.current = { requestedAt: 0, firstFrameMs: -1, stalls: 0, sent: false };
     // Cleanup closes over the index that is on its way out, which is what makes
@@ -941,6 +949,16 @@ function App() {
     };
     const observer = new IntersectionObserver(([entry]) => {
       near = entry.isIntersecting;
+      portfolioNearRef.current = near;
+      // Dwell is only counted while the section is actually on screen. Starting
+      // the clock when a card becomes active instead would bill project 01 for
+      // every second the visitor spent up in the hero before ever scrolling
+      // here — and would report a view for a portfolio nobody reached.
+      if (near) portfolioViewStartRef.current ||= performance.now();
+      else {
+        reportPortfolioProject(portfolioActiveRef.current);
+        portfolioViewStartRef.current = 0;
+      }
       // Only worth fetching the demo clip in full once the visitor is close
       // enough to plausibly open it.
       const demo = portfolioVideo.current;
