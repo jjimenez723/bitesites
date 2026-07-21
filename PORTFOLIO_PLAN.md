@@ -576,8 +576,25 @@ asserting the exact payload shapes `src/main.jsx` builds.
   and `playsInline` behaviour differ from emulation.
 - **React DevTools Profiler check** (§4.4) — the no-re-render property is correct
   by construction (every continuous value is a ref) but has not been measured.
-- **Edge verification after deploy** (§7.3) — `bitesites.org` is fronted by
-  Cloudflare, so confirm at the apex, not at `*.web.app`:
-  ```bash
-  curl -sI https://bitesites.org/assets/<hashed>.mp4 | grep -i 'cache-control\|cf-cache-status\|age'
-  ```
+- ~~Edge verification after deploy (§7.3)~~ — **done, verified at the apex.**
+  `https://bitesites.org/assets/stockroomnj-DTc4ePaU.mp4` returns
+  `200`, `content-type: video/mp4`,
+  `cache-control: public, max-age=31536000, immutable`, `cf-cache-status: HIT`.
+  HTML at the apex is `no-cache` / `DYNAMIC`, and the live `index-*.js` hash
+  matches the local build, so Cloudflare is serving the new bundle rather than a
+  stale shell. The `?v=` hack is retired with nothing left depending on it.
+
+### 12.7 Deployed
+
+| Commit | Message |
+|---|---|
+| `20590b4` | portfolio fixed — phases 2–5, encodes, StockRoom NJ, Bodega repoint |
+| `99f8717` | portfolio analytics: only count dwell while the section is on screen |
+
+> **`99f8717` fixes a defect introduced by `20590b4`.** Dwell started counting when
+> a card became active, which on page load is project 01 at mount — so the first
+> project was billed for all the time spent in the hero above it, and a visitor
+> who never scrolled to the portfolio still logged a view on SPA navigation. The
+> clock is now gated on the section being on screen, via the rail's existing
+> IntersectionObserver; the active index reaches that effect through
+> `portfolioActiveRef` so the observer does not re-subscribe on every rail snap.
