@@ -16,3 +16,7 @@ firestore-debug.log
 # Never commit an Admin SDK service account key.
 service-account*.json
 serviceAccountKey*.json
+
+# Raw source recordings — keep out of git (too large for GitHub)
+/*.mov
+/*.mp4
