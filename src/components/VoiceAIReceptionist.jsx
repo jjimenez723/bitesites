@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { endVoiceCall, isLiveState, loadVoiceAgent, observeVoiceState, startVoiceCall } from '../lib/ghl-voice';
 
 function MicIcon({ muted = false }) {
   return <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -28,37 +29,55 @@ function CloseIcon() {
   return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg>;
 }
 
+// Byte's face is drawn rather than illustrated so it can blink, bob, and pulse
+// its little headset waves next to Bit without shipping another asset.
+export function ByteAvatar({ className = '', decorative = true, label = 'Byte, the BiteSites voice receptionist' }) {
+  return <span
+    className={`byte-avatar ${className}`.trim()}
+    role={decorative ? undefined : 'img'}
+    aria-hidden={decorative ? 'true' : undefined}
+    aria-label={decorative ? undefined : label}
+  >
+    <svg viewBox="0 0 64 64">
+      <g className="byte-waves">
+        <path d="M53 26a12 12 0 0 1 0 12" />
+        <path d="M57.5 22a17.5 17.5 0 0 1 0 20" />
+      </g>
+      <path className="byte-band" d="M14 34a18 18 0 0 1 36 0" />
+      <rect className="byte-cup" x="7" y="30" width="10" height="16" rx="5" />
+      <rect className="byte-cup" x="47" y="30" width="10" height="16" rx="5" />
+      <path className="byte-boom" d="M12 45c0 6.5 4.6 10 9.5 10.4" />
+      <circle className="byte-mic" cx="23" cy="55" r="3.1" />
+      <rect className="byte-face" x="15" y="18" width="34" height="33" rx="14" />
+      <g className="byte-eyes"><ellipse cx="26" cy="33" rx="3" ry="3.7" /><ellipse cx="38" cy="33" rx="3" ry="3.7" /></g>
+      <g className="byte-blush"><ellipse cx="20.5" cy="39.5" rx="3.2" ry="2" /><ellipse cx="43.5" cy="39.5" rx="3.2" ry="2" /></g>
+      <path className="byte-smile" d="M28.4 40.4c1.7 2.3 5.5 2.3 7.2 0" />
+      <circle className="byte-spark" cx="49.5" cy="16.5" r="2.2" />
+    </svg>
+  </span>;
+}
+
 function formatTime(totalSeconds) {
   const minutes = Math.floor(totalSeconds / 60).toString().padStart(2, '0');
   const seconds = (totalSeconds % 60).toString().padStart(2, '0');
   return `${minutes}:${seconds}`;
 }
 
-function VoiceWaveform({ stream, active = false, compact = false }) {
+// The GoHighLevel agent holds the microphone for the duration of a call, so the
+// waveform is driven by the reported call state rather than a second capture.
+function VoiceWaveform({ intensity = 0, compact = false }) {
   const canvasRef = useRef(null);
+  const intensityRef = useRef(intensity);
+  intensityRef.current = intensity;
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return undefined;
 
     const context = canvas.getContext('2d');
-    const AudioContext = window.AudioContext || window.webkitAudioContext;
-    let audioContext;
-    let analyser;
-    let source;
-    let frequencyData;
     let frame = 0;
     let phase = 0;
-
-    if (stream && AudioContext) {
-      audioContext = new AudioContext();
-      analyser = audioContext.createAnalyser();
-      analyser.fftSize = 128;
-      analyser.smoothingTimeConstant = .82;
-      source = audioContext.createMediaStreamSource(stream);
-      source.connect(analyser);
-      frequencyData = new Uint8Array(analyser.frequencyBinCount);
-    }
+    let level = 0;
 
     const draw = () => {
       const ratio = Math.min(window.devicePixelRatio || 1, 2);
@@ -70,20 +89,20 @@ function VoiceWaveform({ stream, active = false, compact = false }) {
       }
       context.setTransform(ratio, 0, 0, ratio, 0, 0);
       context.clearRect(0, 0, width, height);
-      context.strokeStyle = active ? 'rgba(255,255,255,.76)' : 'rgba(255,255,255,.24)';
+
+      level += (intensityRef.current - level) * .07;
+      context.strokeStyle = `rgba(255,255,255,${(.24 + level * .52).toFixed(3)})`;
       context.lineWidth = compact ? 1 : 1.25;
       context.lineCap = 'round';
 
-      if (analyser && frequencyData) analyser.getByteFrequencyData(frequencyData);
       const bars = compact ? 34 : 52;
       const gap = width / bars;
       phase += .035;
       for (let index = 0; index < bars; index += 1) {
         const mirrored = Math.abs(index - (bars - 1) / 2) / (bars / 2);
-        const sampleIndex = Math.min(frequencyData?.length - 1 || 0, Math.floor((index / bars) * (frequencyData?.length || 1)));
-        const input = frequencyData ? frequencyData[sampleIndex] / 255 : 0;
         const idle = (Math.sin(index * .74 + phase) + 1) * .05 + .035;
-        const energy = active ? Math.max(input * .92, idle) : idle;
+        const voice = (Math.sin(index * 2.31 - phase * 1.7) + Math.sin(index * .53 + phase * 2.4)) * .18 + .42;
+        const energy = idle + level * Math.max(0, voice);
         const barHeight = Math.max(2, energy * height * (1 - mirrored * .28));
         const x = gap * index + gap / 2;
         context.beginPath();
@@ -96,68 +115,74 @@ function VoiceWaveform({ stream, active = false, compact = false }) {
     };
 
     draw();
-    return () => {
-      window.cancelAnimationFrame(frame);
-      try { source?.disconnect(); } catch { /* already disconnected */ }
-      audioContext?.close();
-    };
-  }, [active, compact, stream]);
+    return () => window.cancelAnimationFrame(frame);
+  }, [compact]);
 
   return <canvas className="voice-waveform" ref={canvasRef} aria-hidden="true" />;
 }
 
 export function VoiceReceptionistPreview({ onOpen }) {
-  return <button className="voice-preview" type="button" onClick={onOpen} aria-label="Open Olivia, BiteSites' Voice AI sales agent">
+  // Warm the voice agent up on intent so the call starts as soon as it opens.
+  const warm = () => { loadVoiceAgent().catch(() => { /* surfaced when opened */ }); };
+
+  return <button className="voice-preview" type="button" onClick={onOpen} onPointerEnter={warm} onFocus={warm} aria-label="Open Byte, BiteSites' Voice AI sales agent">
     <span className="voice-preview-tools" aria-hidden="true"><ExpandIcon /><SettingsIcon /><RestartIcon /></span>
     <span className="voice-preview-center">
       <span className="voice-preview-mic"><MicIcon /></span>
       <span className="voice-preview-time">00:00</span>
       <VoiceWaveform compact />
-      <span className="voice-preview-prompt">Click to speak with Olivia</span>
+      <span className="voice-preview-prompt">Click to speak with Byte</span>
     </span>
     <span className="voice-preview-badge"><i /> Voice AI agent demo</span>
   </button>;
 }
 
+const STATUS_TEXT = {
+  loading: 'Waking Byte…',
+  idle: 'Click to speak',
+  connecting: 'Connecting…',
+  listening: 'Listening…',
+  speaking: 'Byte is speaking…',
+  ended: 'Call ended — click to talk again',
+  unavailable: 'Voice agent unavailable',
+};
+
 export function VoiceAIReceptionist({ open, onClose }) {
-  const [status, setStatus] = useState('idle');
+  const [callState, setCallState] = useState('loading');
+  const [starting, setStarting] = useState(false);
   const [elapsed, setElapsed] = useState(0);
-  const [stream, setStream] = useState(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [error, setError] = useState('');
   const shellRef = useRef(null);
+  const sawConnectingRef = useRef(false);
 
-  const stopSession = (nextStatus = 'idle') => {
-    stream?.getTracks().forEach(track => track.stop());
-    if (stream) window.dispatchEvent(new CustomEvent('bitesites:voice-agent-stop'));
-    setStream(null);
+  const live = isLiveState(callState);
+  const connected = callState === 'listening' || callState === 'speaking';
+
+  const stopSession = () => {
+    setStarting(false);
     setElapsed(0);
     setError('');
-    setStatus(nextStatus);
+    endVoiceCall();
   };
 
   const startSession = async () => {
-    if (status === 'requesting') return;
-    if (status === 'listening') {
+    if (starting || callState === 'connecting') return;
+    if (live) {
       stopSession();
       return;
     }
 
     setError('');
-    setStatus('requesting');
+    setStarting(true);
+    setElapsed(0);
+    sawConnectingRef.current = false;
     try {
-      const nextStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true }, video: false });
-      setStream(nextStream);
-      setStatus('listening');
-      // GoHighLevel can be attached without changing the UI by listening for
-      // this event and passing detail.stream to the voice-agent connection.
-      window.dispatchEvent(new CustomEvent('bitesites:voice-agent-start', { detail: { stream: nextStream, agent: 'olivia' } }));
-    } catch (requestError) {
-      setStatus('error');
-      setError(requestError?.name === 'NotAllowedError'
-        ? 'Microphone access is blocked. Allow it in your browser, then try again.'
-        : 'We could not start your microphone. Check your input and try again.');
+      await startVoiceCall();
+    } catch {
+      setStarting(false);
+      setError('We could not reach the voice agent. Please refresh and try again.');
     }
   };
 
@@ -184,19 +209,49 @@ export function VoiceAIReceptionist({ open, onClose }) {
   }, [onClose, open]);
 
   useEffect(() => {
-    if (status !== 'listening') return undefined;
+    if (!open) return undefined;
+    return observeVoiceState(setCallState);
+  }, [open]);
+
+  // The widget drops back to idle when it cannot connect — a denied microphone
+  // being by far the most common reason — so report that back in our own UI.
+  useEffect(() => {
+    if (callState === 'connecting') sawConnectingRef.current = true;
+    if (connected) {
+      setStarting(false);
+      return;
+    }
+    if (callState === 'unavailable') {
+      setStarting(false);
+      setError('The voice agent is unavailable right now. Please try again in a moment.');
+      return;
+    }
+    if (starting && callState === 'idle' && sawConnectingRef.current) {
+      setStarting(false);
+      sawConnectingRef.current = false;
+      setError('The call could not start. Check that your browser allows microphone access, then try again.');
+    }
+  }, [callState, connected, starting]);
+
+  useEffect(() => {
+    if (!connected) return undefined;
     const timer = window.setInterval(() => setElapsed(seconds => seconds + 1), 1000);
     return () => window.clearInterval(timer);
-  }, [status]);
+  }, [connected]);
 
-  useEffect(() => () => stream?.getTracks().forEach(track => track.stop()), [stream]);
+  // Never leave a call running behind a closed panel.
+  useEffect(() => {
+    if (!open) return undefined;
+    return () => { endVoiceCall(); };
+  }, [open]);
 
   if (!open) return null;
-  const listening = status === 'listening';
-  const statusText = status === 'requesting' ? 'Connecting…' : listening ? 'Listening…' : status === 'error' ? 'Microphone unavailable' : 'Click to speak';
+  const busy = starting || live;
+  const statusText = error ? 'Call not connected' : STATUS_TEXT[starting && callState === 'idle' ? 'connecting' : callState] ?? STATUS_TEXT.idle;
+  const intensity = callState === 'speaking' ? 1 : callState === 'listening' ? .45 : callState === 'connecting' || starting ? .2 : 0;
 
   return <aside className="voice-agent-shell" ref={shellRef} role="dialog" aria-modal="true" aria-labelledby="voice-agent-title" tabIndex="-1">
-    <h2 id="voice-agent-title" className="sr-only">Talk with Olivia, BiteSites' Voice AI sales agent</h2>
+    <h2 id="voice-agent-title" className="sr-only">Talk with Byte, BiteSites' Voice AI sales agent</h2>
     <div className="voice-agent-grain" aria-hidden="true" />
     <div className="voice-agent-tools">
       <button type="button" onClick={toggleFullscreen} aria-label={isFullscreen ? 'Exit full screen' : 'Enter full screen'} title={isFullscreen ? 'Exit full screen' : 'Full screen'}><ExpandIcon collapse={isFullscreen} /></button>
@@ -207,21 +262,21 @@ export function VoiceAIReceptionist({ open, onClose }) {
 
     {settingsOpen && <div className="voice-agent-settings" id="voice-agent-settings">
       <p>Conversation settings</p>
-      <dl><div><dt>Agent</dt><dd>Olivia</dd></div><div><dt>Specialty</dt><dd>Voice AI solutions</dd></div><div><dt>Connection</dt><dd>GoHighLevel ready</dd></div></dl>
-      <small>The live GHL connection can attach to the existing start event.</small>
+      <dl><div><dt>Agent</dt><dd>Byte</dd></div><div><dt>Specialty</dt><dd>Voice AI solutions</dd></div><div><dt>Connection</dt><dd>{callState === 'unavailable' ? 'Offline' : callState === 'loading' ? 'Connecting' : 'GoHighLevel live'}</dd></div></dl>
+      <small>Calls run on the BiteSites GoHighLevel voice agent.</small>
     </div>}
 
-    <div className={`voice-agent-center ${listening ? 'is-listening' : ''}`}>
-      <button className="voice-agent-core" type="button" onClick={startSession} aria-label={listening ? 'Stop listening' : 'Start talking to Olivia'} aria-pressed={listening}>
+    <div className={`voice-agent-center ${connected ? 'is-listening' : ''}`}>
+      <button className="voice-agent-core" type="button" onClick={startSession} aria-label={live ? 'End the call' : 'Start talking to Byte'} aria-pressed={live}>
         <span className="voice-agent-halo" />
-        {listening ? <span className="voice-agent-cube" /> : <span className="voice-agent-mic"><MicIcon muted={status === 'error'} /></span>}
+        {busy ? <span className="voice-agent-cube" /> : <span className="voice-agent-mic"><MicIcon muted={Boolean(error)} /></span>}
       </button>
       <time className="voice-agent-time" dateTime={`PT${elapsed}S`}>{formatTime(elapsed)}</time>
-      <VoiceWaveform stream={stream} active={listening} />
+      <VoiceWaveform intensity={intensity} />
       <p className="voice-agent-status" aria-live="polite">{statusText}</p>
       {error && <p className="voice-agent-error">{error}</p>}
     </div>
 
-    <div className="voice-agent-signoff"><span><i /> Olivia by BiteSites</span><small>Your browser will ask before the microphone turns on.</small></div>
+    <div className="voice-agent-signoff"><span><i /> Byte by BiteSites</span><small>Your browser will ask before the microphone turns on.</small></div>
   </aside>;
 }

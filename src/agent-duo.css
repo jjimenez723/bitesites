@@ -1,0 +1,99 @@
+/* Byte (voice) and Bit (chat) share one section so visitors meet both agents at
+   once: same section chrome, one card each, and a shared FAQ underneath. */
+.agent-duo-head{position:relative;max-width:760px;margin:0 auto 52px;text-align:center}
+.agent-duo-head .eyebrow{justify-content:center;color:#d3c4ff}
+.agent-duo-head .eyebrow:before{background:#9b7bff;box-shadow:0 0 0 5px rgba(155,123,255,.12)}
+.agent-duo-head h2{font-size:clamp(36px,4.6vw,60px);line-height:1.02;letter-spacing:-.05em}
+.agent-name{background-clip:text;-webkit-background-clip:text;color:transparent}
+.agent-name-byte{background-image:linear-gradient(115deg,#8bd8ff,#5aa2ff 60%,#8f7bff)}
+.agent-name-bit{background-image:linear-gradient(115deg,#c9a7ff,#ff9ecb 65%,#ffd6a1)}
+.agent-amp{display:inline-grid;width:1.5em;height:1.5em;place-items:center;border-radius:50%;background:linear-gradient(135deg,#c9a7ff,#ff9ecb);color:#12101a;font-family:Inter,sans-serif;font-size:.4em;font-weight:800;letter-spacing:0;line-height:1;vertical-align:.42em}
+.agent-duo-head>p{max-width:640px;margin:20px auto 0;color:rgba(244,244,248,.66);font-size:16.5px;line-height:1.7}
+.agent-duo-stats{display:flex;flex-wrap:wrap;justify-content:center;gap:9px;margin-top:26px}
+.agent-duo-stats span{padding:8px 14px;border:1px solid rgba(255,255,255,.14);border-radius:100px;background:rgba(255,255,255,.045);color:rgba(255,255,255,.6);font-size:11.5px}
+.agent-duo-stats strong{color:#fff;font-weight:800}
+
+.agent-duo-grid{position:relative;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px;align-items:start}
+.agent-card{--agent-tint:rgba(122,167,255,.3);position:relative;display:flex;min-width:0;flex-direction:column;padding:24px 24px 26px;overflow:hidden;border:1px solid rgba(255,255,255,.11);border-radius:34px;background:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.016));box-shadow:0 26px 70px rgba(0,0,0,.45);transition:transform .45s cubic-bezier(.2,.8,.2,1),border-color .3s,box-shadow .45s}
+.agent-card:before{content:"";position:absolute;right:-90px;top:-110px;width:270px;height:270px;border-radius:50%;background:var(--agent-tint);filter:blur(56px);opacity:.55;pointer-events:none}
+.agent-card:hover{transform:translateY(-6px);border-color:rgba(255,255,255,.22);box-shadow:0 36px 90px rgba(0,0,0,.55)}
+.agent-card-bit{--agent-tint:rgba(201,167,255,.32)}
+.agent-card>*{position:relative}
+.agent-card-head{display:flex;align-items:center;gap:13px;margin-bottom:18px}
+.agent-id{display:flex;min-width:0;flex-direction:column;gap:2px}
+.agent-id strong{font-family:"Inter Tight",sans-serif;font-size:19px;letter-spacing:-.03em}
+.agent-id small{color:rgba(255,255,255,.45);font-size:10.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase}
+.agent-chip{display:flex;align-items:center;gap:7px;margin-left:auto;padding:7px 12px;border:1px solid rgba(255,255,255,.13);border-radius:100px;background:rgba(255,255,255,.05);color:rgba(255,255,255,.62);font-size:10.5px;font-weight:700;white-space:nowrap}
+.agent-chip i{width:6px;height:6px;border-radius:50%;background:#45d997;box-shadow:0 0 0 4px rgba(69,217,151,.1);animation:agentPresence 2.6s ease-in-out infinite}
+@keyframes agentPresence{0%,100%{box-shadow:0 0 0 3px rgba(69,217,151,.08)}50%{box-shadow:0 0 0 6px rgba(69,217,151,.16)}}
+.agent-card-copy{margin-top:22px;color:rgba(244,244,248,.68);font-size:14.5px;line-height:1.68}
+.agent-card-points{display:grid;gap:11px;margin:18px 0 24px;padding:0;list-style:none}
+.agent-card-points li{position:relative;padding-left:25px;color:rgba(248,248,250,.86);font-size:13.5px;line-height:1.55}
+.agent-card-points li:before{content:"";position:absolute;left:0;top:.48em;width:9px;height:9px;border:1px solid rgba(255,255,255,.75);border-radius:50%;box-shadow:inset 0 0 0 2px #08070d}
+.agent-card-bit .agent-card-points li:before{border-color:rgba(214,186,255,.9)}
+.agent-card-actions{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-top:auto}
+.agent-card-actions .btn{border-color:rgba(255,255,255,.82);background:#fff;color:#080808;box-shadow:0 12px 34px rgba(255,255,255,.09)}
+.agent-card-actions .btn:hover{background:#eee;border-color:#eee}
+.agent-card-bit .agent-card-actions .btn{border-color:transparent;background:linear-gradient(135deg,#cbaaff,#8f6bff);color:#fff;box-shadow:0 14px 36px rgba(143,107,255,.3)}
+.agent-card-bit .agent-card-actions .btn:hover{background:linear-gradient(135deg,#d8bcff,#9d7cff)}
+.agent-card-actions small{max-width:200px;color:rgba(255,255,255,.38);font-size:11px;line-height:1.45}
+.agent-card .voice-preview{aspect-ratio:1.2;min-height:300px}
+
+/* Byte's face is a tiny SVG so it can blink and bob beside Bit. */
+.byte-avatar{display:block;width:54px;height:54px;flex:0 0 auto}
+.byte-avatar svg{display:block;width:100%;height:100%;overflow:visible;animation:byteBob 4.6s ease-in-out infinite}
+.byte-face{fill:#dfe8ff}
+.byte-band,.byte-boom{fill:none;stroke:#7fb0ff;stroke-width:3.4;stroke-linecap:round}
+.byte-cup{fill:#7fb0ff}
+.byte-mic{fill:#ff9ecb}
+.byte-eyes{transform-box:fill-box;transform-origin:center;animation:byteBlink 5.4s infinite}
+.byte-eyes ellipse{fill:#16162c}
+.byte-blush ellipse{fill:#ff9ecb;opacity:.62}
+.byte-smile{fill:none;stroke:#16162c;stroke-width:2.2;stroke-linecap:round}
+.byte-waves{fill:none;stroke:#7fe3ff;stroke-width:2.6;stroke-linecap:round;animation:byteWave 2.6s ease-in-out infinite}
+.byte-spark{fill:#ffe28a;animation:byteSpark 3.4s ease-in-out infinite}
+@keyframes byteBob{0%,100%{transform:translateY(0)}50%{transform:translateY(-2.5px)}}
+@keyframes byteBlink{0%,92%,100%{transform:scaleY(1)}95%{transform:scaleY(.1)}}
+@keyframes byteWave{0%,100%{opacity:.22}50%{opacity:1}}
+@keyframes byteSpark{0%,100%{opacity:.35;transform:scale(.75)}50%{opacity:1;transform:scale(1.15)}}
+
+/* Bit keeps his cursor-following eyes everywhere he shows up. */
+.agent-avatar-bit{display:grid;width:54px;height:54px;flex:0 0 auto;place-items:center;overflow:hidden;border:1px solid rgba(201,167,255,.34);border-radius:50%;background:radial-gradient(circle at 50% 32%,#1c1236,#000 72%);box-shadow:0 0 0 4px rgba(201,167,255,.07)}
+.agent-avatar-bit .bit-mascot{width:100%;height:100%}
+
+.bitchat-preview{position:relative;display:flex;width:100%;aspect-ratio:1.2;min-height:300px;flex-direction:column;align-items:center;justify-content:flex-end;gap:9px;padding:0 18px 44px;overflow:hidden;border:1px solid rgba(201,167,255,.2);border-radius:28px;background:radial-gradient(122% 92% at 50% 6%,#1b1132 0%,#0b0616 46%,#040308 100%);box-shadow:0 34px 90px rgba(0,0,0,.55),inset 0 0 90px rgba(186,150,255,.05);color:#fff;cursor:pointer;isolation:isolate;transition:transform .45s cubic-bezier(.2,.8,.2,1),border-color .3s,box-shadow .45s}
+.bitchat-preview:hover{transform:translateY(-5px);border-color:rgba(214,186,255,.5);box-shadow:0 42px 105px rgba(0,0,0,.66),0 0 0 1px rgba(214,186,255,.12)}
+.bitchat-preview:focus-visible{outline:2px solid #cbaaff;outline-offset:5px}
+.bitchat-glow{position:absolute;left:50%;top:44%;width:68%;aspect-ratio:1;transform:translate(-50%,-50%);border-radius:50%;background:radial-gradient(circle,rgba(186,150,255,.3),rgba(255,158,203,.12) 46%,transparent 71%);animation:bitchatBreathe 6.5s ease-in-out infinite}
+.bitchat-sparkles i{position:absolute;color:#ffd9f2;font-style:normal;line-height:1;opacity:0;animation:bitchatSparkle 3.8s ease-in-out infinite}
+.bitchat-tools{position:absolute;top:16px;left:17px;display:flex;gap:6px}
+.bitchat-tools i{width:7px;height:7px;border-radius:50%;background:rgba(255,158,203,.55)}
+.bitchat-tools i:nth-child(2){background:rgba(255,226,138,.5)}
+.bitchat-tools i:nth-child(3){background:rgba(158,231,255,.5)}
+.bitchat-stage{position:absolute;left:50%;top:43%;display:flex;width:min(84%,320px);transform:translate(-50%,-50%);flex-direction:column;align-items:center}
+.bitchat-say{position:relative;max-width:100%;margin-bottom:15px;padding:10px 16px;border-radius:17px 17px 17px 6px;background:linear-gradient(135deg,#fff,#f0e7ff);box-shadow:0 14px 32px rgba(0,0,0,.4);color:#241a3d;font-size:13px;font-weight:800;line-height:1.35;text-align:center;animation:bitchatPop .5s cubic-bezier(.2,.9,.3,1.5)}
+.bitchat-say:after{content:"";position:absolute;left:19px;bottom:-4px;width:11px;height:11px;border-radius:0 0 3px;background:#f2e9ff;transform:rotate(45deg)}
+.bitchat-mascot{display:block;width:min(58%,172px);animation:bitchatFloat 5.2s ease-in-out infinite}
+.bitchat-mascot .bit-mascot{width:100%;height:100%;filter:drop-shadow(0 20px 32px rgba(0,0,0,.6))}
+.bitchat-shadow{width:44%;height:11px;margin-top:2px;border-radius:50%;background:radial-gradient(ellipse at center,rgba(186,150,255,.4),transparent 70%);animation:bitchatShadow 5.2s ease-in-out infinite}
+.bitchat-chips{display:flex;flex-wrap:wrap;justify-content:center;gap:7px}
+.bitchat-chips i{padding:7px 12px;border:1px solid rgba(255,255,255,.15);border-radius:100px;background:rgba(255,255,255,.055);color:rgba(255,255,255,.7);font-size:11px;font-style:normal;font-weight:700;transition:border-color .3s,background .3s,color .3s}
+.bitchat-preview:hover .bitchat-chips i{border-color:rgba(214,186,255,.45);background:rgba(186,150,255,.16);color:#fff}
+.bitchat-typing{display:flex;align-items:center;gap:4px;padding:7px 11px;border:1px solid rgba(255,255,255,.11);border-radius:100px;background:rgba(255,255,255,.06)}
+.bitchat-typing i{width:5px;height:5px;border-radius:50%;background:#e3d8ff;animation:bitchatDot 1.05s ease-in-out infinite}
+.bitchat-typing i:nth-child(2){animation-delay:.14s}
+.bitchat-typing i:nth-child(3){animation-delay:.28s}
+.bitchat-prompt{color:rgba(255,255,255,.5);font-family:"Tomorrow",sans-serif;font-size:10px;letter-spacing:.02em}
+@keyframes bitchatBreathe{0%,100%{opacity:.75;transform:translate(-50%,-50%) scale(.96)}50%{opacity:1;transform:translate(-50%,-50%) scale(1.05)}}
+@keyframes bitchatSparkle{0%,100%{opacity:0;transform:scale(.4) rotate(0)}50%{opacity:.9;transform:scale(1) rotate(90deg)}}
+@keyframes bitchatFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-9px)}}
+@keyframes bitchatShadow{0%,100%{opacity:.85;transform:scaleX(1)}50%{opacity:.5;transform:scaleX(.84)}}
+@keyframes bitchatPop{from{opacity:0;transform:translateY(7px) scale(.92)}to{opacity:1;transform:none}}
+@keyframes bitchatDot{0%,70%,100%{opacity:.35;transform:translateY(0)}35%{opacity:1;transform:translateY(-4px)}}
+
+.voice-seo-points{grid-template-columns:repeat(2,1fr)}
+
+@media(max-width:940px){.agent-duo-grid{grid-template-columns:minmax(0,1fr);gap:20px}.agent-card{max-width:720px;margin:0 auto}.agent-card .voice-preview,.bitchat-preview{min-height:340px}}
+@media(max-width:700px){.agent-duo-head{margin-bottom:36px}.agent-duo-head h2{font-size:38px}.agent-duo-head>p{font-size:15px}.agent-card{padding:19px 18px 22px;border-radius:28px}.agent-card-head{gap:11px}.agent-chip{display:none}.agent-card .voice-preview,.bitchat-preview{min-height:300px;border-radius:22px}.bitchat-mascot{width:min(56%,148px)}.agent-card-actions{align-items:flex-start;flex-direction:column;gap:12px}.agent-card-actions small{max-width:none}.voice-seo-points{grid-template-columns:1fr}}
+@media(max-width:420px){.agent-card .voice-preview,.bitchat-preview{min-height:262px}.bitchat-say{font-size:12px}}
+@media(prefers-reduced-motion:reduce){.agent-card,.bitchat-preview,.bitchat-chips i{transition:none}.byte-avatar svg,.byte-eyes,.byte-waves,.byte-spark,.agent-chip i,.bitchat-glow,.bitchat-sparkles i,.bitchat-mascot,.bitchat-shadow,.bitchat-say,.bitchat-typing i{animation:none}.bitchat-sparkles i{opacity:.5}}

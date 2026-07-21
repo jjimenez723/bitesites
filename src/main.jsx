@@ -1,9 +1,14 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
+import { submitLead } from './lib/leads';
+import Terms from './pages/Terms';
+import Privacy from './pages/Privacy';
 import { BitMascot } from './components/BitMascot';
 import { InteractiveNebulaShader } from './components/InteractiveNebulaShader';
 import { TeamSection } from './components/TeamSection';
-import { VoiceAIReceptionist, VoiceReceptionistPreview } from './components/VoiceAIReceptionist';
+import { ByteAvatar, VoiceAIReceptionist, VoiceReceptionistPreview } from './components/VoiceAIReceptionist';
+import { BitChatPreview } from './components/BitChatPreview';
 import logoFull from './assets/bitesites-logo-full.webp';
 import logoWordmark from './assets/bitesites-logo-wordmark.webp';
 import logoMark from './assets/bitesites-logo-mark.webp';
@@ -15,6 +20,8 @@ import './portfolio.css';
 import './pricing-badge.css';
 import './team.css';
 import './voice-receptionist.css';
+import './agent-duo.css';
+import './legal.css';
 
 const aiSolutions = [
   ['✦', 'AI Receptionists', 'A voice or chat agent that answers every call and message, books appointments, and routes real leads to your team — even after hours.'],
@@ -22,7 +29,26 @@ const aiSolutions = [
   ['◉', 'Custom AI Projects', 'Purpose-built AI tools scoped to your business — from internal ops assistants to full custom systems, built end to end.']
 ];
 
-const navigationItems = [['AI Receptionist','#ai-receptionist'],['Services','#services'],['Portfolio','#portfolio'],['Pricing','#pricing'],['About','#about'],['Team','#team'],['Consultation','#consultation']];
+const tickerServices = [
+  'Voice AI Receptionists',
+  'Web Development',
+  'AI Automation',
+  'Social Media Management',
+  'Custom AI Projects',
+  'CRM Builds & Integrations',
+  'Business Dashboards',
+  'Corporate AI Training',
+  'AI Chat Agents',
+  'Lead Generation Systems',
+  'SEO & Local Search',
+  'Generative Engine Optimization (GEO)',
+  'Brand & Identity Design',
+  'E-Commerce Builds',
+  'Analytics & Reporting',
+  'Ongoing Support & Maintenance'
+];
+
+const navigationItems =[['Byte & Bit','#ai-receptionist'],['Services','#services'],['Portfolio','#portfolio'],['Pricing','#pricing'],['About','#about'],['Team','#team'],['Consultation','#consultation']];
 
 const services = [
   { key: 'ai', badge: 'Lead service', title: 'AI Automation', text: 'We identify repetitive work across sales, marketing, and operations, then build AI-assisted workflows that move information faster.', bullets: ['Faster response times for new leads and requests', 'Less repetitive admin work across sales and ops', 'Cleaner handoffs between forms, inboxes, and systems'] },
@@ -74,43 +100,53 @@ function MorphingLogo({ location = 'header', onClick }) {
       if (!node) return;
 
       const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      const scrollTravel = Math.max(260, window.innerHeight * .34);
+      const compact = window.innerWidth <= 700;
+      const startSize = compact ? 124 : 158;
+      const endSize = compact ? 54 : 62;
       let rawProgress;
       if (location === 'header') {
-        rawProgress = Math.min(1, Math.max(0, window.scrollY / Math.max(260, window.innerHeight * .34)));
+        rawProgress = Math.min(1, Math.max(0, window.scrollY / scrollTravel));
       } else {
         const footer = node.closest('.site-footer');
-        const footerTop = footer?.getBoundingClientRect().top ?? window.innerHeight;
-        const travel = Math.min(300, Math.max(210, (footer?.offsetHeight ?? 280) * .8));
-        rawProgress = Math.min(1, Math.max(0, (window.innerHeight - footerTop) / travel));
+        const footerRect = footer?.getBoundingClientRect();
+        const footerTop = footerRect?.top ?? window.innerHeight;
+        const footerHeight = footerRect?.height ?? scrollTravel;
+        const logoRect = node.getBoundingClientRect();
+        // The logo box is centred in a fixed-height row, so its centre stays put as it resizes.
+        const logoCentre = logoRect.top - footerTop + logoRect.height / 2;
+        // Run the morph across the logo's own entrance: it starts as the compact mark clears the
+        // fold and ends once the expanded logo is fully on screen, with scroll left to spare.
+        const enter = logoCentre - endSize / 2;
+        const settled = Math.min(footerHeight - 16, logoCentre + startSize / 2 + 12);
+        const travel = Math.max(90, settled - enter);
+        // Mirror of the header: compact mark while the footer is away, morphing back out to the
+        // full logo as it scrolls in — so the three-image sequence plays on screen, not below the fold.
+        rawProgress = 1 - Math.min(1, Math.max(0, (window.innerHeight - footerTop - enter) / travel));
       }
 
-      if (reducedMotion) rawProgress = location === 'header' ? (window.scrollY > 12 ? 1 : 0) : 1;
+      if (reducedMotion) rawProgress = location === 'header' ? (window.scrollY > 12 ? 1 : 0) : (rawProgress > .5 ? 1 : 0);
       const progress = smoothStep(0, 1, rawProgress);
-      const compact = window.innerWidth <= 700;
-      const startSize = location === 'footer' ? (compact ? 138 : 180) : (compact ? 124 : 158);
-      const endSize = compact ? 54 : 62;
       const size = startSize + (endSize - startSize) * progress;
-      const parent = node.parentElement;
-      const parentStyle = parent ? window.getComputedStyle(parent) : null;
-      const availableWidth = parent
-        ? parent.clientWidth - parseFloat(parentStyle.paddingLeft || 0) - parseFloat(parentStyle.paddingRight || 0)
-        : window.innerWidth;
-      const shift = location === 'header' ? 0 : Math.max(0, (availableWidth - size) / 2) * (1 - progress);
       const firstMorph = smoothStep(.04, .5, progress);
       const secondMorph = smoothStep(.5, .96, progress);
       const container = node.closest(location === 'header' ? '.site-header' : '.site-footer');
 
       node.style.setProperty('--logo-size', `${size}px`);
-      node.style.setProperty('--logo-shift', `${shift}px`);
       node.style.setProperty('--logo-full-opacity', String(1 - firstMorph));
       node.style.setProperty('--logo-wordmark-opacity', String(firstMorph * (1 - secondMorph)));
       node.style.setProperty('--logo-mark-opacity', String(secondMorph));
       node.style.setProperty('--logo-full-scale', String(1 - .04 * firstMorph));
       node.style.setProperty('--logo-wordmark-scale', String(.96 + .04 * firstMorph - .04 * secondMorph));
       node.style.setProperty('--logo-mark-scale', String(.96 + .04 * secondMorph));
-      container?.style.setProperty('--logo-content-opacity', String(smoothStep(.2, .56, progress)));
-      if (location === 'header') container?.style.setProperty('--nav-height', `${64 + (startSize + 18 - 64) * (1 - progress)}px`);
-      container?.classList.toggle('logo-expanded', progress < .18);
+      if (location === 'header') {
+        container?.style.setProperty('--logo-content-opacity', String(smoothStep(.2, .56, progress)));
+        container?.style.setProperty('--nav-height', `${64 + (startSize + 18 - 64) * (1 - progress)}px`);
+        container?.classList.toggle('logo-expanded', progress < .18);
+      } else {
+        // Footer links fade in as the logo opens up, and stay lit once the footer is settled.
+        container?.style.setProperty('--logo-content-opacity', String(smoothStep(.1, .6, 1 - progress)));
+      }
     };
     const queueUpdate = () => {
       if (!frame) frame = window.requestAnimationFrame(updateLogo);
@@ -224,9 +260,7 @@ function AiReceptionist({ onClose, origin, initialAnswer }) {
     const payload = { ...answers, ...Object.fromEntries(data.entries()), services: [answers.services], preferredContactMethod: 'email' };
     setStatus({ text: 'Sending your project notes…', kind: '' });
     try {
-      const response = await fetch('/api/lead', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-      const result = await response.json();
-      if (!response.ok || !result.success) throw new Error(result.error);
+      await submitLead(payload, 'bit_chat');
       setStatus({ text: 'You’re all set. Our team will follow up shortly.', kind: 'success' });
     } catch (error) {
       setStatus({ text: error.message || 'Unable to send your request. Please try again.', kind: 'error' });
@@ -491,7 +525,7 @@ function App() {
     if (!payload.services.length) return setStatus({ text: 'Please select at least one service.', kind: 'error' });
     if (payload.preferredContactMethod === 'phone' && !payload.phone.trim()) return setStatus({ text: 'Please include a phone number if you prefer a phone call.', kind: 'error' });
     setStatus({ text: 'Sending…', kind: '' });
-    try { const response = await fetch('/api/lead', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); const result = await response.json(); if (!response.ok || !result.success) throw new Error(result.error); form.reset(); setStatus({ text: 'Thanks — your project request has been received. We’ll be in touch soon.', kind: 'success' }); } catch (error) { setStatus({ text: error.message || 'Unable to submit the form. Please try again.', kind: 'error' }); }
+    try { await submitLead(payload, 'intake_form'); form.reset(); setStatus({ text: 'Thanks — your project request has been received. We’ll be in touch soon.', kind: 'success' }); } catch (error) { setStatus({ text: error.message || 'Unable to submit the form. Please try again.', kind: 'error' }); }
   };
 
   const portfolioExpand = smoothStep(.01, .15, portfolioProgress);
@@ -504,31 +538,63 @@ function App() {
   return <>
     <header className="site-header"><nav><div className="nav-wing nav-wing-left">{navigationItems.slice(0, 4).map(([label, href]) => <a key={label} href={href}>{label}</a>)}</div><MorphingLogo onClick={closeMenu} /><div className="nav-wing nav-wing-right">{navigationItems.slice(4).map(([label, href]) => <a key={label} href={href}>{label}</a>)}<Button href="#start" variant="ai">Start Your Project</Button></div><button className="menu-toggle" onClick={() => setMenuOpen(!menuOpen)} aria-label="Toggle menu">{menuOpen ? '×' : '☰'}</button><div className={`navlinks navlinks-mobile ${menuOpen ? 'open' : ''}`}>{navigationItems.map(([label, href]) => <a key={label} href={href} onClick={closeMenu}>{label}</a>)}<Button href="#start" variant="ai" onClick={closeMenu}>Start Your Project</Button></div></nav></header>
     <main id="top">
-      <section className="hero"><div className="hero-bg"><InteractiveNebulaShader /><div className="hero-overlay" /></div><div className="wrap hero-content"><Eyebrow gradient>AI-powered digital solutions</Eyebrow><h1>Intelligence built<br />into your <span className="gradient-text">business.</span></h1><p className="lead">BiteSites builds Voice AI receptionists, websites, and automations that answer faster, capture more leads, and take repetitive work off your team.</p><div className="hero-actions"><Button href="#start" variant="ai">Start Your Project</Button><Button href="#ai-receptionist" variant="ghost">Try Our Voice AI</Button></div><div className="hero-meta"><div><span>Voice AI</span> receptionists</div><div><span>Web</span> development</div><div><span>AI</span> automation</div></div></div></section>
-      <div className="strip"><div className="wrap"><span>Voice AI Receptionists</span><span>Web Development</span><span>AI Automation</span></div></div>
+      <section className="hero"><div className="hero-bg"><InteractiveNebulaShader /><div className="hero-overlay" /></div><div className="wrap hero-content"><Eyebrow gradient>AI-powered digital solutions</Eyebrow><h1>Intelligence built<br />into your <span className="gradient-text">business.</span></h1><p className="lead">BiteSites builds Voice AI receptionists, websites, and automations that answer faster, capture more leads, and take repetitive work off your team.</p><div className="hero-actions"><Button href="#start" variant="ai">Start Your Project</Button><Button href="#ai-receptionist" variant="ghost">Meet Byte &amp; Bit</Button></div><div className="hero-meta"><div><span>Voice AI</span> receptionists</div><div><span>Web</span> development</div><div><span>AI</span> automation</div></div></div></section>
+      <div className="strip" aria-label="What we do"><div className="ticker"><div className="ticker-track">{[0, 1].map(copy => <div className="ticker-group" key={copy} aria-hidden={copy === 1 ? 'true' : undefined}>{tickerServices.map(service => <span key={service}>{service}</span>)}</div>)}</div></div></div>
       <section className="voice-receptionist-section" id="ai-receptionist" aria-labelledby="voice-receptionist-heading">
         <div className="wrap">
-          <div className="voice-receptionist-grid">
-            <div className="voice-receptionist-copy reveal">
-              <Eyebrow>Try our Voice AI receptionist</Eyebrow>
-              <h2 id="voice-receptionist-heading">Meet Olivia. She knows Voice AI inside and out.</h2>
-              <p>Talk with BiteSites’ AI receptionist about adding a Voice AI agent to your business. Olivia can explain how an AI phone agent answers calls, qualifies leads, books appointments, and follows up around the clock.</p>
-              <ul>
-                <li>Get answers tailored to your call volume, team, and goals</li>
-                <li>Explore lead qualification, appointment booking, and CRM follow-up</li>
-                <li>Hear the kind of natural voice experience your customers can receive</li>
-              </ul>
-              <div className="voice-receptionist-actions">
-                <Button variant="ghost" onClick={() => setVoiceAgentOpen(true)}>Talk to Olivia <span aria-hidden="true">&nbsp;→</span></Button>
-                <small>Interactive frontend preview. Your browser asks before using the microphone.</small>
-              </div>
+          <div className="agent-duo-head reveal">
+            <Eyebrow>Meet the BiteSites AI duo</Eyebrow>
+            <h2 id="voice-receptionist-heading">Say hi to <span className="agent-name agent-name-byte">Byte</span> <span className="agent-amp" aria-hidden="true">&amp;</span> <span className="agent-name agent-name-bit">Bit</span>.</h2>
+            <p>Byte picks up the phone. Bit picks up the chat. Between the two of them, every caller and every visitor gets a warm hello, a real answer, and a booked appointment — mornings, midnights, and weekends included.</p>
+            <div className="agent-duo-stats">
+              <span><strong>Under 2 rings</strong> to answer</span>
+              <span><strong>24/7</strong> — holidays too</span>
+              <span>Books into <strong>your calendar</strong></span>
             </div>
-            <div className="reveal"><VoiceReceptionistPreview onOpen={() => setVoiceAgentOpen(true)} /></div>
           </div>
-          <div className="voice-seo-points reveal" aria-label="Voice AI receptionist questions and answers">
+          <div className="agent-duo-grid">
+            <article className="agent-card agent-card-byte reveal">
+              <div className="agent-card-head">
+                <ByteAvatar />
+                <span className="agent-id"><strong>Byte</strong><small>Voice AI receptionist</small></span>
+                <span className="agent-chip"><i />Ready to talk</span>
+              </div>
+              <VoiceReceptionistPreview onOpen={() => setVoiceAgentOpen(true)} />
+              <p className="agent-card-copy">Byte knows Voice AI inside and out. Ask how an AI phone agent answers calls, qualifies leads, books appointments, and follows up around the clock — then hear it happen live.</p>
+              <ul className="agent-card-points">
+                <li>Answers tailored to your call volume, team, and goals</li>
+                <li>Lead qualification, appointment booking, CRM follow-up</li>
+                <li>The same natural voice your customers would hear</li>
+              </ul>
+              <div className="agent-card-actions">
+                <Button variant="ghost" onClick={() => setVoiceAgentOpen(true)}>Talk to Byte <span aria-hidden="true">&nbsp;→</span></Button>
+                <small>Your browser asks before the microphone turns on.</small>
+              </div>
+            </article>
+            <article className="agent-card agent-card-bit reveal">
+              <div className="agent-card-head">
+                <span className="agent-avatar-bit"><BitMascot /></span>
+                <span className="agent-id"><strong>Bit</strong><small>AI chat receptionist</small></span>
+                <span className="agent-chip"><i />Always up for a chat</span>
+              </div>
+              <BitChatPreview onOpen={openReceptionist} />
+              <p className="agent-card-copy">Bit is our mascot with a job. He asks a few friendly questions, works out what you actually need, and hands our team a lead worth calling back. And yes — his eyes really do follow your cursor.</p>
+              <ul className="agent-card-points">
+                <li>A one-minute project check-in, no pressure at all</li>
+                <li>Type your own answer or tap a quick reply</li>
+                <li>Your notes land with our team, ready for follow-up</li>
+              </ul>
+              <div className="agent-card-actions">
+                <Button variant="ghost" onClick={openReceptionist}>Chat with Bit <span aria-hidden="true">&nbsp;→</span></Button>
+                <small>No microphone, no signup — just say hello.</small>
+              </div>
+            </article>
+          </div>
+          <div className="voice-seo-points reveal" aria-label="AI receptionist questions and answers">
             <article><h3>What can a Voice AI receptionist do?</h3><p>A Voice AI receptionist can answer inbound calls, respond to common questions, qualify leads, book appointments, route callers, and update connected CRM workflows.</p></article>
-            <article><h3>Can an AI phone agent work with my calendar and CRM?</h3><p>Yes. BiteSites can connect a custom AI phone agent with business calendars, qualification rules, and CRM follow-up workflows.</p></article>
-            <article><h3>Is the Voice AI agent trained for my business?</h3><p>Yes. Each agent can be trained on your services, common questions, lead qualification criteria, appointment process, and human escalation rules.</p></article>
+            <article><h3>What does an AI chat agent handle?</h3><p>An AI chat agent greets website visitors, answers service questions, captures contact details, and routes qualified leads straight to your team.</p></article>
+            <article><h3>Can they work with my calendar and CRM?</h3><p>Yes. BiteSites can connect a custom AI phone or chat agent with business calendars, qualification rules, and CRM follow-up workflows.</p></article>
+            <article><h3>Are the agents trained for my business?</h3><p>Yes. Each agent can be trained on your services, common questions, lead qualification criteria, appointment process, and human escalation rules.</p></article>
           </div>
         </div>
       </section>
@@ -621,7 +687,7 @@ function App() {
       <section className="intake" id="start"><div className="wrap intake-grid"><div className="section-head reveal"><Eyebrow gradient>Start your project</Eyebrow><h2>Tell us what you need.</h2><p>Use one form for web development, social media management, or AI automation. We only ask for the details needed to route your project and follow up.</p></div><form className="intake-form reveal" onSubmit={submit}><div className="form-row"><Field label="Name" name="name" required /><Field label="Email" name="email" type="email" required /></div><div className="form-row"><Field label="Phone (optional)" name="phone" type="tel" /><Field label="Business / Company (optional)" name="businessName" /></div><div className="form-row"><Field label="Role in company (optional)" name="roleInCompany" /><label className="field"><span>Business size</span><select name="businessSize" required defaultValue=""><option value="" disabled>Select size</option><option value="solo">Solo / Freelancer</option><option value="small">2-10 employees</option><option value="growing">11-50 employees</option><option value="established">51-200 employees</option><option value="enterprise">200+ employees</option></select></label></div><label className="field"><span>Timeline (optional)</span><select name="urgencyTag" defaultValue=""><option value="">No urgency selected</option><option value="asap">ASAP</option><option value="2_4_weeks">2-4 weeks</option><option value="1_2_months">1-2 months</option><option value="flexible">Flexible</option></select></label><fieldset className="field"><legend>Services <small>(select all that apply)</small></legend><div className="choices">{[['web_development','Web Development'],['social_media_management','Social Media Management'],['ai_automation','AI Automation']].map(([value, label]) => <label className="choice" key={value}><input type="checkbox" name="services" value={value} />{label}</label>)}</div></fieldset><fieldset className="field"><legend>Preferred contact method</legend><div className="choices"><label className="choice"><input type="radio" name="preferredContactMethod" value="email" defaultChecked />Email</label><label className="choice"><input type="radio" name="preferredContactMethod" value="phone" />Phone</label></div></fieldset><label className="field"><span>Project details</span><textarea name="projectDetails" placeholder="What are you looking to accomplish?" /></label><Button variant="ai" type="submit">Start Your Project</Button><p className={`form-status ${status.kind}`}>{status.text}</p></form></div></section>
       <section className="pad"><div className="wrap"><div className="cta-final reveal"><Eyebrow>Get started</Eyebrow><h2>Ready to build what is next?</h2><p>Tell us what you need, choose services, and let us know how you want to be contacted.</p><div className="hero-actions"><Button href="#start" variant="ai">Start Your Project</Button><Button href="#pricing" variant="ghost">View Pricing</Button></div></div></div></section>
     </main>
-    <footer className="site-footer"><div className="wrap footer-inner"><MorphingLogo location="footer" /><div className="footer-links"><a href="#services">Services</a><a href="#about">About</a><a href="#team">Team</a><a href="#pricing">Pricing</a><a href="#start">Start a Project</a></div><div className="footer-copy">© 2026 BiteSites. All rights reserved.</div></div></footer>
+    <footer className="site-footer"><div className="wrap footer-inner"><MorphingLogo location="footer" /><div className="footer-links"><a href="#services">Services</a><a href="#about">About</a><a href="#team">Team</a><a href="#pricing">Pricing</a><a href="#start">Start a Project</a><Link to="/terms">Terms</Link><Link to="/privacy">Privacy</Link></div><div className="footer-copy">© 2026 BiteSites. All rights reserved.</div></div></footer>
     {modal && <div className="modal-backdrop" onClick={() => setModal(null)}><div className="detail-panel" role="dialog" aria-modal="true" onClick={event => event.stopPropagation()}><button className="close" onClick={() => setModal(null)} aria-label="Close">×</button><div className="detail-hero"><Eyebrow gradient={modal === 'ai'}>Services</Eyebrow><h2>{detailCopy[modal][0]}</h2><p>{detailCopy[modal][1]}</p></div><div className="detail-content"><h3>What’s included</h3><ul className="detail-list">{detailCopy[modal][2].map(item => <li key={item}>{item}</li>)}</ul><div className="hero-actions"><Button href="#start" variant="ai" onClick={() => setModal(null)}>Start Your Project</Button><Button href="#pricing" variant="ghost" onClick={() => setModal(null)}>See pricing</Button></div></div></div></div>}
     <VoiceAIReceptionist open={voiceAgentOpen} onClose={() => setVoiceAgentOpen(false)} />
     {receptionistOpen && <AiReceptionist origin={chatOrigin} initialAnswer={receptionistInitialAnswer} onClose={closeReceptionist} />}
@@ -631,4 +697,13 @@ function App() {
 
 function Field({ label, name, type = 'text', required = false }) { return <label className="field"><span>{label}</span><input name={name} type={type} required={required} /></label>; }
 
-createRoot(document.getElementById('root')).render(<App />);
+createRoot(document.getElementById('root')).render(
+  <BrowserRouter>
+    <Routes>
+      <Route path="/terms" element={<Terms />} />
+      <Route path="/privacy" element={<Privacy />} />
+      {/* Everything else renders the marketing page, which navigates by hash anchor. */}
+      <Route path="*" element={<App />} />
+    </Routes>
+  </BrowserRouter>
+);

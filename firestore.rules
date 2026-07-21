@@ -1,0 +1,204 @@
+rules_version = '2';
+
+// BiteSites Firestore security rules
+//
+// Threat model / design notes:
+//   * `leads` accepts writes from anonymous visitors (the public marketing forms),
+//     so every field is whitelisted, type-checked and length-capped. This stops the
+//     collection from being used as free object storage.
+//   * Nobody can read, edit or delete a lead from the client except an admin. Leads
+//     are effectively append-only from the browser.
+//   * Roles live in `roles/{uid}`, which NO client can write except an admin. A user
+//     signing themselves up can never grant themselves access — self-registration
+//     only creates a `users/{uid}` profile with status "pending".
+//   * Custom auth claims (set via the Admin SDK) are honoured as a fast path so role
+//     checks don't always cost an extra document read.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------------------------------------------------------------- helpers
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Role from a custom claim, if one has been set via the Admin SDK.
+    function claimRole() {
+      return isSignedIn() && 'role' in request.auth.token
+        ? request.auth.token.role
+        : '';
+    }
+
+    // Role from the admin-controlled roles/{uid} document.
+    function storedRole() {
+      return isSignedIn() && exists(/databases/$(database)/documents/roles/$(request.auth.uid))
+        ? get(/databases/$(database)/documents/roles/$(request.auth.uid)).data.role
+        : '';
+    }
+
+    function role() {
+      return claimRole() != '' ? claimRole() : storedRole();
+    }
+
+    function isAdmin() {
+      return role() == 'admin';
+    }
+
+    function isClient() {
+      return role() == 'client';
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    // ---------------------------------------------------------- lead validation
+
+    function leadRequiredKeys() {
+      return [
+        'name', 'email', 'businessSize', 'services',
+        'preferredContactMethod', 'source', 'status', 'createdAt'
+      ];
+    }
+
+    function leadAllowedKeys() {
+      return [
+        'name', 'email', 'phone', 'businessName', 'roleInCompany',
+        'businessSize', 'urgencyTag', 'services', 'preferredContactMethod',
+        'projectDetails', 'customAnswers', 'source', 'status', 'createdAt',
+        'pagePath', 'referrer', 'userAgent'
+      ];
+    }
+
+    function str(data, field, maxLen) {
+      return data[field] is string && data[field].size() > 0 && data[field].size() <= maxLen;
+    }
+
+    function optStr(data, field, maxLen) {
+      return !(field in data) || (data[field] is string && data[field].size() <= maxLen);
+    }
+
+    function validCustomAnswers(answers) {
+      return answers is map
+        && answers.keys().hasOnly(['services', 'urgencyTag', 'businessSize'])
+        && optStr(answers, 'services', 500)
+        && optStr(answers, 'urgencyTag', 500)
+        && optStr(answers, 'businessSize', 500);
+    }
+
+    function validLead(data) {
+      return data.keys().hasAll(leadRequiredKeys())
+        && data.keys().hasOnly(leadAllowedKeys())
+
+        // Required, human-entered fields.
+        && str(data, 'name', 120)
+        && str(data, 'email', 200)
+        && data.email.matches('^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$')
+
+        // Optional, human-entered fields.
+        && optStr(data, 'phone', 40)
+        && optStr(data, 'businessName', 160)
+        && optStr(data, 'roleInCompany', 160)
+        && optStr(data, 'projectDetails', 5000)
+
+        // Controlled vocabularies. The client normalises anything unrecognised
+        // (e.g. free-text answers typed into the Bit chat) to 'other'.
+        && data.businessSize in ['solo', 'small', 'growing', 'established', 'enterprise', 'other']
+        && (!('urgencyTag' in data) || data.urgencyTag in ['asap', '2_4_weeks', '1_2_months', 'flexible', 'other', ''])
+        && data.preferredContactMethod in ['email', 'phone']
+        && data.source in ['intake_form', 'bit_chat']
+
+        && data.services is list
+        && data.services.size() >= 1
+        && data.services.size() <= 4
+        && data.services.hasOnly(['web_development', 'ai_automation', 'social_media_management', 'other'])
+
+        // Free-text chat answers are preserved, but only for the three known
+        // Bit questions and only up to 500 chars each — an unbounded map here
+        // would let anyone park ~1MB of arbitrary data per document.
+        && (!('customAnswers' in data) || validCustomAnswers(data.customAnswers))
+
+        // Server-controlled fields the submitter must not choose.
+        && data.status == 'new'
+        && data.createdAt == request.time
+
+        // Low-value diagnostic context.
+        && optStr(data, 'pagePath', 300)
+        && optStr(data, 'referrer', 400)
+        && optStr(data, 'userAgent', 400);
+    }
+
+    // ------------------------------------------------------------------ leads
+
+    match /leads/{leadId} {
+      // Public marketing forms — anyone may submit, nobody may snoop.
+      allow create: if validLead(request.resource.data);
+      allow read:   if isAdmin();
+      allow update: if isAdmin()
+                    // Admins triage status/notes but never rewrite history.
+                    && request.resource.data.createdAt == resource.data.createdAt
+                    && request.resource.data.email == resource.data.email;
+      allow delete: if isAdmin();
+    }
+
+    // ------------------------------------------------------------------ roles
+    // The authoritative access-control store. Deliberately unwritable by the
+    // account it describes — bootstrap your first admin from the Firebase console.
+
+    match /roles/{uid} {
+      allow read:  if isOwner(uid) || isAdmin();
+      allow write: if isAdmin();
+    }
+
+    // ------------------------------------------------------------------ users
+    // Self-service profile records created at sign-up.
+
+    match /users/{uid} {
+      function validProfile(data) {
+        return data.keys().hasOnly([
+                 'email', 'displayName', 'company', 'phone',
+                 'status', 'createdAt', 'updatedAt'
+               ])
+          && str(data, 'email', 200)
+          && optStr(data, 'displayName', 120)
+          && optStr(data, 'company', 160)
+          && optStr(data, 'phone', 40);
+      }
+
+      allow read: if isOwner(uid) || isAdmin();
+
+      // A new account may only ever describe itself, and always starts pending.
+      allow create: if isOwner(uid)
+                    && validProfile(request.resource.data)
+                    && request.resource.data.email == request.auth.token.email
+                    && request.resource.data.status == 'pending'
+                    && request.resource.data.createdAt == request.time;
+
+      // Users edit their own contact details; only an admin moves them out of
+      // "pending" (approval) — status is immutable to the account holder.
+      allow update: if isAdmin()
+                    || (isOwner(uid)
+                        && validProfile(request.resource.data)
+                        && request.resource.data.status == resource.data.status
+                        && request.resource.data.email == resource.data.email);
+
+      allow delete: if isAdmin();
+    }
+
+    // --------------------------------------------------------------- projects
+    // Client portal records. Admins manage them; an approved client sees only
+    // the projects their uid is listed on.
+
+    match /projects/{projectId} {
+      allow read:  if isAdmin()
+                   || (isClient() && request.auth.uid in resource.data.clientUids);
+      allow write: if isAdmin();
+    }
+
+    // Anything not matched above is denied.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

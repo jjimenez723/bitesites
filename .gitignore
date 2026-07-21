@@ -3,5 +3,16 @@ dist/
 .DS_Store
 .env
 .env.*
+!.env.example
 .dev.vars
 .dev.vars.*
+
+# Firebase CLI
+.firebase/
+firebase-debug.log
+firestore-debug.log
+*-debug.log
+
+# Never commit an Admin SDK service account key.
+service-account*.json
+serviceAccountKey*.json

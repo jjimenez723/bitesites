@@ -9,4 +9,4 @@ git add .
 npm run secrets:check
 git commit -m "$message"
 git push
-npm run deploy:worker
+npm run deploy

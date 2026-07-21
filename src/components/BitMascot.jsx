@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef } from 'react';
+import { memo, useEffect, useId, useMemo, useRef } from 'react';
 import bitMascotSvg from '../../Bit.svg?raw';
 
 // One page-level cursor source keeps every Bit instance in sync, including
@@ -61,7 +61,9 @@ function makeInstanceSafe(svg, prefix) {
     .replace(/url\(#([^)]+)\)/g, (_, id) => `url(#${prefix}-${id})`);
 }
 
-export function BitMascot({ className = '', decorative = true, label = 'Bit, the BiteSites mascot' }) {
+// Memoised because React rewrites dangerouslySetInnerHTML on every re-render,
+// which would swap out the pupil elements the gaze effect is animating.
+export const BitMascot = memo(function BitMascot({ className = '', decorative = true, label = 'Bit, the BiteSites mascot' }) {
   const rootRef = useRef(null);
   const instanceId = useId().replace(/[^a-zA-Z0-9_-]/g, '');
   const markup = useMemo(() => makeInstanceSafe(taggedMascotSvg, `bit-${instanceId}`), [instanceId]);
@@ -70,14 +72,20 @@ export function BitMascot({ className = '', decorative = true, label = 'Bit, the
     const root = rootRef.current;
     if (!root) return undefined;
 
-    const pupils = [...root.querySelectorAll('[data-bit-pupil]')];
+    // Re-query whenever the markup underneath us is replaced, so the gaze never
+    // ends up animating orphaned nodes.
+    let pupils = [];
+    const livePupils = () => {
+      if (!pupils.length || !pupils[0].isConnected) pupils = [...root.querySelectorAll('[data-bit-pupil]')];
+      return pupils;
+    };
     let lastPoint = null;
     let animationFrame = null;
     let restoreFrame = null;
     let mountRefreshTimer = null;
 
     const movePupils = (x, y) => {
-      pupils.forEach(pupil => {
+      livePupils().forEach(pupil => {
         const centerX = Number(pupil.dataset.bitCenterX);
         const centerY = Number(pupil.dataset.bitCenterY);
         const base = pupil.dataset.bitBaseTransform || '';
@@ -179,4 +187,4 @@ export function BitMascot({ className = '', decorative = true, label = 'Bit, the
     aria-label={decorative ? undefined : label}
     dangerouslySetInnerHTML={{ __html: markup }}
   />;
-}
+});
