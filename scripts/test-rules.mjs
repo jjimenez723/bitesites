@@ -309,6 +309,41 @@ await it('accepts a click with position and label', () =>
     section: 'start', interactive: true, x: 0.5, y: 0.25, vw: 1440, vh: 900
   })));
 
+// The portfolio section emits these three, and a type the client sends but the
+// rules reject takes down the entire writeBatch it rides in — every unrelated
+// event alongside it included. These assert the exact shapes src/main.jsx
+// builds, so the two whitelists cannot drift apart unnoticed.
+await it('accepts a portfolio project view with dwell', () =>
+  assertSucceeds(addDoc(collection(anon, 'events'), {
+    ...validEvent(), type: 'portfolio_project_view',
+    label: 'StockRoom NJ', section: 'portfolio', value: 8400
+  })));
+
+await it('accepts a portfolio progress milestone', () =>
+  assertSucceeds(addDoc(collection(anon, 'events'), {
+    ...validEvent(), type: 'portfolio_progress',
+    label: 'Rutgers Newark Bodega Project', section: 'portfolio', value: 75
+  })));
+
+await it('accepts a portfolio video health report', () =>
+  assertSucceeds(addDoc(collection(anon, 'events'), {
+    ...validEvent(), type: 'portfolio_video_health',
+    label: 'Nexus Verium', section: 'portfolio:stalled:2', value: 1250
+  })));
+
+await it('accepts an outbound click attributed to a project', () =>
+  assertSucceeds(addDoc(collection(anon, 'events'), {
+    ...validEvent(), type: 'outbound', label: 'Visit the live project',
+    href: 'https://stockroomnj.com', section: 'portfolio:StockRoom NJ'
+  })));
+
+// analyticsDuration() clamps to this ceiling before enqueueing. If that clamp is
+// ever removed, a long dwell starts failing here rather than in production.
+await it('rejects a dwell past the value ceiling', () =>
+  assertFails(addDoc(collection(anon, 'events'), {
+    ...validEvent(), type: 'portfolio_project_view', label: 'StockRoom NJ', value: 100001
+  })));
+
 await it('rejects an unknown event type', () =>
   assertFails(addDoc(collection(anon, 'events'), { ...validEvent(), type: 'exfiltrate' })));
 

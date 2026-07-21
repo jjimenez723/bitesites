@@ -17,6 +17,11 @@ firestore-debug.log
 service-account*.json
 serviceAccountKey*.json
 
-# Raw source recordings — keep out of git (too large for GitHub)
-/*.mov
+# Raw source recordings — keep out of git (too large for GitHub).
+# .mov is ignored everywhere: the masters arrive in their own folder as often as
+# they do at the root. The .mp4 rule stays anchored to the root on purpose —
+# src/assets/portfolio/*.mp4 are the encoded clips Vite hashes into the build
+# and they must stay tracked.
+*.mov
 /*.mp4
+/New Portfolio Clios/

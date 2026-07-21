@@ -28,10 +28,20 @@ const SCROLL_MARKS = [25, 50, 75, 100];
 
 // Mirrors the `analyticsEvent` whitelist in firestore.rules. Anything not on
 // this list is dropped before it can be rejected server-side.
+// A type added here and *not* added to firestore.rules rejects the whole
+// writeBatch it lands in, and flush() has already spliced those events off the
+// queue — so the loss is silent and takes every unrelated event in the batch
+// with it. The two lists change together or not at all.
 const EVENT_TYPES = [
   'page_view', 'click', 'section_view', 'scroll_depth',
-  'form_start', 'form_submit', 'chat_open', 'call_open', 'outbound'
+  'form_start', 'form_submit', 'chat_open', 'call_open', 'outbound',
+  'portfolio_project_view', 'portfolio_progress', 'portfolio_video_health'
 ];
+
+// `value` is capped at 100000 by the rules, and a dwell or load time is the one
+// number here that can plausibly run past it. Clamping client-side keeps an
+// unusually long visit from taking a batch of good events down with it.
+export const analyticsDuration = ms => Math.max(0, Math.min(100000, Math.round(ms)));
 
 const randomId = () =>
   `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
@@ -247,8 +257,12 @@ export function startAnalytics() {
 
     // An outbound link is a conversion of sorts — the booking calendar, a live
     // portfolio site — so it is worth separating from ordinary clicks.
+    // The section comes along so a click through to a live client site can be
+    // attributed to the project that sent it. The portfolio story panel carries
+    // a per-project data-section for exactly this reason — without it every one
+    // of these links reads "Visit the live project" and tells you nothing.
     if (href && /^https?:\/\//i.test(href) && !href.includes(window.location.host)) {
-      enqueue('outbound', { label, href });
+      enqueue('outbound', { label, href, section: sectionOf(node) });
     }
   };
 

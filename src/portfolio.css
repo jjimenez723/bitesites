@@ -1,4 +1,7 @@
-/* The page keeps its native scroll; downward input is captured only over the visible project video. */
+/* The page always keeps its native scroll. Opening a project is a discrete click
+   or tap, and every stage of the animation below is a CSS transition on a class —
+   nothing here is driven by scroll position. The one value JS still writes is
+   --portfolio-scrub, the playhead, at the bottom of this file. */
 
 .portfolio-section {
   position: relative;
@@ -17,10 +20,6 @@
   isolation: isolate;
   background: #050507;
   color: #fff;
-  opacity: var(--portfolio-stage-opacity);
-  transform: scale(var(--portfolio-stage-scale));
-  transform-origin: center;
-  border-radius: var(--portfolio-stage-radius);
 }
 
 .portfolio-intro {
@@ -30,9 +29,13 @@
   left: 0;
   right: 0;
   text-align: center;
-  opacity: var(--portfolio-carousel);
-  transform: translateY(var(--portfolio-intro-y));
+  transition: opacity .42s ease, transform .55s cubic-bezier(.2,.8,.2,1);
   pointer-events: none;
+}
+
+.portfolio-section.portfolio-expanded .portfolio-intro {
+  opacity: 0;
+  transform: translateY(-18px);
 }
 
 .portfolio-intro .eyebrow {
@@ -49,9 +52,14 @@
   position: absolute;
   z-index: 3;
   inset: 0;
-  opacity: var(--portfolio-carousel);
-  transform: translateY(var(--portfolio-rail-y));
+  transition: opacity .42s ease, transform .55s cubic-bezier(.2,.8,.2,1);
   pointer-events: auto;
+}
+
+.portfolio-section.portfolio-expanded .portfolio-rail {
+  opacity: 0;
+  transform: translateY(-24px);
+  pointer-events: none;
 }
 
 .portfolio-stage .portfolio-track {
@@ -109,22 +117,47 @@
 .portfolio-project-title span { display: block; margin-bottom: 7px; color: rgba(255,255,255,.58); font-size: 10px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; }
 .portfolio-project-title h3 { max-width: 700px; font-size: clamp(25px,3.2vw,47px); line-height: 1; letter-spacing: -.045em; text-wrap: balance; }
 
+/* Covers the whole card so the click target is the card. It carries the focus
+   ring too — the <article> around it can't take focus. */
+.portfolio-project-open {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  padding: 0;
+  border: 0;
+  border-radius: inherit;
+  background: none;
+  appearance: none;
+  cursor: pointer;
+}
+
+.portfolio-project-open:focus-visible { outline: 2px solid #a99bff; outline-offset: -6px; }
+
 .portfolio-demo {
   position: absolute;
   z-index: 5;
   inset: 0;
   overflow: hidden;
-  clip-path: inset(var(--portfolio-clip-y) var(--portfolio-clip-x) round var(--portfolio-radius));
-  opacity: var(--portfolio-demo-opacity);
+  /* The open animation. Both inset() forms have the same shape, so clip-path
+     interpolates between them and the expansion is a plain CSS transition —
+     no scroll value, no per-frame JS write. */
+  clip-path: inset(27% 18% round 28px);
+  opacity: 0;
   background: #050507;
   pointer-events: none;
+  transition: clip-path .68s cubic-bezier(.2,.8,.2,1), opacity .38s ease;
   will-change: clip-path, opacity;
 }
 
-.portfolio-section.portfolio-demo-active .portfolio-demo { pointer-events: auto; }
+.portfolio-section.portfolio-expanded .portfolio-demo {
+  clip-path: inset(0% 0% round 0px);
+  opacity: 1;
+  pointer-events: auto;
+}
 
 .portfolio-demo > video { display: block; width: 100%; height: 100%; object-fit: cover; object-position: center top; filter: saturate(.9) contrast(1.05); }
-.portfolio-demo-vignette { position: absolute; inset: 0; background: linear-gradient(90deg,rgba(2,3,7,.7) 0%,rgba(2,3,7,.08) 43%,rgba(2,3,7,.12) 62%,rgba(2,3,7,.72) 100%),linear-gradient(180deg,rgba(2,3,7,.2),rgba(2,3,7,.2) 55%,rgba(2,3,7,.7)); opacity: var(--portfolio-story); }
+.portfolio-demo-vignette { position: absolute; inset: 0; background: linear-gradient(90deg,rgba(2,3,7,.7) 0%,rgba(2,3,7,.08) 43%,rgba(2,3,7,.12) 62%,rgba(2,3,7,.72) 100%),linear-gradient(180deg,rgba(2,3,7,.2),rgba(2,3,7,.2) 55%,rgba(2,3,7,.7)); opacity: 0; transition: opacity .7s ease; }
+.portfolio-section.portfolio-story-visible .portfolio-demo-vignette { opacity: 1; }
 
 .portfolio-playback {
   position: absolute;
@@ -143,8 +176,13 @@
   font-weight: 800;
   letter-spacing: .06em;
   text-transform: uppercase;
-  opacity: var(--portfolio-playback-opacity);
+  opacity: 0;
+  transition: opacity .35s ease;
 }
+
+/* It reads "Playing", so it steps aside once the story panel takes the frame. */
+.portfolio-section.portfolio-expanded .portfolio-playback { opacity: 1; }
+.portfolio-section.portfolio-story-visible .portfolio-playback { opacity: 0; }
 
 .portfolio-playback span { width: 7px; height: 7px; border-radius: 50%; background: #9cf0c4; box-shadow: 0 0 0 4px rgba(156,240,196,.13); }
 
@@ -183,13 +221,15 @@
   grid-template-columns: minmax(0,1.12fr) minmax(320px,.88fr);
   gap: clamp(42px,8vw,140px);
   align-items: end;
-  padding: clamp(96px,12vw,170px) clamp(28px,7vw,104px) clamp(58px,8vh,92px);
-  opacity: var(--portfolio-story-opacity);
-  transform: translateY(var(--portfolio-story-y));
+  /* Bottom padding clears the scrub bar, which is painted above this panel. */
+  padding: clamp(96px,12vw,170px) clamp(28px,7vw,104px) clamp(72px,8vh,96px);
+  opacity: 0;
+  transform: translateY(42px);
+  transition: opacity .7s ease, transform .8s cubic-bezier(.2,.8,.2,1);
   pointer-events: none;
 }
 
-.portfolio-section.portfolio-story-visible .portfolio-story { pointer-events: auto; }
+.portfolio-section.portfolio-story-visible .portfolio-story { opacity: 1; transform: none; pointer-events: auto; }
 
 .portfolio-story-heading > span { display: block; margin-bottom: 16px; color: #a8b7ff; font-size: 11px; font-weight: 800; letter-spacing: .18em; }
 .portfolio-story-heading h3 { max-width: 760px; font-size: clamp(50px,7.4vw,116px); line-height: .85; letter-spacing: -.075em; text-wrap: balance; }
@@ -211,9 +251,11 @@
   bottom: clamp(22px,4svh,46px);
   display: flex;
   color: #fff;
-  opacity: var(--portfolio-carousel);
+  transition: opacity .42s ease;
   pointer-events: auto;
 }
+
+.portfolio-section.portfolio-expanded > .portfolio-stage > .portfolio-footer { opacity: 0; pointer-events: none; }
 
 .portfolio-stage .portfolio-count { color: rgba(255,255,255,.4); }
 .portfolio-stage .portfolio-count span:first-child { color: #fff; }
@@ -222,6 +264,58 @@
 .portfolio-stage .portfolio-dots button.active { background: #fff; }
 .portfolio-stage > .portfolio-footer > p { display: flex; gap: 18px; color: rgba(255,255,255,.52); font-weight: 700; }
 .portfolio-stage > .portfolio-footer > p span { white-space: nowrap; }
+
+/* Pointer events drive this, so one code path covers mouse, pen and finger.
+   touch-action: none claims the drag from the page — but only over this bar, so
+   a finger anywhere else on the video still scrolls as normal. */
+.portfolio-scrubber {
+  position: absolute;
+  z-index: 7;
+  left: clamp(22px,5vw,64px);
+  right: clamp(22px,5vw,64px);
+  bottom: clamp(14px,2svh,24px);
+  display: flex;
+  align-items: center;
+  height: 28px;
+  opacity: 0;
+  touch-action: none;
+  cursor: pointer;
+  pointer-events: none;
+  transition: opacity .35s ease;
+}
+
+.portfolio-section.portfolio-expanded .portfolio-scrubber { opacity: 1; pointer-events: auto; }
+.portfolio-scrubber:focus-visible { outline: 2px solid #a99bff; outline-offset: 4px; border-radius: 8px; }
+
+.portfolio-scrubber-track {
+  position: relative;
+  width: 100%;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 100px;
+  background: rgba(255,255,255,.24);
+  transition: height .2s ease;
+}
+
+.portfolio-scrubber:hover .portfolio-scrubber-track,
+.portfolio-scrubber:focus-visible .portfolio-scrubber-track,
+.portfolio-section.portfolio-scrubbing .portfolio-scrubber-track { height: 6px; }
+
+.portfolio-scrubber-track i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #fff;
+  transform: scaleX(var(--portfolio-scrub, 0));
+  transform-origin: left;
+  /* At 1x the playhead only lands ~4 times a second, on timeupdate, so the bar
+     is interpolated here rather than driven by a rAF loop. A scrub writes every
+     frame instead, and this transition would then lag the finger — hence the
+     override below while .portfolio-scrubbing is on. */
+  transition: transform .3s linear;
+}
+
+.portfolio-section.portfolio-scrubbing .portfolio-scrubber-track i { transition: none; }
 
 @media (max-width: 760px) {
   .portfolio-section { height: 100svh; }
@@ -233,7 +327,7 @@
   .portfolio-project .project-number { top: 13px; left: 13px; width: 35px; height: 35px; }
   .portfolio-project-title { left: 18px; right: 18px; bottom: 18px; }
   .portfolio-project-title h3 { font-size: 25px; }
-  .portfolio-story { grid-template-columns: 1fr; align-content: end; gap: 25px; padding: 110px 24px 50px; }
+  .portfolio-story { grid-template-columns: 1fr; align-content: end; gap: 25px; padding: 110px 24px 62px; }
   .portfolio-story-heading h3 { font-size: clamp(48px,15vw,76px); }
   .portfolio-story-copy > p { font-size: 14px; }
   .portfolio-story-copy ul { display: none; }
@@ -241,6 +335,9 @@
   .portfolio-playback { top: 82px; right: 18px; }
   .portfolio-back { top: 82px; left: 18px; }
   .portfolio-back small { display: none; }
+  /* Taller hit area than the desktop bar — a fingertip is not a cursor. */
+  .portfolio-scrubber { left: 18px; right: 18px; bottom: 12px; height: 34px; }
+  .portfolio-scrubber-track { height: 5px; }
   .portfolio-stage > .portfolio-footer { bottom: 24px; padding-inline: 20px; }
   .portfolio-stage > .portfolio-footer > p { font-size: 11px; }
   .portfolio-stage > .portfolio-footer .gesture-sideways { display: none; }
@@ -255,12 +352,45 @@
   .portfolio-story-heading h3 { font-size: clamp(48px,7vw,90px); }
 }
 
+/* The stage still opens under this preference — it just does it without any
+   motion. The rail lays out in normal flow, the clip-path reveal is dropped for
+   a plain fixed overlay, and the demo holds on its poster frame behind the
+   explicit play control rather than starting on its own. What this preference
+   asks us to avoid is unrequested movement, not the content itself. */
 @media (prefers-reduced-motion: reduce) {
   .portfolio-section { height: auto; background: #050507; }
-  .portfolio-stage { position: relative; height: auto; min-height: 100svh; overflow: visible; opacity: 1; transform: none; border-radius: 0; }
-  .portfolio-intro { position: relative; top: auto; padding: 90px 24px 24px; opacity: 1; transform: none; }
-  .portfolio-rail { position: relative; height: 490px; opacity: 1; transform: none; }
+  .portfolio-stage { position: relative; height: auto; min-height: 100svh; overflow: visible; }
+  .portfolio-intro { position: relative; top: auto; padding: 90px 24px 24px; transform: none; transition: none; }
+  .portfolio-rail { position: relative; height: 490px; transform: none; transition: none; }
   .portfolio-stage .portfolio-track { top: 20px; height: 410px; }
-  .portfolio-demo { display: none; }
-  .portfolio-stage > .portfolio-footer { position: relative; bottom: auto; padding: 0 24px 42px; opacity: 1; }
+  .portfolio-stage > .portfolio-footer { position: relative; bottom: auto; padding: 0 24px 42px; transition: none; }
+  /* Fixed rather than absolute: the stage is auto-height here, so an inset:0
+     overlay would otherwise stretch to the full document rather than the frame. */
+  .portfolio-demo { position: fixed; clip-path: none; transition: none; }
+  .portfolio-section.portfolio-expanded .portfolio-demo { clip-path: none; }
+  .portfolio-demo-vignette, .portfolio-playback, .portfolio-story { transition: none; }
 }
+
+/* Reduced motion only: the consent gate in playPortfolioDemo. */
+.portfolio-demo-play {
+  position: absolute;
+  z-index: 8;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%,-50%);
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 15px 25px 15px 19px;
+  border: 1px solid rgba(255,255,255,.22);
+  border-radius: 100px;
+  background: rgba(4,5,9,.72);
+  backdrop-filter: blur(15px);
+  color: #fff;
+  cursor: pointer;
+}
+.portfolio-demo-play:hover { background: rgba(4,5,9,.85); }
+.portfolio-demo-play:focus-visible { outline: 2px solid #a99bff; outline-offset: 3px; }
+.portfolio-demo-play > span:first-child { display: grid; place-items: center; width: 37px; height: 37px; border-radius: 50%; background: rgba(255,255,255,.15); font-size: 14px; }
+.portfolio-demo-play > span:last-child { display: grid; gap: 2px; text-align: left; font-size: 12px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; }
+.portfolio-demo-play small { color: rgba(255,255,255,.55); font-size: 9px; font-weight: 700; letter-spacing: .04em; text-transform: none; }
