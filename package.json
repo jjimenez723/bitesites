@@ -1,0 +1,26 @@
+{
+  "name": "bitesites-react-node",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently \"vite\" \"node server.js\"",
+    "build": "vite build",
+    "check": "npm run build",
+    "secrets:check": "node scripts/check-no-secrets.mjs",
+    "deploy:worker": "wrangler deploy",
+    "ship": "sh scripts/ship.sh",
+    "start": "node server.js",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.4.1",
+    "concurrently": "^9.1.2",
+    "vite": "^6.3.5"
+  }
+}
