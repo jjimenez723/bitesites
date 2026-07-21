@@ -12,22 +12,36 @@
   background: #f5f5f7;
 }
 
+/* Intro, rail and footer are a flex column, not three absolutely positioned
+   blocks. They used to be: the intro was pinned at a fixed top while the rail
+   sat at a percentage of the viewport, and nothing tied the two together — so
+   any short or narrow screen, where the intro copy wrapped one line further
+   than the gap allowed, put the paragraph straight over the cards. In flow the
+   intro takes exactly the height its text needs and the rail takes what is
+   left, so the copy cannot reach the cards at any size, font or copy length.
+   Only the demo overlay and its controls are still absolute, and those are
+   meant to cover the stage. */
 .portfolio-stage {
   position: relative;
+  display: flex;
+  flex-direction: column;
   height: 100vh;
   height: 100svh;
   overflow: hidden;
   isolation: isolate;
   background: #050507;
   color: #fff;
+  /* Cap only. The rail shrinks the cards below this whenever the space between
+     the intro and the footer is tighter, which is what keeps the guarantee. */
+  --portfolio-card-height: 46svh;
 }
 
 .portfolio-intro {
-  position: absolute;
+  position: relative;
   z-index: 4;
-  top: clamp(54px, 8svh, 86px);
-  left: 0;
-  right: 0;
+  flex: 0 0 auto;
+  margin: 0 auto;
+  padding: clamp(54px, 8svh, 86px) 28px 0;
   text-align: center;
   transition: opacity .42s ease, transform .55s cubic-bezier(.2,.8,.2,1);
   pointer-events: none;
@@ -48,10 +62,17 @@
 .portfolio-intro h2 { font-size: clamp(30px, 4vw, 52px); line-height: 1; letter-spacing: -.055em; }
 .portfolio-intro p { max-width: 570px; margin: 13px auto 0; color: rgba(255,255,255,.58); font-size: 14px; }
 
+/* Takes whatever height the intro and the footer leave. min-height: 0 is what
+   lets it actually shrink — a flex item's default min-height: auto would let
+   the cards push the column taller than the stage instead of giving way. */
 .portfolio-rail {
-  position: absolute;
+  position: relative;
   z-index: 3;
-  inset: 0;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  padding-block: clamp(10px, 2svh, 26px);
   transition: opacity .42s ease, transform .55s cubic-bezier(.2,.8,.2,1);
   pointer-events: auto;
 }
@@ -63,11 +84,11 @@
 }
 
 .portfolio-stage .portfolio-track {
-  position: absolute;
-  top: 27%;
-  left: 0;
-  right: 0;
-  height: 46%;
+  position: relative;
+  width: 100%;
+  /* The cap keeps the desktop card proportions; the 100% is the guarantee —
+     on a short screen the cards give way rather than growing into the copy. */
+  height: min(var(--portfolio-card-height), 100%);
   display: flex;
   gap: 22px;
   overflow-x: auto;
@@ -140,8 +161,12 @@
   overflow: hidden;
   /* The open animation. Both inset() forms have the same shape, so clip-path
      interpolates between them and the expansion is a plain CSS transition —
-     no scroll value, no per-frame JS write. */
-  clip-path: inset(27% 18% round 28px);
+     no scroll value, no per-frame JS write. The closed shape is measured off
+     the card being opened (writePortfolioClipOrigin) rather than hardcoded as
+     a percentage, because the rail no longer sits at a fixed percentage of the
+     stage. The fallback is the old desktop value, used only for the frame
+     before the first open. */
+  clip-path: var(--portfolio-clip, inset(27% 18% round 28px));
   opacity: 0;
   background: #050507;
   pointer-events: none;
@@ -244,11 +269,11 @@
 .portfolio-story-copy > a span { font-size: 18px; }
 
 .portfolio-stage > .portfolio-footer {
-  position: absolute;
+  position: relative;
   z-index: 6;
-  left: 0;
-  right: 0;
-  bottom: clamp(22px,4svh,46px);
+  flex: 0 0 auto;
+  margin: 0 auto;
+  padding: 0 28px clamp(22px,4svh,46px);
   display: flex;
   color: #fff;
   transition: opacity .42s ease;
@@ -319,10 +344,16 @@
 
 @media (max-width: 760px) {
   .portfolio-section { height: 100svh; }
-  .portfolio-intro { top: 84px; padding-inline: 22px; }
-  .portfolio-intro h2 { font-size: 36px; }
-  .portfolio-intro p { max-width: 320px; font-size: 12px; }
-  .portfolio-stage .portfolio-track { top: 29%; height: 42%; gap: 14px; padding-inline: 18vw; scroll-padding-inline: 18vw; }
+  /* Taller than the desktop cap because a phone has less width to spend: the
+     cards are 64vw, so a shorter card would read as a letterbox strip. The
+     min() against the rail's own height still governs when space is tight. */
+  .portfolio-stage { --portfolio-card-height: 56svh; }
+  /* Clears the fixed header — the section scrolls underneath it. */
+  .portfolio-intro { padding: 84px 22px 0; }
+  .portfolio-intro h2 { font-size: 33px; }
+  .portfolio-intro p { max-width: 330px; margin-top: 10px; font-size: 12px; }
+  .portfolio-rail { padding-block: 10px; }
+  .portfolio-stage .portfolio-track { gap: 14px; padding-inline: 18vw; scroll-padding-inline: 18vw; }
   .portfolio-project { flex-basis: 64vw; border-radius: 20px; }
   .portfolio-project .project-number { top: 13px; left: 13px; width: 35px; height: 35px; }
   .portfolio-project-title { left: 18px; right: 18px; bottom: 18px; }
@@ -338,18 +369,30 @@
   /* Taller hit area than the desktop bar — a fingertip is not a cursor. */
   .portfolio-scrubber { left: 18px; right: 18px; bottom: 12px; height: 34px; }
   .portfolio-scrubber-track { height: 5px; }
-  .portfolio-stage > .portfolio-footer { bottom: 24px; padding-inline: 20px; }
+  .portfolio-stage > .portfolio-footer { padding: 0 20px 24px; }
   .portfolio-stage > .portfolio-footer > p { font-size: 11px; }
   .portfolio-stage > .portfolio-footer .gesture-sideways { display: none; }
 }
 
+/* Short landscape screens. The column absorbs this on its own — the cap below
+   only stops the cards from looking squat once the copy is out of the way. */
 @media (max-height: 680px) and (min-width: 761px) {
-  .portfolio-intro { top: 42px; }
+  .portfolio-stage { --portfolio-card-height: 62svh; }
+  .portfolio-intro { padding-top: 42px; }
   .portfolio-intro p { display: none; }
-  .portfolio-stage .portfolio-track { top: 25%; height: 50%; }
-  .portfolio-stage > .portfolio-footer { bottom: 20px; }
+  .portfolio-rail { padding-block: 8px; }
+  .portfolio-stage > .portfolio-footer { padding-bottom: 20px; }
   .portfolio-story { padding-top: 80px; padding-bottom: 40px; }
   .portfolio-story-heading h3 { font-size: clamp(48px,7vw,90px); }
+}
+
+/* Phones held sideways: the intro alone can be most of the viewport, so the
+   paragraph goes and the cards keep a usable share of the height. */
+@media (max-height: 480px) and (max-width: 900px) {
+  .portfolio-stage { --portfolio-card-height: 66svh; }
+  .portfolio-intro { padding-top: 58px; }
+  .portfolio-intro h2 { font-size: 26px; }
+  .portfolio-intro p { display: none; }
 }
 
 /* The stage still opens under this preference — it just does it without any
@@ -360,10 +403,12 @@
 @media (prefers-reduced-motion: reduce) {
   .portfolio-section { height: auto; background: #050507; }
   .portfolio-stage { position: relative; height: auto; min-height: 100svh; overflow: visible; }
-  .portfolio-intro { position: relative; top: auto; padding: 90px 24px 24px; transform: none; transition: none; }
-  .portfolio-rail { position: relative; height: 490px; transform: none; transition: none; }
-  .portfolio-stage .portfolio-track { top: 20px; height: 410px; }
-  .portfolio-stage > .portfolio-footer { position: relative; bottom: auto; padding: 0 24px 42px; transition: none; }
+  .portfolio-intro { padding: 90px 24px 24px; transform: none; transition: none; }
+  /* Fixed rather than flexed: the stage is auto-height here, so there is no
+     leftover space for flex-grow to hand out. */
+  .portfolio-rail { flex: 0 0 auto; padding-block: 20px 60px; transform: none; transition: none; }
+  .portfolio-stage .portfolio-track { height: 410px; }
+  .portfolio-stage > .portfolio-footer { padding: 0 24px 42px; transition: none; }
   /* Fixed rather than absolute: the stage is auto-height here, so an inset:0
      overlay would otherwise stretch to the full document rather than the frame. */
   .portfolio-demo { position: fixed; clip-path: none; transition: none; }

@@ -799,8 +799,25 @@ function App() {
     const health = portfolioHealthRef.current;
     if (health.firstFrameMs < 0 && health.requestedAt) health.firstFrameMs = performance.now() - health.requestedAt;
   };
+  // The demo grows out of the card that was tapped. That closed shape used to be
+  // a hardcoded inset(27% 18%) matching where the rail happened to sit; the rail
+  // is laid out in flow now, so the shape is measured instead. One write per
+  // open, before the expand transition starts — never on the playback path.
+  const writePortfolioClipOrigin = index => {
+    const demo = portfolioDemo.current;
+    const card = portfolioTrack.current?.children[index];
+    if (!demo || !card) return;
+    // Measure before showProject's smooth scroll moves anything: the card is
+    // still under the finger that opened it, which is where the reveal starts.
+    const stage = demo.getBoundingClientRect();
+    const rect = card.getBoundingClientRect();
+    if (!stage.width || !stage.height) return;
+    const radius = getComputedStyle(card).borderTopLeftRadius;
+    demo.style.setProperty('--portfolio-clip', `inset(${rect.top - stage.top}px ${stage.right - rect.right}px ${stage.bottom - rect.bottom}px ${rect.left - stage.left}px round ${radius})`);
+  };
   const openPortfolioProject = index => {
     if (index !== activeProject) setActiveProject(index);
+    writePortfolioClipOrigin(index);
     showProject(index);
     portfolioExpandedRef.current = true;
     // Reduced motion opens the stage like everyone else's — it just arrives

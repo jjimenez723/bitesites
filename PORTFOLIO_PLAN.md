@@ -598,3 +598,47 @@ asserting the exact payload shapes `src/main.jsx` builds.
 > clock is now gated on the section being on screen, via the rail's existing
 > IntersectionObserver; the active index reaches that effect through
 > `portfolioActiveRef` so the observer does not re-subscribe on every rail snap.
+
+
+### 12.8 Intro copy over the cards — fixed 2026-07-21
+
+Reported on mobile: the intro paragraph ("Browse sideways, then open a
+project…") printed straight over the project cards.
+
+**Cause.** `.portfolio-intro` was `position: absolute; top: 84px` while
+`.portfolio-track` was `position: absolute; top: 29%`. Two rules encoding the
+same boundary independently, in different units. The intro's height is set by
+how its text wraps, so on any screen narrow or short enough to cost it one more
+line, it crossed into the rail. Measured on the shipped build, the intro
+overlapped the active card on **8 of 14 viewports** — every phone size, plus
+`667×375` by 105px and `1440×700` by 1px. `344×882` cleared by 5.8px. So this
+was never mobile-only; phones were just where it crossed far enough to see.
+
+**Fix.** `.portfolio-stage` is a flex column: intro (`flex: 0 0 auto`), rail
+(`flex: 1 1 auto; min-height: 0`), footer (`flex: 0 0 auto`). The intro takes
+the height its text needs and the rail takes what is left, so overlap is not
+possible at any viewport, font size or copy length — the guarantee is
+structural, not a tuned number. The cards keep their proportions through
+`height: min(var(--portfolio-card-height), 100%)` on the track: the variable
+caps them per breakpoint, and the `100%` makes them give way rather than grow
+into the copy when space is tight.
+
+Two consequences worth knowing:
+
+- **The demo's open animation is now measured.** `clip-path` was
+  `inset(27% 18% round 28px)` — the same hardcoded percentage, describing where
+  the rail used to sit. `writePortfolioClipOrigin` in `src/main.jsx` now writes
+  `--portfolio-clip` from the opened card's own rect (and its computed corner
+  radius), once per open, before the transition starts. Verified to match the
+  card exactly at six viewports. It is not on the playback path.
+- **A `max-height: 480px` / `max-width: 900px` query was added** for phones held
+  sideways, where the intro alone is most of the viewport. It drops the
+  paragraph, as the existing short-desktop query already did.
+
+Verified with headless Chrome across 14 viewports (320×568 → 1920×1080, plus
+landscape and `prefers-reduced-motion`): no overlap anywhere, open → play →
+drag-scrub → resume still works at every one. `npm run build` clean.
+
+> **Do not reintroduce a percentage `top` on the track.** That coupling is the
+> defect. If the rail needs to move, move it by changing what surrounds it or
+> by `--portfolio-card-height`, both of which the column keeps honest.
