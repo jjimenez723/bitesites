@@ -4,6 +4,9 @@ import { BitMascot } from './components/BitMascot';
 import { InteractiveNebulaShader } from './components/InteractiveNebulaShader';
 import './styles.css';
 import './bit.css';
+import './typography.css';
+import './portfolio.css';
+import './pricing-badge.css';
 
 const logo = 'https://bitesites.org/_next/image?url=%2Fmainlogo2.png&w=3840&q=75';
 
@@ -35,6 +38,11 @@ const detailCopy = {
   web: ['Web Development', 'We design and build websites that turn your online presence into a working sales asset.', ['Custom site architecture, design direction, and page planning', 'Responsive development for desktop, tablet, and mobile', 'Lead forms, CRM hooks, analytics, and conversion tracking', 'Performance, accessibility, and technical SEO foundations', 'CMS or editable sections for your team', 'Launch support, QA, and optimization recommendations']],
   social: ['Social Media Management', 'We manage the planning, production, and publishing rhythm behind your social channels so your brand stays visible and credible.', ['Monthly content planning tied to your priorities', 'Platform-specific post copy, creative direction, and scheduling', 'Brand voice guidance for consistency', 'Community management support', 'Performance reporting and recommendations', 'Coordination with website and campaign activity']],
   ai: ['AI Automation', 'We identify repetitive work across sales, marketing, and operations, then build AI-assisted workflows that reduce manual effort and move information faster.', ['Workflow mapping to identify high-friction tasks', 'Automation design for intake, lead routing, and alerts', 'AI-assisted summarization, categorization, and response support', 'Integrations across forms, email, CRM, and project systems', 'Fallback logic, QA, and human-review checkpoints', 'Documentation so your team can maintain the system']]
+};
+
+const smoothStep = (start, end, value) => {
+  const progress = Math.min(1, Math.max(0, (value - start) / (end - start)));
+  return progress * progress * (3 - 2 * progress);
 };
 
 function Button({ children, variant = 'primary', href, ...props }) { return href ? <a className={`btn btn-${variant}`} href={href} {...props}>{children}</a> : <button className={`btn btn-${variant}`} {...props}>{children}</button>; }
@@ -174,7 +182,11 @@ function App() {
   const [receptionistNudge, setReceptionistNudge] = useState(false);
   const [chatOrigin, setChatOrigin] = useState(null);
   const [receptionistInitialAnswer, setReceptionistInitialAnswer] = useState(null);
+  const [portfolioProgress, setPortfolioProgress] = useState(0);
   const portfolioTrack = useRef(null);
+  const portfolioSection = useRef(null);
+  const portfolioVideo = useRef(null);
+  const portfolioProgressRef = useRef(0);
 
   useEffect(() => {
     const header = document.querySelector('header');
@@ -188,6 +200,38 @@ function App() {
   useEffect(() => {
     const nudgeTimer = window.setTimeout(() => setReceptionistNudge(true), 12000);
     return () => window.clearTimeout(nudgeTimer);
+  }, []);
+
+  useEffect(() => {
+    let frame = 0;
+    const updatePortfolio = () => {
+      frame = 0;
+      const section = portfolioSection.current;
+      if (!section) return;
+      const rect = section.getBoundingClientRect();
+      const range = Math.max(1, section.offsetHeight - window.innerHeight);
+      const nextProgress = Math.min(1, Math.max(0, -rect.top / range));
+      if (Math.abs(nextProgress - portfolioProgressRef.current) > .001) {
+        portfolioProgressRef.current = nextProgress;
+        setPortfolioProgress(nextProgress);
+      }
+      if (portfolioVideo.current) {
+        portfolioVideo.current.playbackRate = 1 + smoothStep(.2, .64, nextProgress) * 2;
+      }
+      document.body.classList.toggle('portfolio-immersive', nextProgress > .075 && nextProgress < .94);
+    };
+    const requestUpdate = () => {
+      if (!frame) frame = window.requestAnimationFrame(updatePortfolio);
+    };
+    updatePortfolio();
+    window.addEventListener('scroll', requestUpdate, { passive: true });
+    window.addEventListener('resize', requestUpdate);
+    return () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      window.removeEventListener('scroll', requestUpdate);
+      window.removeEventListener('resize', requestUpdate);
+      document.body.classList.remove('portfolio-immersive');
+    };
   }, []);
 
   const closeMenu = () => setMenuOpen(false);
@@ -207,7 +251,7 @@ function App() {
     const track = portfolioTrack.current;
     const card = track?.children[index];
     if (!track || !card) return;
-    track.scrollTo({ left: card.offsetLeft - track.offsetLeft, behavior: 'smooth' });
+    track.scrollTo({ left: card.offsetLeft + card.offsetWidth / 2 - track.clientWidth / 2, behavior: 'smooth' });
   };
   const handlePortfolioScroll = event => {
     const track = event.currentTarget;
@@ -215,6 +259,12 @@ function App() {
     const center = track.scrollLeft + track.clientWidth / 2;
     const closest = cards.reduce((best, card, index) => Math.abs(card.offsetLeft + card.offsetWidth / 2 - center) < Math.abs(cards[best].offsetLeft + cards[best].offsetWidth / 2 - center) ? index : best, 0);
     setActiveProject(closest);
+  };
+  const handlePortfolioWheel = event => {
+    const horizontalIntent = Math.abs(event.deltaX) > Math.abs(event.deltaY) || event.shiftKey;
+    if (!horizontalIntent) return;
+    event.preventDefault();
+    event.currentTarget.scrollLeft += event.shiftKey ? event.deltaY : event.deltaX;
   };
   const submit = async event => {
     event.preventDefault();
@@ -228,6 +278,11 @@ function App() {
     try { const response = await fetch('/api/lead', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); const result = await response.json(); if (!response.ok || !result.success) throw new Error(result.error); form.reset(); setStatus({ text: 'Thanks — your project request has been received. We’ll be in touch soon.', kind: 'success' }); } catch (error) { setStatus({ text: error.message || 'Unable to submit the form. Please try again.', kind: 'error' }); }
   };
 
+  const portfolioExpand = smoothStep(.015, .27, portfolioProgress);
+  const portfolioCarousel = 1 - smoothStep(.035, .17, portfolioProgress);
+  const portfolioStory = smoothStep(.48, .68, portfolioProgress);
+  const portfolioExit = smoothStep(.84, .99, portfolioProgress);
+
   return <>
     <header><nav><a href="#top" className="brand" onClick={closeMenu}><img src={logo} alt="BiteSites" /></a><div className={`navlinks ${menuOpen ? 'open' : ''}`}>{[['AI Receptionist','#ai-receptionist'],['Services','#services'],['Portfolio','#portfolio'],['Pricing','#pricing'],['About','#about'],['Consultation','#consultation']].map(([label, href]) => <a key={label} href={href} onClick={closeMenu}>{label}</a>)}</div><div className="navcta"><Button href="#start" variant="ai">Start Your Project</Button><button className="menu-toggle" onClick={() => setMenuOpen(!menuOpen)} aria-label="Toggle menu">{menuOpen ? '×' : '☰'}</button></div></nav></header>
     <main id="top">
@@ -236,7 +291,83 @@ function App() {
       <section className="pad" id="ai"><div className="wrap"><SectionHead label="Our focus" title="AI that actually runs your business." gradient>This is where we spend most of our time now — designing AI systems that answer the phone, qualify leads, and handle repetitive work, so your team doesn’t have to.</SectionHead><div className="ai-grid">{aiSolutions.map(([icon, title, text]) => <article className="ai-card reveal" key={title}><div className="ai-icon">{icon}</div><h3>{title}</h3><p>{text}</p></article>)}</div></div></section>
       <section className="receptionist-section" id="ai-receptionist"><div className="wrap receptionist-grid"><div className="receptionist-copy reveal"><Eyebrow gradient>Meet Bit</Eyebrow><h2>Start with a conversation, not a complicated form.</h2><p>Bit is the BiteSites mascot and AI receptionist for project inquiries. He asks the right questions about your goals, timeline, and team, then sends your project details to the right BiteSites specialist.</p><ul><li>Quick project qualification, any time</li><li>Clear service recommendations based on your needs</li><li>A human follow-up with the right context already included</li></ul><Button variant="ai" onClick={openReceptionist}>Talk to Bit <span aria-hidden="true">→</span></Button></div><div className="receptionist-preview bit-preview reveal" aria-label="Bit, the BiteSites mascot"><BitMascot className="bit-preview-mascot" /><div className="preview-head"><span className="chat-presence" /> Bit is online</div><div className="preview-bubble">Hi! What are you hoping to improve?</div><button className="preview-choice" type="button" onClick={event => openReceptionist(event, { value: 'web_development', label: 'A website that brings in leads' })}>A website that brings in leads <span aria-hidden="true">→</span></button><button className="preview-choice" type="button" onClick={event => openReceptionist(event, { value: 'ai_automation', label: 'Lead response or team workflows' })}>Lead response or team workflows <span aria-hidden="true">→</span></button><div className="preview-foot">Usually replies instantly <span>•</span> No pressure</div></div></div></section>
       <section className="pad alt" id="services"><div className="wrap"><SectionHead label="What we do" title="Digital services built around growth, not filler.">Three connected service lines that help businesses build a stronger presence, reach the right people, and reduce the manual work holding growth back.</SectionHead><div className="services-grid">{services.map((service, index) => <article className={`service-card reveal ${index === 0 ? 'featured' : ''}`} key={service.key}>{service.badge && <span className="service-badge">{service.badge}</span>}<div className="service-icon">{['✦','□','↻'][index]}</div><h3>{service.title}</h3><p className="desc">{service.text}</p><ul>{service.bullets.map(item => <li key={item}>{item}</li>)}</ul><button className="text-link" onClick={() => setModal(service.key)}>Explore {service.title} →</button></article>)}</div><div className="segments reveal">{[['Small business','Build a credible online presence, stay visible, and reduce repetitive admin work without adding complexity.'],['Medium business','Connect campaigns, service lines, and internal workflows as growing volume creates more moving parts.'],['Large business','Coordinate more stakeholders and more complex processes without sacrificing speed.']].map(([title, text]) => <div className="segment" key={title}><div className="tag">{title}</div><p>{text}</p></div>)}</div></div></section>
-      <section className="pad portfolio-section" id="portfolio"><div className="portfolio-wrap"><div className="portfolio-top wrap"><SectionHead label="Featured work" title="A curated look at what we’ve shipped.">Real projects for real businesses — crafted with precision, passion, and purpose. Scroll through the work, or use the controls to take a closer look.</SectionHead><div className="portfolio-controls reveal" aria-label="Portfolio controls"><button className="portfolio-arrow" type="button" onClick={() => showProject(Math.max(0, activeProject - 1))} disabled={activeProject === 0} aria-label="Previous project">←</button><button className="portfolio-arrow" type="button" onClick={() => showProject(Math.min(projects.length - 1, activeProject + 1))} disabled={activeProject === projects.length - 1} aria-label="Next project">→</button></div></div><div className="portfolio-viewport"><div className="portfolio-track" ref={portfolioTrack} onScroll={handlePortfolioScroll} tabIndex="0" aria-label="Featured projects. Scroll horizontally to browse.">{projects.map((project, index) => <article className={`project-card ${activeProject === index ? 'active' : ''}`} key={project.title}><div className="project-media"><span className="project-number">0{index + 1}</span><video autoPlay muted loop playsInline preload="metadata"><source src={project.video} type="video/mp4" /></video><div className="project-sheen" /></div><div className="project-body"><div className="project-kicker">Selected project</div><h3>{project.title}</h3><p className="desc">{project.text}</p><ul>{project.bullets.map(item => <li key={item}>{item}</li>)}</ul><div className="stack-pills">{project.stack.map(item => <span className="pill" key={item}>{item}</span>)}</div><a className="text-link blue" href={project.url} target="_blank" rel="noreferrer">Visit Website <span aria-hidden="true">↗</span></a></div></article>)}</div></div><div className="portfolio-footer wrap"><div className="portfolio-count"><span>0{activeProject + 1}</span><i /> <span>0{projects.length}</span></div><div className="portfolio-dots" role="tablist" aria-label="Choose project">{projects.map((project, index) => <button type="button" key={project.title} className={activeProject === index ? 'active' : ''} onClick={() => showProject(index)} aria-label={`View ${project.title}`} aria-selected={activeProject === index} role="tab" />)}</div><p>Drag or scroll to explore</p></div></div></section>
+      <section
+        className="portfolio-section"
+        id="portfolio"
+        ref={portfolioSection}
+        style={{
+          '--portfolio-expand': portfolioExpand,
+          '--portfolio-carousel': portfolioCarousel,
+          '--portfolio-story': portfolioStory,
+          '--portfolio-exit': portfolioExit,
+          '--portfolio-clip-y': `${27 * (1 - portfolioExpand)}%`,
+          '--portfolio-clip-x': `${18 * (1 - portfolioExpand)}%`,
+          '--portfolio-radius': `${28 * (1 - portfolioExpand)}px`,
+          '--portfolio-stage-opacity': 1 - portfolioExit,
+          '--portfolio-stage-scale': 1 - .08 * portfolioExit,
+          '--portfolio-stage-radius': `${30 * portfolioExit}px`,
+          '--portfolio-demo-opacity': smoothStep(.035, .16, portfolioProgress) * (1 - portfolioExit),
+          '--portfolio-story-opacity': portfolioStory * (1 - portfolioExit),
+          '--portfolio-story-y': `${42 * (1 - portfolioStory)}px`,
+          '--portfolio-playback-opacity': Math.max(0, portfolioExpand - portfolioStory) * (1 - portfolioExit),
+          '--portfolio-intro-y': `${-18 * (1 - portfolioCarousel)}px`,
+          '--portfolio-rail-y': `${-24 * (1 - portfolioCarousel)}px`
+        }}
+      >
+        <div className="portfolio-stage">
+          <div className="portfolio-intro wrap" aria-hidden={portfolioProgress > .25}>
+            <Eyebrow>Featured work</Eyebrow>
+            <h2>Work worth stepping into.</h2>
+            <p>Swipe sideways to choose a project. Swipe up or scroll to expand the selected demo.</p>
+          </div>
+
+          <div className="portfolio-rail" aria-hidden={portfolioProgress > .25}>
+            <div
+              className="portfolio-track"
+              ref={portfolioTrack}
+              onScroll={handlePortfolioScroll}
+              onWheel={handlePortfolioWheel}
+              onKeyDown={event => {
+                if (event.key === 'ArrowLeft') showProject(Math.max(0, activeProject - 1));
+                if (event.key === 'ArrowRight') showProject(Math.min(projects.length - 1, activeProject + 1));
+              }}
+              tabIndex="0"
+              aria-label="Featured projects. Swipe left or right to browse; swipe up to expand the selected demo."
+            >
+              {projects.map((project, index) => <article className={`portfolio-project ${activeProject === index ? 'active' : ''}`} key={project.title}>
+                <video autoPlay muted loop playsInline preload="metadata" aria-hidden="true"><source src={project.video} type="video/mp4" /></video>
+                <div className="portfolio-project-shade" />
+                <span className="project-number">0{index + 1}</span>
+                <div className="portfolio-project-title"><span>Selected project</span><h3>{project.title}</h3></div>
+              </article>)}
+            </div>
+          </div>
+
+          <div className="portfolio-demo">
+            <video key={projects[activeProject].video} ref={portfolioVideo} autoPlay muted loop playsInline preload="auto" aria-label={`${projects[activeProject].title} project demo`} src={projects[activeProject].video} />
+            <div className="portfolio-demo-vignette" />
+            <div className="portfolio-playback" aria-hidden="true"><span /> {`${(1 + smoothStep(.2, .64, portfolioProgress) * 2).toFixed(1)}×`} playback</div>
+            <article className="portfolio-story" aria-hidden={portfolioProgress < .55}>
+              <div className="portfolio-story-heading">
+                <span>0{activeProject + 1} / 0{projects.length}</span>
+                <h3>{projects[activeProject].title}</h3>
+              </div>
+              <div className="portfolio-story-copy">
+                <p>{projects[activeProject].text}</p>
+                <ul>{projects[activeProject].bullets.map(item => <li key={item}>{item}</li>)}</ul>
+                <div className="stack-pills">{projects[activeProject].stack.map(item => <span className="pill" key={item}>{item}</span>)}</div>
+                <a href={projects[activeProject].url} target="_blank" rel="noreferrer" tabIndex={portfolioProgress > .58 && portfolioProgress < .96 ? 0 : -1}>Visit the live project <span aria-hidden="true">↗</span></a>
+              </div>
+            </article>
+          </div>
+
+          <div className="portfolio-footer wrap" aria-hidden={portfolioProgress > .25}>
+            <div className="portfolio-count"><span>0{activeProject + 1}</span><i /><span>0{projects.length}</span></div>
+            <div className="portfolio-dots" role="tablist" aria-label="Choose project">{projects.map((project, index) => <button type="button" key={project.title} className={activeProject === index ? 'active' : ''} onClick={() => showProject(index)} aria-label={`View ${project.title}`} aria-selected={activeProject === index} role="tab" />)}</div>
+            <p><span className="gesture-sideways">↔ Browse</span><span>↑ Expand</span></p>
+          </div>
+        </div>
+      </section>
       <section className="pad alt" id="pricing"><div className="wrap"><SectionHead label="Pricing" title="Packages built to scale with you.">Compare scope quickly and move into the right engagement without guesswork. Custom quotes are available for hybrid or larger rollouts.</SectionHead><div className="tabbar reveal">{[['web','Web Development'],['social','Social Media'],['ai','AI Automation']].map(([key, label]) => <button className={`tabbtn ${tab === key ? 'active' : ''}`} onClick={() => setTab(key)} key={key}>{label}</button>)}</div><div className="price-grid">{prices[tab].map(([title, desc, price, items, popular]) => <article className={`price-card reveal ${popular ? 'popular' : ''}`} key={title}>{popular && <span className="badge">Popular</span>}<h4>{title}</h4><p className="plandesc">{desc}</p><div className="price">{price}</div><div className="pricenote">{tab === 'social' ? 'monthly engagement' : 'project scope'}</div><ul>{items.map(item => <li key={item}>{item}</li>)}</ul><Button href="#start" variant="ghost">Start Project</Button></article>)}</div><p className="pricing-note">All packages are starting points. We’ll tailor scope to your goals, timeline, and existing tools.</p></div></section>
       <section className="pad" id="about"><div className="wrap"><SectionHead label="About BiteSites" title="Small team. Serious digital work.">We combine thoughtful design, practical engineering, and emerging AI tools to help businesses move forward.</SectionHead><div className="mission reveal"><p>We believe technology should make your business feel lighter — clearer systems, better experiences, and less work lost in the cracks.</p></div><div className="values-grid">{[['Passion for Excellence','Exceptional websites and systems that make a lasting impact.'],['Timely Delivery','We respect your time and deliver projects on schedule.'],['Open Communication','Transparent updates that keep you informed every step of the way.'],['Innovation','We explore new technologies and design trends to stay ahead.']].map(([title, text]) => <div className="value-item reveal" key={title}><h4>{title}</h4><p>{text}</p></div>)}</div></div></section>
       <section className="pad alt" id="consultation"><div className="wrap"><SectionHead label="Consultation" title="Let’s talk through what your business needs.">Tell us what you are trying to solve. We’ll recommend the right service direction and follow up to confirm a conversation.</SectionHead><div className="segments reveal" style={{ marginTop: 0 }}>{[['01 · Tell us what you need','Share your business, goals, preferred services, and the best way to contact you.'],['02 · We review the scope','We identify the right service mix and prepare practical next steps.'],['03 · We follow up','If the fit is right, we confirm the consultation details with you directly.']].map(([title, text]) => <div className="segment" key={title}><div className="tag">{title}</div><p>{text}</p></div>)}</div><div className="hero-actions reveal"><Button href="https://calendar.app.google/bKKKvGWBSgvV8rodA" variant="ai" target="_blank" rel="noreferrer">Schedule a free consultation</Button><Button href="#pricing" variant="ghost">See pricing</Button></div></div></section>

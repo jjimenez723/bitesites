@@ -1,0 +1,38 @@
+/*
+ * Natalie is a licensed display face, so this stack uses an installed copy
+ * when available and falls back to Tomorrow safely.
+ */
+:root {
+  --font-display: "Natalie", "Tomorrow", sans-serif;
+  --font-sans: "Tomorrow", sans-serif;
+}
+
+body {
+  font-family: var(--font-sans);
+}
+
+h1,
+h2 {
+  font-family: var(--font-display);
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+h3,
+h4,
+.price,
+.bit-wordmark {
+  font-family: var(--font-sans);
+}
+
+.hero h1,
+.bit-intro h2 {
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+.mission p {
+  font-family: var(--font-display);
+  font-weight: 400;
+  letter-spacing: 0;
+}

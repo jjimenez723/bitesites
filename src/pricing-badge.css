@@ -1,0 +1,21 @@
+/* Keep the featured label on the card edge without clipping it at any grid size. */
+.price-card.popular {
+  overflow: visible;
+}
+
+.price-card.popular .badge {
+  top: 0;
+  left: 24px;
+  z-index: 1;
+  margin: 0;
+  transform: translateY(-50%);
+  box-shadow: 0 5px 14px rgba(86, 56, 190, 0.24);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+@media (max-width: 700px) {
+  .price-card.popular .badge {
+    left: 20px;
+  }
+}
