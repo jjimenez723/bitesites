@@ -804,3 +804,138 @@ product grid: panel arrives unaided at ~1.4s; wheel over the video scrubs (1.94s
 13.89s) while the panel is up; wheel over the card scrolls the page; collapse holds
 through a subsequent 1.6s; Escape closes; reopening a different project shows that
 project's copy. No console errors.
+
+---
+
+## 15. The expanded stage as a deck — 2026-07-22
+
+### 15.1 Sideways already meant "next project"
+
+The rail taught the gesture: browse sideways to move between projects. Opening one
+threw it away — the only way to reach the next project was to close the stage, find
+the rail, scroll it, and open the next card. Four steps to do the thing the section
+had already trained the visitor to do with one flick.
+
+Sideways now means the same thing on both sides of the open: it moves between
+projects, and the stage stays expanded.
+
+### 15.2 Four ways in
+
+| Input | Path |
+| --- | --- |
+| Trackpad flick | `wheel`, sideways branch of `handlePortfolioDemoWheel` |
+| Touch swipe | pointer events on `.portfolio-demo`, filtered to `pointerType === 'touch'` |
+| `←` / `→` | the expanded-phase `keydown`, unless focus is inside the scrub bar |
+| `‹` `›` in the dossier | `.portfolio-pager`, which is also how the gesture is discovered |
+
+All four funnel through `switchPortfolioProject(direction)`.
+
+**The sideways branch runs before both existing guards.** Ahead of the
+reduced-motion check, because changing project is navigation rather than motion —
+that preference asks us not to move things unbidden, not to withhold the work.
+Ahead of the dossier check, because a sideways flick means the same thing over the
+copy as over the video. It `preventDefault`s unconditionally while expanded, which
+also stops macOS's two-finger back-navigation from firing out of a full-screen
+viewer.
+
+**One flick is one project.** A trackpad delivers a single gesture as a long stream
+of small deltas that outlives the threshold crossing by a wide margin; committing
+per-crossing runs through three projects on one flick. Travel accumulates, the
+commit locks, and the lock only releases after `PORTFOLIO_SWIPE_SETTLE` of quiet.
+Touch needs none of this — a finger has a real beginning and end.
+
+**Vertical always wins on touch.** If a drag's `dy` exceeds its `dx` the gesture is
+abandoned outright: that is the page scrolling, and §4.3's standing rule is that
+this section never takes the page's scroll away. `touch-action: pan-y` on the demo
+states the same split to the browser, which is also what keeps the `pointermove`
+stream arriving instead of being swallowed as an overscroll.
+
+### 15.3 The swap
+
+`<video>` is keyed on the clip, so React remounts it and the incoming element runs
+the CSS animation from its first frame — no JS timing, nothing to keep in step. It
+slides in from the side the gesture came from, over the stage's own black.
+
+At either end of the deck nothing remounts, so the same mechanism runs a short
+push-back against the edge instead. A dead gesture at the last project reads as a
+broken one; the nudge says "that is the end" rather than "that did nothing".
+
+**The dossier is cut, not faded, during a swap.** The copy changes in the same frame
+as the clip, so a transition would fade out text that had only just arrived — the
+outgoing panel showing the incoming project's words. `setPortfolioDetails(false)` is
+batched into the switch and the transition is suppressed while a swap class is on;
+it fades back in afterwards on its own `PORTFOLIO_DETAILS_LEAD`.
+
+### 15.4 Why the closing clip-path is not re-measured
+
+`--portfolio-clip` is measured once, off the card that was opened (§12.1). Switching
+projects does not stale it: every card is the same size and `showProject` centres
+the one it is given, so the centred box is identical whichever project holds it. The
+rail is scrolled along with each swap anyway — invisible behind the demo, but still
+what decides which card is centred when the visitor comes back out.
+
+### 15.5 Verified
+
+Playwright, 1512×860 and 390×844-with-touch: one trackpad flick advances exactly one
+project across a 14-event stream; a second flick after the settle window advances
+again; flick left goes back; `→`/`←` and both pager buttons agree. At the last
+project the index holds at 05, `portfolio-swap-end-next` runs, and the next button
+reports `disabled`. Touch swipe left/right moves forward/back; a short drag and a
+mostly-vertical drag both leave the index alone. Vertical wheel still scrubs
+(0.98s → 9.84s) after all of it, and Escape still closes onto the project swiped to.
+A real pointer click and a keyboard activation of the pager both leave `window.scrollY`
+untouched. No console errors.
+
+---
+
+## 16. Click the frame to close — 2026-07-22
+
+Closing was a 27px target in one corner (`.portfolio-back`) or a key most visitors
+never try. The clip itself now dismisses on click, the backdrop-dismiss every
+full-screen viewer has, and it routes through the same `closePortfolioProject(true)`
+the back button calls — including the focus return to the rail.
+
+### 16.1 What a click must not close
+
+`PORTFOLIO_KEEPS_OPEN` names every surface inside the stage that owns its own
+click: the back button, the scrub bar, the HUD, the pager, the reduced-motion play
+control, and the dossier's **copy card**. The card is on the list because it is a
+reading surface with the outbound link in it — dismissing the stage out from under
+someone reaching for "Visit the live site" is the worst available reading of a
+click. The bare title beside it is painted straight on the frame and is not on the
+list, so it closes; the card's border and glass are what make that legible as two
+different surfaces rather than one inconsistency.
+
+### 16.2 A drag is not a click
+
+Scrubbing, swiping and dragging to select all end in a `mouseup` the browser is
+happy to promote to a `click`. Every pointer that goes down on the stage is now
+tracked, and a press that travels more than `PORTFOLIO_CLICK_SLOP` is marked as a
+drag and refused by the close handler.
+
+This merged the touch-swipe record and the click record into one `press` object.
+They were going to be two refs answering the same question — how far did this
+pointer travel between down and up — and two answers to that question is exactly how
+they would have come to disagree. The record deliberately survives `pointerup`,
+because the `click` that reads it arrives afterwards; `pointercancel` clears it,
+because no click follows one.
+
+`cursor: zoom-out` on the expanded demo says all of this before it is tried —
+`zoom-out` rather than `pointer` because the click shrinks the stage back to the
+card it grew from rather than activating anything.
+
+### 16.3 Verified
+
+Playwright, 1512×860 and 390×844-with-touch, one assertion per surface: clicks on
+the dossier paragraph, the pager, the details toggle and the scrub bar all leave the
+stage open and do their own job (the pager advances, the toggle hides the dossier,
+the bar seeks). A 200px drag across the clip leaves it open. A plain click on the
+clip, and one on the bare title, both close. The back button still closes exactly
+once — it is on the keep-open list, so its own handler runs and the bubbled click
+finds `portfolioExpandedRef` already false. On touch, a tap closes and a swipe
+switches project without closing, including when a `click` is synthesised behind the
+swipe. All prior suites still pass.
+
+> One test caught this rather than the code: `deck.mjs`'s swipe helper opened with a
+> stray `tap(1, 1)`, which under this change is a perfectly valid dismiss. The
+> failure was the test asserting on a stage its own setup had just closed.

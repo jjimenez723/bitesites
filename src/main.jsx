@@ -183,6 +183,21 @@ const projectHost = url => {
 const PORTFOLIO_DETAILS_LEAD = 1400; // ms between opening a project and its dossier
 const PORTFOLIO_WHEEL_SPAN = 1400;  // px of wheel delta that covers a whole clip, any length
 const PORTFOLIO_RESUME_DELAY = 400; // ms of stillness before 1x playback takes back over
+// Sideways is the axis the rail already uses to move between projects, so the
+// expanded stage keeps it: the gesture that browsed the cards now browses the
+// full-screen clips, and the visitor never has to come back out to change one.
+const PORTFOLIO_SWIPE_WHEEL = 110;  // px of sideways wheel travel that commits a change
+const PORTFOLIO_SWIPE_TOUCH = 56;   // px of finger travel that commits one
+// A trackpad delivers one flick as a long stream of small deltas, and the stream
+// outlives the threshold crossing by a wide margin. Without a lock that only
+// releases after the stream goes quiet, a single swipe runs through three
+// projects — so the commit is one per gesture, not one per threshold.
+const PORTFOLIO_SWIPE_SETTLE = 420; // ms of stillness that ends a sideways gesture
+const PORTFOLIO_SWAP_MS = 560;      // outlives the swap animation, which the class drives
+const PORTFOLIO_CLICK_SLOP = 8;     // px of travel past which a press is a drag, not a click
+// Every surface inside the expanded stage that owns its own click. A click landing
+// anywhere else — which is to say, on the clip — closes the stage.
+const PORTFOLIO_KEEPS_OPEN = '.portfolio-back, .portfolio-scrubber, .portfolio-hud, .portfolio-story-copy, .portfolio-pager, .portfolio-demo-play';
 const PORTFOLIO_PROGRESS_MARKS = [25, 50, 75, 100];
 // Under a second on a card is someone scrolling past it, not viewing it. Without
 // this floor a single sweep of the rail would spend five of the session's 300
@@ -532,6 +547,15 @@ function App() {
   const portfolioExpandedRef = useRef(false);
   const portfolioStoryRef = useRef(false);
   const portfolioDetailsTimerRef = useRef(0);
+  // '' | 'next' | 'prev' | 'end-next' | 'end-prev'. Drives the swap animation for
+  // one beat and then clears itself — it is a gesture's echo, not a phase, so it
+  // deliberately does not live in portfolioPhase.
+  const [portfolioSwap, setPortfolioSwap] = useState('');
+  const portfolioSwapTimerRef = useRef(0);
+  const portfolioSwipeRef = useRef(0);
+  const portfolioSwipeLockRef = useRef(false);
+  const portfolioSwipeTimerRef = useRef(0);
+  const portfolioTouchRef = useRef(null);
   const portfolioScrubbingRef = useRef(false);
   const portfolioResumeTimerRef = useRef(0);
   const portfolioAnnouncedRef = useRef(-1);
@@ -683,6 +707,8 @@ function App() {
     if (portfolioScrubFrameRef.current) window.cancelAnimationFrame(portfolioScrubFrameRef.current);
     if (portfolioResumeTimerRef.current) window.clearTimeout(portfolioResumeTimerRef.current);
     if (portfolioDetailsTimerRef.current) window.clearTimeout(portfolioDetailsTimerRef.current);
+    if (portfolioSwapTimerRef.current) window.clearTimeout(portfolioSwapTimerRef.current);
+    if (portfolioSwipeTimerRef.current) window.clearTimeout(portfolioSwipeTimerRef.current);
   }, []);
 
   // A different clip means a different duration and playhead — and a dossier that
@@ -855,6 +881,130 @@ function App() {
     clearPortfolioDetailsTimer();
     setPortfolioDetails(!portfolioStoryRef.current);
   };
+  const flagPortfolioSwap = kind => {
+    window.clearTimeout(portfolioSwapTimerRef.current);
+    setPortfolioSwap(kind);
+    portfolioSwapTimerRef.current = window.setTimeout(() => {
+      portfolioSwapTimerRef.current = 0;
+      setPortfolioSwap('');
+    }, PORTFOLIO_SWAP_MS);
+  };
+  // Moving between projects without leaving the stage. Every caller is either a
+  // gesture handler bound once at mount or a native listener, so the current index
+  // comes from the ref rather than from `activeProject` — the closure a listener
+  // registered on the first render captured is permanently stale.
+  //
+  // The rail is scrolled along even though it is invisible behind the demo: it is
+  // still what decides which card is centred when the visitor comes back out, and
+  // what the closing clip-path collapses toward. Re-measuring that origin is not
+  // needed, because every card is the same size and showProject centres the one it
+  // is given — the centred box is identical whichever project holds it.
+  const switchPortfolioProject = direction => {
+    if (!portfolioExpandedRef.current) return false;
+    const from = portfolioActiveRef.current;
+    const next = from + direction;
+    if (next < 0 || next >= projects.length) {
+      // A dead gesture at the end of the deck reads as a broken one. The nudge
+      // says "that is the end" rather than "that did not work".
+      flagPortfolioSwap(direction > 0 ? 'end-next' : 'end-prev');
+      return false;
+    }
+    // Set before the render so a second event arriving in the same frame counts
+    // from the new index; the [activeProject] effect assigns the same value again.
+    portfolioActiveRef.current = next;
+    flagPortfolioSwap(direction > 0 ? 'next' : 'prev');
+    // Batched into the same render as the clip change, so the dossier is already
+    // down when the new copy lands in it. Leave it to the [activeProject] effect
+    // and React paints one frame of the incoming project's text at full opacity
+    // before starting to fade it out — the text arrives only to leave.
+    clearPortfolioDetailsTimer();
+    setPortfolioDetails(false);
+    setActiveProject(next);
+    showProject(next);
+    return true;
+  };
+  const endPortfolioSwipe = () => {
+    portfolioSwipeRef.current = 0;
+    portfolioSwipeLockRef.current = false;
+  };
+  const accumulatePortfolioSwipe = delta => {
+    // Refreshed on every event of the stream, so it only fires once the gesture
+    // has actually stopped — see PORTFOLIO_SWIPE_SETTLE.
+    window.clearTimeout(portfolioSwipeTimerRef.current);
+    portfolioSwipeTimerRef.current = window.setTimeout(() => {
+      portfolioSwipeTimerRef.current = 0;
+      endPortfolioSwipe();
+    }, PORTFOLIO_SWIPE_SETTLE);
+
+    if (portfolioSwipeLockRef.current) return;
+    portfolioSwipeRef.current += delta;
+    const travel = portfolioSwipeRef.current;
+    if (Math.abs(travel) < PORTFOLIO_SWIPE_WHEEL) return;
+    portfolioSwipeLockRef.current = true;
+    portfolioSwipeRef.current = 0;
+    switchPortfolioProject(travel > 0 ? 1 : -1);
+  };
+  // One press record serves both gestures the stage reads from a pointer: the
+  // touch swipe that changes project, and the plain click on the frame that closes
+  // it. They share a record because they share a question — how far did this
+  // pointer travel between going down and coming up — and answering it twice from
+  // two refs is how the two would end up disagreeing.
+  //
+  // Touch runs here rather than through the wheel accumulator: a finger has a real
+  // beginning and end, so the travel is measured from where it landed and the
+  // gesture is over when it lifts. No settle timer is involved.
+  const handlePortfolioPointerDown = event => {
+    if (!portfolioExpandedRef.current) return;
+    portfolioTouchRef.current = {
+      x: event.clientX,
+      y: event.clientY,
+      // The scrub bar captures its own pointer and means something else entirely.
+      swipe: event.pointerType === 'touch' && !event.target.closest?.('.portfolio-scrubber'),
+      moved: false,
+      spent: false,
+    };
+  };
+  const handlePortfolioPointerMove = event => {
+    const press = portfolioTouchRef.current;
+    if (!press) return;
+    const dx = event.clientX - press.x;
+    const dy = event.clientY - press.y;
+    // Past the slop this pointer is dragging, and a drag must never be delivered
+    // to the close handler as a click — scrubbing, swiping and selecting text all
+    // end in a mouseup that the browser is happy to call a click.
+    if (Math.abs(dx) + Math.abs(dy) > PORTFOLIO_CLICK_SLOP) press.moved = true;
+
+    if (!press.swipe || press.spent) return;
+    // Vertical wins outright. That is the page scrolling, and this section's one
+    // standing rule is that it never takes the page's scroll away.
+    if (Math.abs(dy) > Math.abs(dx)) {
+      press.swipe = false;
+      return;
+    }
+    if (Math.abs(dx) < PORTFOLIO_SWIPE_TOUCH) return;
+    // Dragging left pulls the next project in from the right, the way a deck of
+    // cards moves — so a negative dx is forward.
+    press.spent = true;
+    switchPortfolioProject(dx < 0 ? 1 : -1);
+  };
+  // Deliberately not cleared on pointerup: the click event that decides whether to
+  // close arrives after it, and the travel it needs to read lives here. A cancelled
+  // pointer produces no click, so that one does clear.
+  const handlePortfolioPointerCancel = () => { portfolioTouchRef.current = null; };
+  // Clicking the clip closes the stage, exactly as the back button does — the
+  // backdrop-dismiss every full-screen viewer has. Everything with a job of its own
+  // is excluded by name; the dossier's copy card is in that list because it is a
+  // reading surface with a link in it, and dismissing the stage out from under
+  // someone reaching for that link would be the worst possible reading of a click.
+  // The bare title beside it is painted straight on the frame, so it closes.
+  const handlePortfolioDemoClick = event => {
+    if (!portfolioExpandedRef.current) return;
+    const press = portfolioTouchRef.current;
+    portfolioTouchRef.current = null;
+    if (press?.moved) return;
+    if (event.target.closest?.(PORTFOLIO_KEEPS_OPEN)) return;
+    closePortfolioProject(true);
+  };
   const playPortfolioDemo = () => {
     const video = portfolioVideo.current;
     if (!video || !portfolioExpandedRef.current || portfolioScrubbingRef.current || document.hidden) return;
@@ -1017,6 +1167,13 @@ function App() {
     portfolioStoryRef.current = false;
     clearPortfolioDetailsTimer();
     endPortfolioScrub(false);
+    // A half-finished swipe must not survive the close, or the first flick of the
+    // next visit lands against a lock left over from the last one.
+    window.clearTimeout(portfolioSwipeTimerRef.current);
+    portfolioSwipeTimerRef.current = 0;
+    portfolioTouchRef.current = null;
+    endPortfolioSwipe();
+    setPortfolioSwap('');
     const video = portfolioVideo.current;
     if (video) {
       video.pause();
@@ -1079,19 +1236,34 @@ function App() {
     schedulePortfolioResume();
   };
   // Scoped to the expanded demo and non-passive, because it has to be able to
-  // preventDefault. It only does so while the seek stays inside the clip: at
-  // either end, over the dossier, or on a sideways gesture, the wheel belongs to
-  // the page again. There is no state in which the visitor is held inside the
-  // section — being held is what made the old build feel broken.
+  // preventDefault. Vertically it only does so while the seek stays inside the
+  // clip: at either end, or over the dossier, the wheel belongs to the page again.
+  // There is no state in which the visitor is held inside the section — being held
+  // is what made the old build feel broken.
   const handlePortfolioDemoWheel = event => {
-    if (!portfolioExpandedRef.current || prefersReducedMotion()) return;
+    if (!portfolioExpandedRef.current) return;
+
+    // Sideways is claimed outright, and claimed first. It is checked ahead of the
+    // reduced-motion guard because changing project is navigation rather than
+    // motion, and ahead of the dossier guard because the gesture means the same
+    // thing over the copy as it does over the video. preventDefault also stops the
+    // browser's own two-finger back-navigation from firing out of a full-screen
+    // viewer, which is never what that flick meant here.
+    if (Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
+      event.preventDefault();
+      const scale = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? window.innerWidth : 1;
+      accumulatePortfolioSwipe(event.deltaX * scale);
+      return;
+    }
+
+    if (prefersReducedMotion()) return;
     // Over the dossier the visitor is reading, not scrubbing — rewinding the clip
     // because they scrolled a line inside a block of copy would be absurd. The
     // test is the pointer's position rather than "are the details up", which is
     // what it used to be: the panel is now open for most of the visit, and that
     // older test disabled the wheel scrub outright.
     if (event.target instanceof Element && event.target.closest('.portfolio-story')) return;
-    if (!event.deltaY || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
+    if (!event.deltaY) return;
     const duration = portfolioVideoDurationRef.current;
     if (!duration) return;
 
@@ -1119,7 +1291,16 @@ function App() {
   useEffect(() => {
     if (!portfolioPhase.expanded) return undefined;
     playPortfolioDemo();
-    const onKeyDown = event => { if (event.key === 'Escape') closePortfolioProject(true); };
+    const onKeyDown = event => {
+      if (event.key === 'Escape') { closePortfolioProject(true); return; }
+      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+      // The scrub bar owns the arrow keys whenever it holds focus. It carries
+      // role="slider", and stepping through the clip is exactly what a focused
+      // slider's arrows are for — so the deck only takes them otherwise, which
+      // covers the default state of having opened a project and touched nothing.
+      if (portfolioScrubber.current?.contains(document.activeElement)) return;
+      if (switchPortfolioProject(event.key === 'ArrowRight' ? 1 : -1)) event.preventDefault();
+    };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [portfolioPhase.expanded]);
@@ -1269,7 +1450,7 @@ function App() {
           writePortfolioProgress so that playback and scrubbing never re-render
           the page. Adding a style prop back here would fight it. */}
       <section
-        className={`portfolio-section ${portfolioPhase.expanded ? 'portfolio-expanded' : ''} ${portfolioPhase.story ? 'portfolio-story-visible' : ''}`}
+        className={`portfolio-section ${portfolioPhase.expanded ? 'portfolio-expanded' : ''} ${portfolioPhase.story ? 'portfolio-story-visible' : ''} ${portfolioSwap ? `portfolio-swap-${portfolioSwap}` : ''}`}
         id="portfolio"
         ref={portfolioSection}
       >
@@ -1277,7 +1458,7 @@ function App() {
           <div className="portfolio-intro wrap" aria-hidden={portfolioPhase.expanded}>
             <Eyebrow>Featured work</Eyebrow>
             <h2>Work worth stepping into.</h2>
-            <p>Browse sideways, then open a project — it plays, and the full story comes with it. Drag the bar to scrub; it picks playback back up wherever you stop.</p>
+            <p>Browse sideways, then open a project — it plays, and the full story comes with it. Keep swiping sideways to move through the work, or drag the bar to scrub.</p>
           </div>
 
           <div className="portfolio-rail" aria-hidden={portfolioPhase.expanded}>
@@ -1312,7 +1493,20 @@ function App() {
             </div>
           </div>
 
-          <div className="portfolio-demo" ref={portfolioDemo}>
+          {/* Pointer rather than touch events, for the same reason the scrub bar
+              uses them. Only the swipe filters to pointerType === 'touch' — a mouse
+              drag across a video is not a swipe idiom, and a trackpad's sideways
+              flick already arrives as a wheel event above — but every pointer is
+              tracked, because the click that closes has to know whether the press
+              that produced it stayed still. */}
+          <div
+            className="portfolio-demo"
+            ref={portfolioDemo}
+            onPointerDown={handlePortfolioPointerDown}
+            onPointerMove={handlePortfolioPointerMove}
+            onPointerCancel={handlePortfolioPointerCancel}
+            onClick={handlePortfolioDemoClick}
+          >
             {/* preload starts at metadata — enough to know the duration — and the
                 rail effect upgrades it to auto once the section nears the fold.
                 At preload="auto" this pulled the full clip on every page load. */}
@@ -1350,7 +1544,14 @@ function App() {
                 project that sent it rather than to a generic portfolio click. */}
             <article className="portfolio-story" id="portfolio-dossier" data-section={`portfolio:${projects[activeProject].title}`} aria-hidden={!portfolioPhase.story}>
               <div className="portfolio-story-heading">
-                <div className="portfolio-story-index"><b>0{activeProject + 1}</b><i /><span>0{projects.length}</span></div>
+                {/* The gesture is the primary way through the deck; these are how
+                    it is discovered, and the only way a keyboard reaches it once
+                    focus is inside the scrub bar. */}
+                <div className="portfolio-story-index">
+                  <button className="portfolio-pager" type="button" onClick={() => switchPortfolioProject(-1)} disabled={activeProject === 0} tabIndex={portfolioPhase.story ? 0 : -1} aria-label={activeProject === 0 ? 'Previous project' : `Previous project: ${projects[activeProject - 1].title}`}><span aria-hidden="true">‹</span></button>
+                  <b>0{activeProject + 1}</b><i /><span>0{projects.length}</span>
+                  <button className="portfolio-pager" type="button" onClick={() => switchPortfolioProject(1)} disabled={activeProject === projects.length - 1} tabIndex={portfolioPhase.story ? 0 : -1} aria-label={activeProject === projects.length - 1 ? 'Next project' : `Next project: ${projects[activeProject + 1].title}`}><span aria-hidden="true">›</span></button>
+                </div>
                 <p className="portfolio-story-kicker">Selected project</p>
                 <h3>{projects[activeProject].title}</h3>
                 <div className="stack-pills">{projects[activeProject].stack.map(item => <span className="pill" key={item}>{item}</span>)}</div>

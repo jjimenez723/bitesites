@@ -170,15 +170,62 @@
   opacity: 0;
   background: #050507;
   pointer-events: none;
+  /* Vertical stays the page's, sideways is the deck's. Without this the browser
+     consumes a horizontal drag as an overscroll or a back-navigation and the
+     pointermove stream stops arriving mid-gesture. */
+  touch-action: pan-y;
   transition: clip-path .68s cubic-bezier(.2,.8,.2,1), opacity .38s ease;
   will-change: clip-path, opacity;
 }
+
+/* The swap. React remounts the <video> on a project change — its key is the clip
+   — so the incoming element runs this from its first frame with no JS timing
+   involved. It slides in from the side the gesture came from, over the stage's
+   own black, which reads as a deck being dealt rather than a cut. */
+@keyframes portfolio-swap-in-next {
+  from { opacity: 0; transform: translate3d(5%,0,0) scale(1.02); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes portfolio-swap-in-prev {
+  from { opacity: 0; transform: translate3d(-5%,0,0) scale(1.02); }
+  to { opacity: 1; transform: none; }
+}
+
+/* Nothing remounts at the ends of the deck, so these run on the element already
+   on screen — a short push against the edge, the way a scroll container rubber
+   bands. It is the difference between "that is the end" and "that did nothing". */
+@keyframes portfolio-swap-end-next { 42% { transform: translate3d(-1.7%,0,0); } }
+@keyframes portfolio-swap-end-prev { 42% { transform: translate3d(1.7%,0,0); } }
+
+.portfolio-section.portfolio-swap-next .portfolio-demo > video { animation: portfolio-swap-in-next .52s cubic-bezier(.2,.8,.2,1); }
+.portfolio-section.portfolio-swap-prev .portfolio-demo > video { animation: portfolio-swap-in-prev .52s cubic-bezier(.2,.8,.2,1); }
+
+/* The dossier's copy changes in the same frame as the clip, so a transition here
+   would fade out text that has only just arrived — the outgoing project's panel
+   showing the incoming project's words. It is cut instead, and fades back in
+   normally once the swap class has cleared, on the dossier's own lead. */
+.portfolio-section.portfolio-swap-next .portfolio-story-heading,
+.portfolio-section.portfolio-swap-next .portfolio-story-copy,
+.portfolio-section.portfolio-swap-next .portfolio-demo-vignette,
+.portfolio-section.portfolio-swap-prev .portfolio-story-heading,
+.portfolio-section.portfolio-swap-prev .portfolio-story-copy,
+.portfolio-section.portfolio-swap-prev .portfolio-demo-vignette { transition: none; }
+.portfolio-section.portfolio-swap-end-next .portfolio-demo > video { animation: portfolio-swap-end-next .34s ease-out; }
+.portfolio-section.portfolio-swap-end-prev .portfolio-demo > video { animation: portfolio-swap-end-prev .34s ease-out; }
 
 .portfolio-section.portfolio-expanded .portfolio-demo {
   clip-path: inset(0% 0% round 0px);
   opacity: 1;
   pointer-events: auto;
+  /* The frame closes on click, so it says so. zoom-out rather than pointer: this
+     shrinks the stage back to the card it grew from, it does not activate a thing. */
+  cursor: zoom-out;
 }
+
+/* The surfaces that own their click keep an ordinary cursor — see
+   PORTFOLIO_KEEPS_OPEN, which is the same list. Buttons and links set their own. */
+.portfolio-story-copy { cursor: auto; }
 
 .portfolio-demo > video { display: block; width: 100%; height: 100%; object-fit: cover; object-position: center top; filter: saturate(.9) contrast(1.05); }
 /* Weighted to the bottom, because that is where the dossier sits — the captures
@@ -328,6 +375,34 @@
 .portfolio-story-index { display: flex; align-items: center; gap: 11px; margin-bottom: 15px; color: rgba(255,255,255,.5); font-size: 12px; font-weight: 700; letter-spacing: .08em; }
 .portfolio-story-index b { color: #fff; font-size: 15px; font-weight: 800; }
 .portfolio-story-index i { width: 30px; height: 1px; background: linear-gradient(90deg,#8ea2ff,rgba(255,255,255,.2)); }
+
+.portfolio-pager {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0 2px 3px 0;
+  border: 1px solid rgba(255,255,255,.22);
+  border-radius: 50%;
+  background: rgba(5,6,11,.66);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  color: #fff;
+  font-size: 19px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background .25s ease, border-color .25s ease, opacity .25s ease;
+}
+
+/* The heading column takes no pointer — see .portfolio-story — so the two
+   controls inside it opt back in, and only while the dossier is actually up. */
+.portfolio-section.portfolio-story-visible .portfolio-pager { pointer-events: auto; }
+.portfolio-pager:hover:not(:disabled) { background: rgba(5,6,11,.88); border-color: rgba(255,255,255,.44); }
+.portfolio-pager:focus-visible { outline: 2px solid #a99bff; outline-offset: 3px; }
+.portfolio-pager:disabled { opacity: .3; cursor: default; }
+/* The chevrons are the one place a glyph is the whole control, so they carry no
+   inherited shadow — it would read as a smear at this weight. */
+.portfolio-pager span { display: block; text-shadow: none; }
 .portfolio-story-kicker { margin-bottom: 14px; color: #a8b7ff; font-size: 11px; font-weight: 800; letter-spacing: .18em; text-transform: uppercase; }
 
 /* Fades toward the bottom of the letterforms so the largest type on the page
@@ -499,7 +574,8 @@
      there are no side margins for a horizontal gradient to work in. */
   .portfolio-demo-vignette { background: linear-gradient(180deg,rgba(2,3,7,.3) 0%,rgba(2,3,7,.22) 24%,rgba(2,3,7,.88) 52%,rgba(2,3,7,.96) 100%); }
   .portfolio-story { grid-template-columns: 1fr; align-content: end; gap: 18px; padding: 104px 18px 60px; }
-  .portfolio-story-index { margin-bottom: 11px; }
+  .portfolio-story-index { margin-bottom: 11px; gap: 9px; }
+  .portfolio-pager { width: 38px; height: 38px; }
   .portfolio-story-kicker { margin-bottom: 10px; }
   .portfolio-story-heading h3 { font-size: clamp(38px,11vw,64px); }
   .portfolio-story .stack-pills { margin-top: 15px; gap: 6px; }
@@ -578,6 +654,9 @@
   .portfolio-demo-vignette, .portfolio-hud, .portfolio-playback, .portfolio-story-heading, .portfolio-story-copy { transition: none; }
   .portfolio-details-toggle i { transition: none; }
   .portfolio-story-heading, .portfolio-story-copy { transform: none; }
+  /* The deck still works under this preference — swipe, arrows and the pager all
+     change project. What goes is the slide: the new clip simply replaces the old. */
+  .portfolio-demo > video { animation: none !important; }
 }
 
 /* Reduced motion only: the consent gate in playPortfolioDemo. */
