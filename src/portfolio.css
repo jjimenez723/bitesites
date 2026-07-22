@@ -506,7 +506,7 @@ body.portfolio-open .chat-launcher { opacity: 0; pointer-events: none; transitio
   display: inline-flex;
   align-items: center;
   gap: 14px;
-  padding: 9px 10px 9px 19px;
+  padding: 9px 15px 9px 19px;
   border: 1px solid rgba(255,255,255,.2);
   border-radius: 100px;
   background: rgba(255,255,255,.1);
@@ -517,8 +517,15 @@ body.portfolio-open .chat-launcher { opacity: 0; pointer-events: none; transitio
 .portfolio-story-visit:focus-visible { outline: 2px solid #a99bff; outline-offset: 3px; }
 .portfolio-story-visit > span { display: grid; gap: 2px; font-size: 13.5px; font-weight: 800; }
 .portfolio-story-visit small { color: rgba(255,255,255,.52); font-size: 11px; font-weight: 700; }
-.portfolio-story-visit i { display: grid; place-items: center; width: 33px; height: 33px; border-radius: 50%; background: #fff; color: #101117; font-size: 14px; font-style: normal; transition: transform .25s ease; }
-.portfolio-story-visit:hover i { transform: translate(2px,-2px); }
+/* The white disc that used to hold the ↗ glyph now holds the destination's own
+   favicon, with the arrow beside it as its own mark. The disc stays put on hover
+   — a site's logo drifting looks like a bug — and the arrow keeps the outbound
+   nudge the glyph had. object-fit: contain because these marks arrive at
+   whatever aspect the site shipped them at. */
+.portfolio-story-visit i { display: inline-flex; align-items: center; gap: 9px; font-style: normal; }
+.portfolio-story-visit i img { width: 33px; height: 33px; padding: 5px; border-radius: 50%; background: #fff; object-fit: contain; }
+.portfolio-story-visit i svg { width: 13px; height: 13px; color: rgba(255,255,255,.62); transition: transform .25s ease, color .25s ease; }
+.portfolio-story-visit:hover i svg { transform: translate(2px,-2px); color: #fff; }
 
 .portfolio-stage > .portfolio-footer {
   position: relative;
