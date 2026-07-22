@@ -939,3 +939,145 @@ swipe. All prior suites still pass.
 > One test caught this rather than the code: `deck.mjs`'s swipe helper opened with a
 > stray `tap(1, 1)`, which under this change is a perfectly valid dismiss. The
 > failure was the test asserting on a stage its own setup had just closed.
+
+---
+
+## 17. Two Bodega entries, and toured captures — 2026-07-22
+
+### 17.1 One card was covering two different pieces of work
+
+[§12.3](#123-content-changes) repointed the Bodega card from `Bodega-Project-2` to
+`the-bodega-project-demo` and rewrote its copy to match, on the reading that the
+second link had replaced the first. It had not. They are two halves of the same
+programme:
+
+| | |
+|---|---|
+| `Bodega-Project-2` | the **research site** — the Rutgers Business School–Newark and Bergen Community College programme, its Fast vs. Fresh food-access map, its KPI Builder, the story, blog and gallery |
+| `the-bodega-project-demo` | the **app MVP**, in development with Rutgers — the neighbour-to-neighbour product built on top of that research |
+
+So the rail now carries both. The existing card goes back to the research site
+with copy rewritten to it, and **project 05 is new**: `Bodega Project App MVP`,
+placed immediately after its sibling because §15's deck makes sideways mean "next
+project", and the two belong next to each other under that gesture. StockRoom NJ
+moves to 06.
+
+Six projects needs nothing else: the `0{index + 1}` counters in `src/main.jsx`
+hold to nine, and the pager, dots and swipe deck are all length-derived already.
+
+### 17.2 Scrolling the landing page was the wrong clip for both
+
+[§13](#13-portrait-clips--2026-07-21) captures a site by scrolling it top to
+bottom. That is right for the four marketing sites, whose landing page *is* the
+work, and wrong for both of these:
+
+- The research site's substance is behind two tools and three sub-pages. Its home
+  page is a hero, an About block and two cards that link away.
+- The MVP is a tab bar. A scroll of its feed shows a list and implies the rest of
+  the app does not exist.
+
+`scripts/capture-portfolio.mjs` therefore grew a **tour**: an optional array of
+steps, per project and if needed per orientation, that clicks through a site the
+way a visitor would. Without one a project still gets the plain scroll, so the
+other four are untouched.
+
+| step | does |
+|---|---|
+| `{ scroll: px }` | travel down at the same global `PX_PER_FRAME` as everything else |
+| `{ jump: px }` | reposition **without filming** — a cut, where `scroll` is a move |
+| `{ click: sel, hold: n }` | in-page click; the camera keeps rolling through the state change |
+| `{ open: sel, hold: n }` | a click that navigates; filming pauses for load and prewarm |
+| `{ hold: n }` | stay put |
+
+Three things this needed that are worth knowing:
+
+- **`aim` resolves the scroller, then travels it.** Playwright's `click` scrolls
+  an element into view itself, instantly — a jump cut mid-clip. So the step finds
+  the element's own scrolling ancestor first and moves *that* at `PX_PER_FRAME`.
+  The map page needs it: `#layerModeBtn` sits 1117px down a control panel with
+  `overflow-y: auto`, on a page whose window scroll maxes at 620.
+- **Anything under a `fixed` or `sticky` ancestor is never travelled to.** It is
+  on screen wherever the document is, and its document position is meaningless.
+  This covers the MVP's tab bar and the research site's header.
+- **A failed step fails the capture.** A tour step that silently no-ops ships a
+  clip of a site sitting still, and the encode downstream would produce it
+  happily.
+
+`--probe` runs a tour with the screenshots switched off. It is the cheap oracle:
+it proves every selector still resolves, and reports the frame count, in about a
+minute — against roughly seven for a real run.
+
+> **Selectors are matched on text, not `href`.** Both navs emit relative links, so
+> `a[href="kpi-builder/"]` matches on the home page and misses on every other
+> page in the site.
+
+### 17.3 The landscape tier is now capturable too
+
+Only the portrait tier was. The other four projects' landscape masters are owner
+recuts, and project 05 had none — so `ORIENTATIONS` gained a landscape entry at
+940×540 CSS / dpr 2 = **1880×1080**, which is the exact size of those recuts. A
+capture and a recut are therefore interchangeable under the same `object-fit`,
+and `scale=1280:-2` produces the same 1280×736 for the 720 tier either way.
+
+`orientations` on a project defaults to `['portrait']`, so a plain run cannot
+overwrite a recut with a capture. Only the two Bodega entries opt into both.
+
+> **`-maxrate` is per tier, and it binds.** Both landscape tiers first shipped at
+> the portrait tier's `3M`, and came out 13.6 MB and 8.5 MB — the 720 tier at 94%
+> of the master, which is the entire reason it exists gone. Screen capture at
+> `crf 20` wants more than 3 Mbps at 1880px. §6.1's split — `6M` for 1080p, `3M`
+> for 720 — is right, and it is not optional.
+
+### 17.4 What the tours show
+
+**Rutgers Newark Bodega Project.** Home → the "Turn field data into action" tool
+cards → Fast vs. Fresh food-access map → drop the fast-food layer → scroll the
+control panel → Switch to Cluster View → KPI Builder → remodel margins as
+Distributor, then as Bodega → Story. Desktop reaches the tools through the header
+submenu; the phone uses the off-canvas drawer, and reaches the map from the drawer
+rather than the funnel cards — those sit 2552px down an 11306px document, and nine
+seconds of scrolling to reach a link is most of the clip's budget.
+
+**Bodega Project App MVP.** Feed → filter to Greens, then Tomatoes, then back to
+all → open a harvest's detail sheet → Local Map with the Newark food nodes → My
+Harvest → the add-harvest sheet, choosing a category and switching the exchange
+type to a price.
+
+> **`jump` before each tab change is load-bearing.** Switching tabs swaps the
+> content but leaves `scrollY` where the last tab left it, so arriving on Local
+> Map from a scrolled feed opens 680px down — past the map, which is the whole
+> tab. The first cut of this clip did exactly that. It is a jump rather than a
+> `scroll` because two and a half seconds of scrolling backwards is dead footage,
+> and cutting on a tab change reads as the page change it is.
+
+### 17.5 Inventory
+
+All six files verified: H.264, yuv420p, 0.5s keyframe interval, `moov` before
+`mdat`, no audio track.
+
+| Project | Duration | 1080p | 720p | Portrait | Posters |
+|---|---|---|---|---|---|
+| Rutgers Newark Bodega Project | 25.10 / 26.00s | 13.2 MB | 8.1 MB | 8.1 MB | 115 + 110 KB |
+| Bodega Project App MVP | 25.87 / 24.33s | 9.6 MB | 5.7 MB | 7.2 MB | 45 + 103 KB |
+
+The two durations are landscape and portrait: a tour's length is what its steps
+add up to, and the two layouts do not take the same number of steps. Both stay
+under the 26s house maximum the four scrolled clips hit. **51.9 MB across the two
+entries**, replacing 21.6 MB for the single card they came from — and, as before,
+only one tier is ever fetched per visitor.
+
+### 17.6 Verified
+
+`npm run build` clean. Playwright against the built bundle at 1512×860 and
+390×844-with-touch: six cards in the rail and `06` in the footer counter; the
+research site and the MVP adjacent at 04 and 05; each dossier carrying its own
+title, stack, blurb and outbound link; each `<video>` resolving to its own hashed
+asset and playing; the deck's pager disabled at 06 and stepping back onto the MVP.
+No console errors, no failed requests.
+
+### 17.7 Open
+
+- **The tours are pinned to two sites' markup.** `--probe` is how that gets
+  caught; run it before assuming a stale clip is an encode problem.
+- The real-device pass ([§12.6](#126-still-outstanding)) is still outstanding, and
+  now covers two more clips.
