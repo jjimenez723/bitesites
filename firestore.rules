@@ -284,10 +284,21 @@ service cloud.firestore {
     // ------------------------------------------------------------------ roles
     // The authoritative access-control store. Deliberately unwritable by the
     // account it describes — bootstrap your first admin from the Firebase console.
+    //
+    // No client may write this, not even an admin. A role is two things that
+    // have to move together: this document, and the `role` custom claim that
+    // role() below reads *first*. A browser can only ever write one of them, and
+    // a half-applied revoke leaves a claim still saying "admin" — which is
+    // exactly the state that looks revoked in the UI and isn't.
+    //
+    // So writes go through paths that hold the Admin SDK and set both halves:
+    // the `setUserRole` callable (what the Users tab calls) or `npm run role`.
+    // Both bypass these rules, so denying every client write costs nothing and
+    // makes the desync unreachable rather than merely discouraged.
 
     match /roles/{uid} {
       allow read:  if isOwner(uid) || isAdmin();
-      allow write: if isAdmin();
+      allow write: if false;
     }
 
     // ------------------------------------------------------------------ users

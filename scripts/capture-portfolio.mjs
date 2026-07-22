@@ -48,17 +48,44 @@ const OUT_DIR = path.join(ROOT, 'src/assets/portfolio');
  * landscape: 940x540 at dpr 2 gives 1880x1080, which is the exact size of the
  *   owner-supplied masters the other projects ship. A capture and a recut are
  *   therefore interchangeable in the same `object-fit`, and the 720 tier is the
- *   same `scale=1280:-2` either way.                                          */
+ *   same `scale=1280:-2` either way.
+ *
+ * A project may override either tier's viewport and dpr (see `geometry` below).
+ * The product of the two must still land on the tier's pixel size, because the
+ * encode and the CSS both assume it; `geometryFor` enforces that rather than
+ * letting a typo ship a clip of the wrong shape.                              */
 const DPR = 2;
 const ORIENTATIONS = {
   landscape: {
     viewport: { width: 940, height: 540 }, device: null, suffix: '', rate: '6M',
+    pixels: { width: 1880, height: 1080 },
     // The bytes tier, for viewports wide enough for the landscape frame but not
     // worth 1880px of it. Encoded from the same PNGs rather than from the 1080p
     // mp4, so it is a first generation too.
     tier720: { suffix: '-720', scale: 'scale=1280:-2', rate: '3M' }
   },
-  portrait: { viewport: { width: 405, height: 877 }, device: 'iPhone 13', suffix: '-portrait', rate: '3M' }
+  portrait: {
+    viewport: { width: 405, height: 877 }, device: 'iPhone 13', suffix: '-portrait', rate: '3M',
+    pixels: { width: 810, height: 1754 }
+  }
+};
+
+/* Resolve a project's geometry for one tier, and prove it still encodes to the
+ * tier's pixel size. Both products must be even for yuv420p, which the tier
+ * sizes already are — the check is that an override did not drift off them. */
+const geometryFor = (project, orientation) => {
+  const base = ORIENTATIONS[orientation];
+  const geometry = { ...base, ...(project.geometry?.[orientation] ?? {}) };
+  const dpr = geometry.dpr ?? DPR;
+  for (const axis of ['width', 'height']) {
+    const px = geometry.viewport[axis] * dpr;
+    if (px !== base.pixels[axis]) {
+      console.error(`${project.slug} ${orientation}: ${geometry.viewport.width}x${geometry.viewport.height} `
+        + `@ dpr ${dpr} gives ${axis} ${px}, but the ${orientation} tier is ${base.pixels[axis]}`);
+      process.exit(1);
+    }
+  }
+  return { ...geometry, dpr };
 };
 
 /* ── Pacing ─────────────────────────────────────────────────────────────────
@@ -73,10 +100,29 @@ const HOLD_FRAMES = 15; // 0.5s parked at each end, so the loop cut lands on a
 const AIM_FRAMES = 10;  // beat between a control arriving on screen and the click
                         // landing on it. Without it a button is pressed in the
                         // same frame it appears, which reads as a jump cut.
+const TYPE_FRAMES = 4;  // frames held per character, so 7.5 char/s — a person
+                        // typing, not a paste. A `type` step exists to show a
+                        // search field *being searched*; at one frame per
+                        // character the query would appear fully formed.
 const MAX_SECONDS = 26;
 
 /* Per-project escapes, all optional:
  *   dismiss      – selector(s) to click before capture (cookie banners, modals)
+ *   waitFor      – selector(s) that must be visible before capture starts, on top
+ *                  of `networkidle`. For anything rendered from a client-side data
+ *                  fetch: the socket goes quiet the moment the SDK finishes
+ *                  handshaking, which is well before the first document arrives,
+ *                  so `networkidle` alone films the skeleton.
+ *   styleTag     – CSS injected on arrival and after every navigation. Its one
+ *                  sanctioned use is opaquing a translucent sticky header: three
+ *                  of these sites run `rgba(…,.8) + backdrop-filter`, which is
+ *                  correct on a real device — you scroll, so the blur reads as
+ *                  depth — and garbage in a clip, where a still frame shows body
+ *                  copy ghosted through the bar with no motion to explain it.
+ *   geometry     – { landscape | portrait: { viewport, dpr } } to film a tier at
+ *                  something other than the house geometry. Needed when a site's
+ *                  own breakpoints put its real layout outside the default: see
+ *                  bodegaprojectapp.
  *   travelPx     – override scroll distance instead of using full page height
  *   timeScale    – multiply CSS animation/transition durations. Frames are captured
  *                  slower than 1/30s of wall clock, so on-page animations otherwise
@@ -139,7 +185,10 @@ const BODEGA_TOOLS_TOUR = {
  * a jump and not a `scroll` because two and a half seconds of scrolling backwards
  * is dead footage; cutting on the tab change reads as the page change it is. */
 const BODEGA_APP_TOUR = [
-  { scroll: 380 },
+  // 300, not the 380 the phone build wanted: the desktop layout this tour now
+  // also films puts the crop filters higher in the frame, and the two tiers
+  // share one step list. It is the only step where the difference showed.
+  { scroll: 300 },
   { click: 'button:text-is("Greens")', hold: 32 },           // crop filter narrows the feed
   { click: 'button:text-is("Tomatoes")', hold: 32 },
   { click: 'button:text-is("All crops")', hold: 24 },
@@ -159,10 +208,114 @@ const BODEGA_APP_TOUR = [
   { click: 'button:text-is("Set a price")', hold: 34 }
 ];
 
+/* The other four used to be plain scrolls, which filmed each site's *layout* and
+ * none of its behaviour — while the dossier beside the clip promised a booking
+ * flow, an estimate wizard, a live inventory and a search index. A visitor read
+ * "five-step estimate wizard" next to twenty-six seconds of a page moving past.
+ *
+ * Each tour below is built around the one thing that project's copy claims and a
+ * scroll cannot show. Everything else stays a scroll, because these are still
+ * meant to read as sites, not as feature demos. */
+
+/* Ends on the Cherry calculator rather than closing it: the sheet is a third
+ * party's markup, its dismiss control is the only part not addressable by a
+ * stable selector, and an open financing sheet is a better last frame than a
+ * page. The nav is worth its 1.5s — "Pharmacy", "Patient Portal" and "Cherry
+ * Payment" are three of the dossier's bullets, listed. */
+const CLIFTON_TOUR = [
+  { scroll: 640 },
+  { click: '#mobileMenuToggle', hold: 36 },
+  // Not the toggle again: once the overlay has finished animating in, its own
+  // close button sits over the toggle and swallows the click. `--probe` does
+  // not catch this — with nothing being screenshot a `hold` costs no wall
+  // clock, so the overlay is still mid-transition and the toggle still exposed.
+  { click: '#mobileMenuCloseBtn', hold: 12 },
+  { scroll: 1150 },                                        // what we treat
+  { scroll: 1150 },
+  { scroll: 1150 },                                        // the clinic, reviews
+  { click: 'button[aria-label="Open payment calculator"]', hold: 72 }
+];
+
+/* Answers step 1 of the wizard and advances it, then leaves it — step 2 is a
+ * different question, not a different screen, and watching someone fill a form
+ * is not the point. The point is that the form is live.
+ *
+ * Bella last. It is the only beat in the whole rail where a site says out loud
+ * what it is ("Stone Bellisimo's 24/7 AI Voice Agent"), so it gets the longest
+ * hold and the final frame. */
+const STONE_TOUR = [
+  { scroll: 760 },
+  { click: '#wz1 .wz-opt:has-text("Kitchen")', hold: 26 },
+  { click: '#wz1next', hold: 42 },
+  { scroll: 1500 },                                        // our work
+  { scroll: 1500 },                                        // materials
+  { click: '#chat-bubble', hold: 78 }
+];
+
+/* The search field sits in the header of literally every frame of the old clip
+ * and was never touched. Typing into it is the cheapest strong beat available on
+ * this site: two keystrokes in, the panel is already sorting the org's own
+ * taxonomy into SERVICES and RESEARCH, which is the claim the dossier makes. */
+const NEXUS_TOUR = [
+  { scroll: 900 },                                         // hero -> prototypes
+  { scroll: 1100 },                                        // living systems
+  { scroll: 1100 },                                        // River Veins
+  { type: '#site-search', text: 'wetland', hold: 46 },
+  { open: 'a:has-text("Floating Wetland Expansion")', hold: 50 },
+  // The research page is short and this bottoms out on it. Deliberate — the
+  // budget is spent on the 11,000px home page above, where there is something
+  // to see, rather than padding the destination with a hold.
+  { scroll: 1200 }
+];
+
+/* `waitFor` before anything moves. The old clip has "Loading current shop
+ * highlights…" on screen at 0:04 — `prewarm` scrolled past the section before
+ * Firestore had answered, and `networkidle` had long since fired.
+ *
+ * The detail modal is the whole reason this tour exists: it is the only place
+ * the "multi-photo galleries, cart checkout" bullet is visible, and it is two
+ * clicks from the top of the page. */
+const STOCKROOM_TOUR = [
+  { scroll: 900 },
+  { scroll: 900 },                                         // search inventory
+  { scroll: 700 },                                         // shop highlights
+  { click: '.home-featured-product-view', hold: 54 },
+  { click: '.product-detail-thumbnails button >> nth=2', hold: 34 },
+  { click: 'button:text-is("Close")', hold: 18 },
+  { click: '.home-featured-add-cart', hold: 30 },
+  { click: '.cart-toggle', hold: 48 }
+];
+
+/* Three of these sites run a sticky header at rgba(…, ~0.8) with a backdrop
+ * blur. On a phone that is good design; in a clip it is body copy ghosted
+ * through the bar in most frames, because a still frame has no motion to
+ * explain the translucency. Opaquing it is the smallest change that fixes it
+ * and it alters nothing else about how the site renders. */
+const OPAQUE = (selector, colour = '#fff') =>
+  `${selector} { background: ${colour} !important; backdrop-filter: none !important; }`;
+
 const PROJECTS = [
-  { slug: 'cliftonaveanimalhospital', url: 'https://cliftonaveanimalhospital.com' },
-  { slug: 'stonebellisimo', url: 'https://stonebellisimollc.com' },
-  { slug: 'nexusverium', url: 'https://nexusverium.tech' },
+  {
+    slug: 'cliftonaveanimalhospital',
+    url: 'https://cliftonaveanimalhospital.com',
+    // Without this the poster — the card thumbnail *and* the still behind the
+    // video — is somebody else's microchip coupon over the hero.
+    dismiss: '.site-promo-dismiss',
+    styleTag: OPAQUE('.site-header'),
+    tour: CLIFTON_TOUR
+  },
+  {
+    slug: 'stonebellisimo',
+    url: 'https://stonebellisimollc.com',
+    styleTag: OPAQUE('#nav', '#121110'),   // this one's bar is dark, not white
+    tour: STONE_TOUR
+  },
+  {
+    slug: 'nexusverium',
+    url: 'https://nexusverium.tech',
+    styleTag: OPAQUE('header.glass-surface'),
+    tour: NEXUS_TOUR
+  },
   {
     slug: 'bodegaproject',
     url: 'https://jjimenez723.github.io/Bodega-Project-2/',
@@ -173,9 +326,33 @@ const PROJECTS = [
     slug: 'bodegaprojectapp',
     url: 'https://jjimenez723.github.io/the-bodega-project-demo/',
     orientations: ['landscape', 'portrait'],
+    /* The zoom complaint, and it was never the CSS. The MVP is laid out to
+     * max-width 1152px with a desktop breakpoint at 1024 — a sidebar, a two
+     * column grid — and the house 940px landscape viewport sits below it, so
+     * the clip was of the *phone* build: a 65px header and a 64px tab bar
+     * eating 24% of a 540px-tall frame, 60px headline type, 940 CSS px of
+     * layout. Play that full-bleed on a 1440px screen and every pixel is
+     * magnified 1.53x; on a 2560px one, 2.7x.
+     *
+     * 1175 is chosen, not rounded to: it clears the 1152px content column by
+     * 11px a side, so the desktop layout resolves with no dead gutter. 1504
+     * @1.25 also encodes to 1880x1080 and leaves 350px of empty grey.
+     * 675 CSS px of height also stops the add-harvest sheet being sliced by
+     * the bottom of the frame, which 540 did at 0:24. */
+    geometry: { landscape: { viewport: { width: 1175, height: 675 }, dpr: 1.6 } },
+    // Same translucent-bar defect as the three sites above: both tab headings
+    // scroll under it and ghost. `#fafafa`, not white — this app's chrome is
+    // off-white and a pure white bar would read as a seam against the page.
+    styleTag: OPAQUE('header', '#fafafa'),
     tour: BODEGA_APP_TOUR
   },
-  { slug: 'stockroomnj', url: 'https://stockroomnj.com' }
+  {
+    slug: 'stockroomnj',
+    url: 'https://stockroomnj.com',
+    styleTag: OPAQUE('.site-header'),
+    waitFor: '.home-featured-product-view',
+    tour: STOCKROOM_TOUR
+  }
 ];
 
 const args = process.argv.slice(2);
@@ -231,6 +408,7 @@ async function settle(page, project) {
   await page.addStyleTag({
     content: `html, body { scroll-behavior: auto !important; }
               ::-webkit-scrollbar { display: none !important; }
+              ${project.styleTag || ''}
               ${project.timeScale ? `*, *::before, *::after {
                 animation-duration: calc(var(--cap-t, 1s) * ${project.timeScale}) !important;
                 transition-duration: calc(var(--cap-t, 1s) * ${project.timeScale}) !important; }` : ''}`
@@ -240,6 +418,17 @@ async function settle(page, project) {
     await page.click(selector, { timeout: 4_000 })
       .then(() => console.log(`  · dismissed ${selector}`))
       .catch(() => console.log(`  · ${selector} not present, skipping`));
+  }
+
+  // Soft, unlike a tour step: a `waitFor` that never resolves is the one failure
+  // that is better filmed than fatal — a `goto` this tour made can legitimately
+  // land on a page the gate does not apply to, and a warning in the log beats
+  // losing an otherwise good capture at minute eight.
+  for (const selector of [].concat(project.waitFor || [])) {
+    await page.locator(selector).filter({ visible: true }).first()
+      .waitFor({ state: 'visible', timeout: 25_000 })
+      .then(() => console.log(`  · ${selector} settled`))
+      .catch(() => console.log(`  ⚠ ${selector} never appeared — frames may show a loading state`));
   }
 
   await page.evaluate(() => document.fonts?.ready).catch(() => {});
@@ -265,7 +454,7 @@ async function settle(page, project) {
 }
 
 async function capture(browser, project, orientation) {
-  const geometry = ORIENTATIONS[orientation];
+  const geometry = geometryFor(project, orientation);
   const framesDir = path.join(os.tmpdir(), `portfolio-frames-${project.slug}-${orientation}`);
   await rm(framesDir, { recursive: true, force: true });
   await mkdir(framesDir, { recursive: true });
@@ -273,14 +462,15 @@ async function capture(browser, project, orientation) {
   const context = await browser.newContext({
     ...(geometry.device ? devices[geometry.device] : {}),
     viewport: geometry.viewport,
-    deviceScaleFactor: DPR,
+    deviceScaleFactor: geometry.dpr,
     // Never capture the reduced-motion variant of a site — these clips exist to
     // show the motion design.
     reducedMotion: 'no-preference'
   });
   const page = await context.newPage();
 
-  console.log(`\n▸ ${project.slug} · ${orientation}  ${project.url}`);
+  console.log(`\n▸ ${project.slug} · ${orientation}  ${geometry.viewport.width}x${geometry.viewport.height}`
+    + `@${geometry.dpr}  ${project.url}`);
   await page.goto(project.url, { waitUntil: 'load', timeout: 60_000 });
   await settle(page, project);
 
@@ -361,9 +551,16 @@ async function capture(browser, project, orientation) {
 
   const runTour = async steps => {
     for (const [i, step] of steps.entries()) {
-      const label = step.click || step.open || (step.jump !== undefined
-        ? `jump to ${step.jump}px` : `scroll ${step.scroll ?? 0}px`);
+      const label = step.click || step.open || (step.type && `type "${step.text}" into ${step.type}`)
+        || step.waitFor || (step.jump !== undefined
+          ? `jump to ${step.jump}px` : `scroll ${step.scroll ?? 0}px`);
       try {
+        // Mid-tour gate, and unlike the one in `settle` this one is fatal: a step
+        // asked for it by name, so the thing it names is part of the tour.
+        if (step.waitFor) {
+          await page.locator(step.waitFor).filter({ visible: true }).first()
+            .waitFor({ state: 'visible', timeout: 25_000 });
+        }
         if (step.scroll) await glideTo(await scrollY() + step.scroll);
         // Repositions without filming: a cut, where `scroll` is a move.
         if (step.jump !== undefined) {
@@ -374,6 +571,18 @@ async function capture(browser, project, orientation) {
           await still(AIM_FRAMES);
           await locator.click({ timeout: 15_000 });
           await still(step.hold ?? 28);
+        } else if (step.type) {
+          const locator = await aim(step.type);
+          await still(AIM_FRAMES);
+          await locator.click({ timeout: 15_000 });
+          // Per character rather than `fill`, and filmed between keystrokes: a
+          // type-ahead panel is the thing being demonstrated, and it only reads
+          // as one if the visitor watches it narrow.
+          for (const character of step.text) {
+            await locator.press(character === ' ' ? 'Space' : character, { timeout: 5_000 });
+            await still(TYPE_FRAMES);
+          }
+          await still(step.hold ?? 40);
         } else if (step.open) {
           const locator = await aim(step.open);
           await still(AIM_FRAMES);

@@ -13,7 +13,7 @@ import {
   collection, query, where, orderBy, limit, getDocs,
   doc, updateDoc, deleteDoc, setDoc, serverTimestamp
 } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { app, db } from '../lib/firebase';
 
 export const EVENT_CAP = 5000;
 export const LIST_CAP = 200;
@@ -114,13 +114,21 @@ export const setUserStatus = (id, status) => updateDoc(doc(db, 'users', id), { s
 export const removeLead = id => deleteDoc(doc(db, 'leads', id));
 
 /**
- * Grants a role from the dashboard. Rules let an admin write roles/{uid}, so
- * this works — but it only writes the *document*, not the custom auth claim,
- * because minting a claim needs the Admin SDK. The rules read the claim first
- * and fall back to this document, so access is identical either way; the claim
- * path just saves a read per rule evaluation. `npm run role` sets both.
+ * Changes someone's access. Role is 'admin' | 'client' | 'none'.
+ *
+ * This deliberately does not write roles/{uid} — the rules now deny that to
+ * every client. A role is the document *and* a custom auth claim, the rules
+ * read the claim first, and a browser can only write the document. Writing one
+ * half from here is what made revoking an admin from this screen leave them
+ * still holding admin.
+ *
+ * The callable holds the Admin SDK, so it sets both halves and revokes the
+ * refresh token on the way out — otherwise the ID token already in that
+ * person's browser carries the old claim for up to another hour.
  */
-export const grantRole = (uid, role, email) =>
-  setDoc(doc(db, 'roles', uid), { role, email, grantedAt: serverTimestamp() });
-
-export const revokeRole = uid => deleteDoc(doc(db, 'roles', uid));
+export const setRole = async (uid, role) => {
+  const { httpsCallable, getFunctions } = await import('firebase/functions');
+  const call = httpsCallable(getFunctions(app, 'us-central1'), 'setUserRole');
+  const { data } = await call({ uid, role });
+  return data;
+};

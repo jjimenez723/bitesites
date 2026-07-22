@@ -12,7 +12,7 @@
 // and an approved account is never left without a role.
 
 import React, { useMemo, useState } from 'react';
-import { useUsers, useRoles, setUserStatus, grantRole, revokeRole, toDate } from './data';
+import { useUsers, useRoles, setRole, toDate } from './data';
 import { Pill } from './Panel';
 
 const when = value => {
@@ -39,23 +39,19 @@ export default function Users() {
       await run();
       await Promise.all([refresh(), refreshRoles()]);
     } catch (err) {
-      setNotice(err?.code === 'permission-denied'
-        ? 'The server rejected that change.'
-        : err?.message || 'Could not update the account.');
+      // The callable's own messages are written to be read — the self-revoke
+      // guard in particular explains what to do instead — so pass them through
+      // rather than flattening everything to "something went wrong".
+      setNotice(err?.message || 'Could not update the account.');
     } finally {
       setBusyId(null);
     }
   };
 
-  const grant = (user, role) => act(user.id, async () => {
-    await grantRole(user.id, role, user.email);
-    await setUserStatus(user.id, 'approved');
-  });
-
-  const revoke = user => act(user.id, async () => {
-    await revokeRole(user.id);
-    await setUserStatus(user.id, 'pending');
-  });
+  // Both directions go through the one callable, which moves the role document
+  // and the auth claim together. Nothing here writes roles/{uid} directly.
+  const grant = (user, role) => act(user.id, () => setRole(user.id, role));
+  const revoke = user => act(user.id, () => setRole(user.id, 'none'));
 
   const pending = users.filter(user => !roleFor.get(user.id));
   const active = users.filter(user => roleFor.get(user.id));
@@ -173,10 +169,10 @@ export default function Users() {
         )}
 
         <p className="admin-note">
-          Assigning a role here writes the <code>roles</code> document the security rules read.
-          It does not mint a custom auth claim — only <code>npm run role</code> does that — but
-          access is identical either way. Anyone whose role changes must sign out and back in
-          before it takes effect.
+          Changing access here calls a server function that writes the <code>roles</code> document
+          and the matching auth claim together, then invalidates the person's existing sessions —
+          so a revoke takes effect immediately rather than at the end of their current token.
+          You cannot change your own admin access from this screen; use <code>npm run role</code> for that.
         </p>
       </div>
     </>

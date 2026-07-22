@@ -21,6 +21,7 @@ import {
   getDoc,
   getDocs,
   updateDoc,
+  deleteDoc,
   collection,
   serverTimestamp
 } from 'firebase/firestore';
@@ -223,8 +224,19 @@ await it('user can read their own role', () =>
 await it('user cannot read someone else\'s role', () =>
   assertFails(getDoc(doc(visitor, 'roles', 'admin_doc'))));
 
-await it('admin can assign a role', () =>
-  assertSucceeds(setDoc(doc(adminByDoc, 'roles', 'visitor'), { role: 'client' })));
+// Not even an admin, and that is the point. A browser can write the role
+// document but cannot mint the matching auth claim, and the rules read the
+// claim first — so a half-applied revoke leaves a revoked admin still admin.
+// Role changes go through the setUserRole callable or `npm run role`, both of
+// which hold the Admin SDK and set both halves.
+await it('admin cannot assign a role directly from the browser', () =>
+  assertFails(setDoc(doc(adminByDoc, 'roles', 'visitor'), { role: 'client' })));
+
+await it('admin cannot delete a role document directly either', () =>
+  assertFails(deleteDoc(doc(adminByDoc, 'roles', 'client_ok'))));
+
+await it('admin can still read roles to render the Users tab', () =>
+  assertSucceeds(getDoc(doc(adminByDoc, 'roles', 'client_ok'))));
 
 describe('users — self-registration starts pending');
 await it('user can create their own pending profile', () =>

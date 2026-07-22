@@ -16,10 +16,13 @@ client portal.
 
 Live and verified against production:
 
-- Firestore provisioned, security rules deployed, **45 rule assertions passing**
+- Firestore provisioned, security rules deployed, **83 rule assertions passing**
 - Both site forms (intake + Bit chat) writing to `leads`
 - **Email/Password auth enabled** — sign-up works, and a user cannot approve or
   promote themselves (both blocked in production, not just in tests)
+- **Google sign-in built** — the console's "Continue with Google" button is wired
+  and verified as far as the OAuth handler; it stays inert until the provider is
+  switched on in the Firebase console (step 1 below)
 - **App Check enforced** — an identical write was rejected without an attestation
   token and accepted with one
 - Legal pages live at `/terms` and `/privacy`
@@ -30,7 +33,37 @@ Live and verified against production:
 
 ## What still needs you
 
-### 1. Create your first admin
+### 1. Switch on Google sign-in
+
+This is the one step that cannot be scripted. Enabling `google.com` needs an OAuth
+2.0 client, and Google publishes no API for creating one — the Firebase console
+provisions it for you behind the toggle. Everything on our side is already built.
+
+1. [Firebase console → Authentication → Sign-in method](https://console.firebase.google.com/project/bitesites-org/authentication/providers)
+2. Add provider → **Google** → Enable
+3. Set the support email, then **Save**
+
+That is the whole step; the console mints the OAuth client and wires the redirect
+URI to `https://bitesites-org.firebaseapp.com/__/auth/handler` automatically. All
+five domains the console runs on are already authorised, so nothing else changes.
+
+To confirm it took:
+
+```bash
+gcloud auth print-access-token | xargs -I{} curl -s -H "Authorization: Bearer {}" \
+  -H "x-goog-user-project: bitesites-org" \
+  "https://identitytoolkit.googleapis.com/admin/v2/projects/bitesites-org/defaultSupportedIdpConfigs"
+```
+
+Before the toggle this returns `{}`. After, it lists a `google.com` entry with
+`"enabled": true`.
+
+**Signing in with Google grants no access on its own.** A Google account lands in
+exactly the same place a new email account does — `users/{uid}` with status
+`pending` and no `roles/{uid}` document, which every rule reads as "no access".
+Granting the role is still step 2.
+
+### 2. Create your first admin
 
 Roles live in `roles/{uid}`, which **no client can write** — that is what makes
 self-promotion impossible, so roles have to be granted with admin credentials.
@@ -56,7 +89,7 @@ It authenticates with your gcloud Application Default Credentials, so there is n
 service-account key to create or leak. Verified working end to end: grant writes both
 the document and the claim, revoke clears both.
 
-### 2. Fill in the legal placeholders
+### 3. Fill in the legal placeholders
 
 [`src/pages/legal-details.js`](src/pages/legal-details.js) is the single source of truth
 for both documents:
@@ -71,7 +104,7 @@ for both documents:
 > advice. Have a lawyer review them before you rely on them, particularly the liability
 > cap and the New Jersey governing-law clause.
 
-### 3. Add a recording notice before the Voice AI call
+### 4. Add a recording notice before the Voice AI call
 
 The Voice AI demo places a real GoHighLevel call, so visitor speech leaves the browser
 and may be recorded. Both legal documents say so. But **a disclosure buried in a policy
@@ -82,12 +115,12 @@ Put a short line in the demo UI itself, above the button that starts the call �
 *"This places a real AI call. It may be recorded and transcribed."* That turns a buried
 term into informed consent at the moment it matters.
 
-### 4. Give the GoHighLevel sync its webhook URL
+### 5. Give the GoHighLevel sync its webhook URL
 
 The Cloud Function that pushes leads into GHL is deployed but inert until you supply
 the Inbound Webhook URL. Two commands — see "Lead notifications" below.
 
-### 5. Byte's calls — done, nothing needed
+### 6. Byte's calls — done, nothing needed
 
 Byte's leads arrive via `pollVoiceCalls`, which reads the GoHighLevel Voice AI call-log
 API every 5 minutes. It is deployed and running; the history has been imported. See

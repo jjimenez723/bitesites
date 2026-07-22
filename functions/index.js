@@ -14,11 +14,12 @@
 // sync is visible in the console rather than silently lost.
 
 import { onDocumentCreated } from 'firebase-functions/v2/firestore';
-import { onRequest } from 'firebase-functions/v2/https';
+import { onRequest, onCall, HttpsError } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { defineSecret } from 'firebase-functions/params';
 import { setGlobalOptions } from 'firebase-functions/v2';
 import { initializeApp } from 'firebase-admin/app';
+import { getAuth } from 'firebase-admin/auth';
 import { FieldValue, Timestamp, getFirestore } from 'firebase-admin/firestore';
 
 initializeApp();
@@ -956,5 +957,101 @@ export const importVoiceHistory = onRequest(
       console.error('[voice-import] failed:', error);
       res.status(500).json({ error: String(error.message).slice(0, 300) });
     }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Role management — the only place a role may change from the browser
+// ---------------------------------------------------------------------------
+//
+// A role has two halves that MUST move together:
+//
+//   * `roles/{uid}` — the document firestore.rules falls back to.
+//   * a `role` custom claim — the fast path the rules read *first*.
+//
+// Splitting them is how revocation silently fails. The rules prefer the claim,
+// so deleting only the document leaves a revoked admin holding a claim that
+// still says "admin" — and because a claim lives on the account rather than in
+// the session, signing out and back in just reissues it.
+//
+// So the browser no longer writes `roles/{uid}` at all (rules deny it outright);
+// it calls this instead, and this is the only client-reachable path that can
+// change a role. It writes both halves, or neither.
+
+const ASSIGNABLE_ROLES = ['admin', 'client'];
+
+// The caller's own role, resolved the same way firestore.rules resolves it:
+// claim first, document second.
+async function callerRole(db, auth) {
+  if (auth?.token?.role) return auth.token.role;
+  if (!auth?.uid) return '';
+  const snapshot = await db.doc(`roles/${auth.uid}`).get();
+  return snapshot.exists ? snapshot.get('role') || '' : '';
+}
+
+export const setUserRole = onCall(
+  { enforceAppCheck: true, maxInstances: 5 },
+  async request => {
+    const db = getFirestore();
+    const auth = getAuth();
+
+    if (!request.auth?.uid) {
+      throw new HttpsError('unauthenticated', 'Sign in first.');
+    }
+    if ((await callerRole(db, request.auth)) !== 'admin') {
+      throw new HttpsError('permission-denied', 'Only an admin can change a role.');
+    }
+
+    const uid = str(request.data?.uid, 128);
+    const role = str(request.data?.role, 20);
+    if (!uid) throw new HttpsError('invalid-argument', 'A uid is required.');
+    if (role !== 'none' && !ASSIGNABLE_ROLES.includes(role)) {
+      throw new HttpsError('invalid-argument', `Role must be one of ${ASSIGNABLE_ROLES.join(', ')} or none.`);
+    }
+
+    // Guard rail, not a security control: an admin revoking themselves is
+    // almost always a misclick, and the last one to do it locks everybody out
+    // of the console. `npm run role` remains the deliberate way out.
+    if (uid === request.auth.uid && role !== 'admin') {
+      throw new HttpsError(
+        'failed-precondition',
+        'You cannot change your own admin access here. Use `npm run role` if you mean it.'
+      );
+    }
+
+    // Confirms the account exists before writing a role document about it.
+    const target = await auth.getUser(uid).catch(() => null);
+    if (!target) throw new HttpsError('not-found', 'No account with that uid.');
+
+    if (role === 'none') {
+      await auth.setCustomUserClaims(uid, null);
+      // Without this the already-issued ID token keeps the old claim until it
+      // expires — up to an hour of admin access after being revoked.
+      await auth.revokeRefreshTokens(uid);
+      await db.doc(`roles/${uid}`).delete();
+      await db.doc(`users/${uid}`).set(
+        { status: 'pending', updatedAt: FieldValue.serverTimestamp() },
+        { merge: true }
+      );
+      console.log(`[roles] ${request.auth.token?.email || request.auth.uid} revoked ${target.email}`);
+      return { uid, role: '', email: target.email || '' };
+    }
+
+    await auth.setCustomUserClaims(uid, { role });
+    // A promotion has to reach the token too. Without this, a client promoted
+    // to admin keeps a stale claim saying "client" until their token expires.
+    await auth.revokeRefreshTokens(uid);
+    await db.doc(`roles/${uid}`).set({
+      role,
+      email: target.email || '',
+      grantedAt: FieldValue.serverTimestamp(),
+      grantedBy: request.auth.uid
+    });
+    await db.doc(`users/${uid}`).set(
+      { status: 'approved', updatedAt: FieldValue.serverTimestamp() },
+      { merge: true }
+    );
+    console.log(`[roles] ${request.auth.token?.email || request.auth.uid} granted ${role} to ${target.email}`);
+    return { uid, role, email: target.email || '' };
   }
 );

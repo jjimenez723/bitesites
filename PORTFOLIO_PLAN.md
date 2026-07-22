@@ -1081,3 +1081,119 @@ No console errors, no failed requests.
   caught; run it before assuming a stale clip is an encode problem.
 - The real-device pass ([§12.6](#126-still-outstanding)) is still outstanding, and
   now covers two more clips.
+
+---
+
+## 18. Walkthroughs — 2026-07-22
+
+### 18.1 Four clips filmed the layout and none of the behaviour
+
+[§17](#17-a-second-bodega-entry--2026-07-21) toured the two Bodega entries and left
+the other four as plain top-to-bottom scrolls. Read beside the dossier, that is a
+straightforward mismatch: the copy promises "five-step estimate wizard", "Bella
+24/7 AI voice agent", "search across product name, category, description, and
+price", "multi-photo product galleries, cart checkout", "client portal, pharmacy
+refills, and Cherry financing" — and the clip next to it is a page moving upwards.
+Every one of those features was on the page the whole time, untouched.
+
+The tell was that the two toured clips are the only ones that read as *software*.
+The other four read as screenshots that happen to move.
+
+### 18.2 What each tour was built around
+
+One beat per project, chosen as the thing that project's own copy claims and a
+scroll cannot show. Everything else stays a scroll — these are still meant to read
+as sites, not as feature reels.
+
+| Project | The beat | Why it, and not something else |
+|---|---|---|
+| Clifton Ave | Nav overlay, then the Cherry calculator | "Pharmacy", "Patient Portal" and "Cherry Payment" are three dossier bullets, and the nav lists all three. The calculator renders live payment terms — the financing bullet, demonstrated rather than asserted. |
+| Stone Bellisimo | Wizard step 1 → 2, then Bella | Bella is the only place in the whole rail where a site says out loud what it is: *"Hi, I am Bella. I am Stone Bellisimo's 24/7 AI Voice Agent."* It gets the longest hold and the final frame. |
+| Nexus Verium | Typing into the site search | The field sits in the header of literally every frame of the old clip and was never touched. Two keystrokes in, the panel is already sorting the org's taxonomy into SERVICES and RESEARCH. |
+| StockRoom NJ | Product detail modal, then cart | The only place the "multi-photo galleries, cart checkout" bullet is visible, and it is two clicks from the top of the page. |
+
+### 18.3 Three defects the frames showed and the code did not
+
+- **The Clifton poster was somebody else's coupon.** Frame 0 — which is the card
+  thumbnail *and* the still behind the video — was a "Safe & Found Event / 50% off
+  a microchip" modal over the hero. `dismiss` has existed since the first version
+  of the script and had never been set on any project.
+- **Three sticky headers ghost.** Clifton, Stone and Nexus all run
+  `rgba(…, ~0.8)` plus a backdrop blur. On a device that is good design — you are
+  scrolling, so the blur reads as depth. In a clip it is body copy ghosted through
+  the bar in most frames, with no motion to explain the translucency. The new
+  `styleTag` escape opaques the bar and changes nothing else.
+- **StockRoom filmed a loading state.** "Loading current shop highlights…" is on
+  screen at 0:04 of the shipped clip. `prewarm` scrolled past the section before
+  Firestore answered, and `networkidle` had fired long before — the socket goes
+  quiet when the SDK finishes handshaking, which is well before the first document
+  arrives. The new `waitFor` gates on the rendered product, not the network.
+
+### 18.4 The MVP was too zoomed in, and it was never the CSS
+
+The complaint was about `bodegaprojectapp`'s landscape clip. `object-fit` was
+innocent; the capture geometry was not.
+
+The MVP is laid out to `max-width: 1152px` with a **desktop breakpoint at 1024** —
+a left sidebar, a two-column grid. The house landscape viewport is 940 CSS px,
+which sits below it, so the clip was of the *phone* build: a 65px header and a
+64px tab bar eating 24% of a 540px-tall frame, 60px headline type, and 940 CSS px
+of layout total. Play that full-bleed on a 1440px screen and every pixel is
+magnified 1.53×; on a 2560px one, 2.7×. That is the zoom, and no amount of
+`object-position` reaches it.
+
+Measured at three geometries that all encode to 1880×1080:
+
+| Capture viewport | Content column | Layout reached |
+|---|---|---|
+| 940×540 @ 2 | 940px — clamped by the viewport | phone: bottom tab bar |
+| **1175×675 @ 1.6** | **1152px — its own max-width** | **desktop: sidebar nav** |
+| 1504×864 @ 1.25 | 1152px + 350px of dead grey | desktop |
+
+1175 is chosen, not rounded to: it clears the content column by 11px a side, so
+the desktop layout resolves with no gutter. The extra 135 CSS px of height also
+stops the add-harvest sheet being sliced by the bottom of the frame, which 540 did
+at 0:24 of the shipped clip.
+
+The 16-step tour survives the breakpoint unchanged — every selector still
+resolves, including the two that only exist three screens deep. Only the opening
+scroll needed retuning, and both tiers share it.
+
+### 18.5 New escapes
+
+`geometry`, `waitFor` and `styleTag` on a project; `type` and `waitFor` as tour
+steps. `type` presses one character at a time and films `TYPE_FRAMES` between
+them — 7.5 char/s, a person typing. A type-ahead panel only reads as one if the
+visitor watches it narrow; `fill` would make the query appear fully formed.
+
+`geometryFor` asserts that viewport × dpr still lands on the tier's pixel size, so
+an override typo fails at startup rather than shipping a clip of the wrong shape.
+
+### 18.6 `--probe` is not a timing rehearsal
+
+Clifton's tour passed `--probe` and failed the real run on step 3. Probe mode
+shoots nothing, so a `hold` costs no wall clock — the nav overlay was still
+mid-transition and the toggle underneath it still exposed. With frames actually
+being written, `still(36)` is 2s, the overlay has landed, and its own close button
+intercepts the click.
+
+So `--probe` proves *selectors still resolve*, which is what it was built for. It
+does not prove a tour's clicks land. Anything that clicks a control which another
+element animates over needs a real run to validate.
+
+### 18.7 Open
+
+- **Deferred by the owner: whether to recapture the four landscape tiers.**
+  Reviewed 2026-07-22 — decision held until the new portrait clips have been
+  watched. Until then the split below stands.
+- **The four landscape masters are still owner recuts of the scroll-only
+  footage.** `orientations` defaults to portrait, so this run did not touch them —
+  by design ([§13.2](#132-capture-not-re-crop)). The consequence is a split: phones
+  get the interactive tours, desktops still get the old scrolls for those four.
+  Resolving it means either recutting from new landscape captures or accepting the
+  split.
+- **The research site's tour spends a lot of its budget on chrome.** Sampling six
+  frames evenly, two are the nav drawer; the portrait tour opens `#navToggle`
+  three times. `goto`-ing the sub-pages directly would buy back ~6s for the map and
+  the KPI builder. Not changed here.
+- The real-device pass ([§12.6](#126-still-outstanding)) remains outstanding.

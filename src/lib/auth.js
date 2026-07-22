@@ -17,7 +17,11 @@ import {
   sendPasswordResetEmail,
   sendEmailVerification,
   updateProfile,
-  onAuthStateChanged
+  onAuthStateChanged,
+  GoogleAuthProvider,
+  signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult
 } from 'firebase/auth';
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { app, db } from './firebase';
@@ -35,7 +39,13 @@ const AUTH_ERRORS = {
   'auth/wrong-password': 'Incorrect email or password.',
   'auth/too-many-requests': 'Too many attempts. Please wait a moment and try again.',
   'auth/network-request-failed': 'Network unavailable. Please check your connection.',
-  'auth/operation-not-allowed': 'Email sign-in is not enabled for this project yet.'
+  'auth/operation-not-allowed': 'That sign-in method is not enabled for this project yet.',
+  'auth/popup-closed-by-user': 'Sign-in window closed before it finished.',
+  'auth/cancelled-popup-request': 'Sign-in window closed before it finished.',
+  'auth/user-disabled': 'That account has been disabled.',
+  'auth/unauthorized-domain': 'This address is not on the project’s authorised sign-in domains.',
+  'auth/account-exists-with-different-credential':
+    'That email already has a password account here. Sign in with your password first.'
 };
 
 export const friendlyAuthError = error =>
@@ -44,47 +54,133 @@ export const friendlyAuthError = error =>
 const clean = (value, maxLen) =>
   typeof value === 'string' ? value.trim().slice(0, maxLen) : '';
 
-export async function signUp({ email, password, displayName = '', company = '', phone = '' }) {
-  if (!password || password.length < 8) {
-    throw new Error('Please choose a password of at least 8 characters.');
-  }
+// Set while signUp() is mid-flight. onAuthStateChanged fires the instant the
+// account exists, so without this the session watcher would race signUp to
+// write users/{uid} and the bare profile could clobber the richer one.
+let signUpInFlight = false;
 
-  const credential = await createUserWithEmailAndPassword(
-    auth,
-    clean(email, 200).toLowerCase(),
-    password
-  );
-  const { user } = credential;
+// Creates users/{uid} the first time an account is seen. Google sign-in is
+// self-service, so this is where a brand-new account gets its profile record.
+// Status is pinned to "pending", which grants nothing: access comes only from
+// roles/{uid}, and no client can write that. Returns null if the write fails —
+// a missing profile row must never block an already-authorised admin.
+async function ensureProfile(user) {
+  if (!user?.email) return null;
 
-  const name = clean(displayName, 120);
-  if (name) await updateProfile(user, { displayName: name });
-
-  // Profile shape is whitelisted by firestore.rules; status is pinned to
-  // "pending" there too, so this cannot be forged into an approved account.
+  const reference = doc(db, 'users', user.uid);
   const profile = {
     email: user.email,
     status: 'pending',
     createdAt: serverTimestamp()
   };
+  const name = clean(user.displayName, 120);
   if (name) profile.displayName = name;
-  const companyName = clean(company, 160);
-  if (companyName) profile.company = companyName;
-  const phoneNumber = clean(phone, 40);
-  if (phoneNumber) profile.phone = phoneNumber;
-
-  await setDoc(doc(db, 'users', user.uid), profile);
 
   try {
-    await sendEmailVerification(user);
+    await setDoc(reference, profile);
   } catch (error) {
-    console.warn('[auth] verification email failed', error);
+    console.warn('[auth] could not create the profile record', error);
+    return null;
+  }
+  return { uid: user.uid, ...profile };
+}
+
+export async function signUp({ email, password, displayName = '', company = '', phone = '' }) {
+  if (!password || password.length < 8) {
+    throw new Error('Please choose a password of at least 8 characters.');
   }
 
-  return user;
+  signUpInFlight = true;
+  try {
+    const credential = await createUserWithEmailAndPassword(
+      auth,
+      clean(email, 200).toLowerCase(),
+      password
+    );
+    const { user } = credential;
+
+    const name = clean(displayName, 120);
+    if (name) await updateProfile(user, { displayName: name });
+
+    // Profile shape is whitelisted by firestore.rules; status is pinned to
+    // "pending" there too, so this cannot be forged into an approved account.
+    const profile = {
+      email: user.email,
+      status: 'pending',
+      createdAt: serverTimestamp()
+    };
+    if (name) profile.displayName = name;
+    const companyName = clean(company, 160);
+    if (companyName) profile.company = companyName;
+    const phoneNumber = clean(phone, 40);
+    if (phoneNumber) profile.phone = phoneNumber;
+
+    await setDoc(doc(db, 'users', user.uid), profile);
+
+    try {
+      await sendEmailVerification(user);
+    } catch (error) {
+      console.warn('[auth] verification email failed', error);
+    }
+
+    return user;
+  } finally {
+    signUpInFlight = false;
+  }
 }
 
 export function signIn(email, password) {
   return signInWithEmailAndPassword(auth, clean(email, 200).toLowerCase(), password);
+}
+
+// ------------------------------------------------------------------- Google
+//
+// Google sign-in changes who can *authenticate*, never who can *see anything*.
+// A Google account lands in exactly the same place a new email account does:
+// users/{uid} with status "pending" and no roles/{uid} document, which every
+// rule in firestore.rules reads as "no access". An admin still has to grant the
+// role from the Users tab.
+//
+// What it buys on the security side is that the password stops existing here:
+// whatever 2FA, hardware key or passkey guards the Google account now guards the
+// console too, and there is no credential left for us to leak or for anyone to
+// stuff. Prefer it over the password form.
+
+const googleProvider = new GoogleAuthProvider();
+// Always show the account chooser. Without it a shared machine silently reuses
+// whichever Google session is already open in the browser, which is the wrong
+// default for a console someone else may walk up to.
+googleProvider.setCustomParameters({ prompt: 'select_account' });
+
+// Popups are the better flow — they keep the page, and its App Check token,
+// alive. Some browsers (older iOS Safari, in-app webviews, hardened popup
+// blockers) refuse them outright, and only then do we fall back to a redirect.
+const POPUP_UNAVAILABLE = new Set([
+  'auth/popup-blocked',
+  'auth/operation-not-supported-in-this-environment',
+  'auth/web-storage-unsupported'
+]);
+
+// Resolves to the user on the popup path. On the redirect path the browser
+// navigates away and nothing after this runs — completeRedirectSignIn picks the
+// result back up when the page reloads.
+export async function signInWithGoogle() {
+  try {
+    const { user } = await signInWithPopup(auth, googleProvider);
+    return user;
+  } catch (error) {
+    if (!POPUP_UNAVAILABLE.has(error?.code)) throw error;
+    await signInWithRedirect(auth, googleProvider);
+    return null;
+  }
+}
+
+// Call once when the sign-in screen mounts. onAuthStateChanged already handles
+// the happy path; this exists so a redirect that *failed* surfaces as a message
+// instead of dumping the user back on the login form with no explanation.
+export async function completeRedirectSignIn() {
+  const result = await getRedirectResult(auth);
+  return result?.user || null;
 }
 
 export const signOutUser = () => signOut(auth);
@@ -124,7 +220,13 @@ export function watchSession(callback) {
   return onAuthStateChanged(auth, async user => {
     if (!user) return callback({ user: null, role: '', profile: null, loading: false });
 
-    const [role, profile] = await Promise.all([resolveRole(user), fetchProfile(user)]);
+    const [role, existing] = await Promise.all([resolveRole(user), fetchProfile(user)]);
+
+    // A Google account signing in for the first time has authenticated but has
+    // no profile row yet. Creating it here covers both the popup and the
+    // redirect flow; signUp writes its own richer row, so stand clear of that.
+    const profile = existing || (signUpInFlight ? null : await ensureProfile(user));
+
     callback({ user, role, profile, loading: false });
   });
 }

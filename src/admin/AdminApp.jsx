@@ -9,7 +9,10 @@
 
 import React, { useEffect, useState } from 'react';
 import { Link, NavLink, Navigate, Route, Routes } from 'react-router-dom';
-import { watchSession, signIn, signOutUser, resetPassword, friendlyAuthError } from '../lib/auth';
+import {
+  watchSession, signIn, signInWithGoogle, completeRedirectSignIn,
+  signOutUser, resetPassword, friendlyAuthError
+} from '../lib/auth';
 import logoMark from '../assets/bitesites-logo-mark.webp';
 import Overview from './Overview';
 import Leads from './Leads';
@@ -31,9 +34,28 @@ const NAV = [
   { to: '/admin/users', label: 'Users', icon: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75' }
 ];
 
+// The official mark, inlined. An <img> to a Google CDN would be a third-party
+// request on the login screen and the one asset whose failure to load is most
+// likely to make the button look broken.
+const GoogleMark = () => (
+  <svg className="admin-google-mark" viewBox="0 0 18 18" aria-hidden="true">
+    <path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.91c1.7-1.57 2.69-3.88 2.69-6.62z" />
+    <path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.91-2.26c-.81.54-1.84.86-3.05.86-2.35 0-4.33-1.58-5.04-3.71H.96v2.33A9 9 0 0 0 9 18z" />
+    <path fill="#FBBC05" d="M3.96 10.71a5.41 5.41 0 0 1 0-3.42V4.96H.96a9 9 0 0 0 0 8.08l3-2.33z" />
+    <path fill="#EA4335" d="M9 3.58c1.32 0 2.51.45 3.44 1.35l2.58-2.59C13.46.89 11.43 0 9 0A9 9 0 0 0 .96 4.96l3 2.33C4.67 5.16 6.65 3.58 9 3.58z" />
+  </svg>
+);
+
 function SignIn() {
   const [status, setStatus] = useState({ text: '', kind: '' });
   const [busy, setBusy] = useState(false);
+
+  // Only fires on the redirect fallback. A failure there would otherwise drop
+  // the user back here with no idea why nothing happened.
+  useEffect(() => {
+    completeRedirectSignIn().catch(error =>
+      setStatus({ text: friendlyAuthError(error), kind: 'error' }));
+  }, []);
 
   const submit = async event => {
     event.preventDefault();
@@ -43,6 +65,18 @@ function SignIn() {
     try {
       await signIn(form.get('email'), form.get('password'));
       // watchSession takes over from here and swaps this screen out.
+    } catch (error) {
+      setStatus({ text: friendlyAuthError(error), kind: 'error' });
+      setBusy(false);
+    }
+  };
+
+  const google = async () => {
+    setBusy(true);
+    setStatus({ text: '', kind: '' });
+    try {
+      await signInWithGoogle();
+      // Popup: watchSession swaps this screen out. Redirect: we never get here.
     } catch (error) {
       setStatus({ text: friendlyAuthError(error), kind: 'error' });
       setBusy(false);
@@ -64,6 +98,13 @@ function SignIn() {
           <img src={logoMark} alt="" />
           <h1>Console</h1>
           <p>Sign in to see leads, conversations and site activity.</p>
+
+          <button className="admin-google-btn" type="button" onClick={google} disabled={busy}>
+            <GoogleMark />
+            Continue with Google
+          </button>
+          <div className="admin-auth-or"><span>or</span></div>
+
           <form onSubmit={submit}>
             <label className="admin-field">
               <span>Email</span>
