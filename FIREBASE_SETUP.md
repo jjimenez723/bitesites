@@ -168,13 +168,47 @@ forge a lead that looks like a booked call.
 - **App Check gates every Firestore request.** The rules validate the *shape* of a
   lead; App Check attests the request came from this site in a real browser. Together
   they close both halves of the problem.
-- **Privilege escalation is structurally impossible.** Roles live in a collection only
-  an admin can write. A signing-up user can only create their own `users/{uid}` doc with
-  `status: 'pending'`, and cannot later change that status.
+- **Privilege escalation is structurally impossible.** Roles live in a collection **no
+  client may write at all** (see below). A signing-up user can only create their own
+  `users/{uid}` doc with `status: 'pending'`, and cannot later change that status.
 - **Admins cannot rewrite lead history** — `createdAt` and `email` are immutable on update.
 - **Everything undeclared is denied** by a catch-all `match /{document=**}`.
 - Custom claims (`role`) set via the Admin SDK are honoured as a fast path, avoiding a
   document read per rule evaluation.
+
+### Why a role change goes through a Cloud Function
+
+A role is **two** things that must move together:
+
+| | |
+|---|---|
+| `roles/{uid}` | the document the rules fall back to |
+| `role` custom claim | the fast path the rules check **first** |
+
+A browser can write the document but cannot mint a claim — that needs the Admin SDK.
+The Users tab used to revoke someone by deleting the document alone, which left a
+revoked admin holding a claim that still said `admin`. Because the rules prefer the
+claim, **that person kept full admin access**, and since a claim lives on the account
+rather than in the session, signing out and back in simply reissued it. The revoke
+looked like it worked and didn't.
+
+So `roles/{uid}` is now `allow write: if false` for every client, admins included, and
+the Users tab calls the **`setUserRole`** callable instead. It sets both halves or
+neither, and calls `revokeRefreshTokens` so the ID token already sitting in that
+person's browser dies immediately rather than carrying the old claim for up to an hour.
+`npm run role` does the same thing from a terminal and remains the way out if the
+console is ever unreachable.
+
+An admin cannot change their own access through the callable — that is a guard rail
+against the last admin locking everyone out, not a security control. Use `npm run role`
+if you mean it.
+
+Covered by `npm run test:role` (19 assertions, Firestore + Auth emulators). The case
+named `CLEARS THE AUTH CLAIM` is the regression test for the bug above.
+
+> **Deploy functions before rules.** The rules deny the browser's old write path, so
+> if the rules land first the Users tab cannot change roles until the function catches
+> up. `npm run deploy:functions && npm run deploy:rules` is the safe order.
 
 The Firebase web config and the reCAPTCHA site key in `src/lib/firebase.js` are **public
 by design** — they identify the project and authorise nothing. Never put an Admin SDK
@@ -397,11 +431,12 @@ npm run build          # production build to dist/
 npm run test:rules     # security-rule assertions against the emulator
 npm run test:voice     # recordVoiceCall against the emulator
 npm run test:import    # the GHL call-log import, live API → emulator
+npm run test:role      # setUserRole — role document and auth claim stay in step
 npm run role -- <email> <admin|client|none>   # grant or revoke portal access
 npm run deploy         # build + deploy hosting and Firestore rules/indexes
 npm run deploy:rules   # rules and indexes only
 npm run deploy:hosting # site only
-npm run deploy:functions # the GoHighLevel lead sync and the Byte call webhook
+npm run deploy:functions # lead sync, Byte call webhook, and setUserRole
 npm run emulators      # local Firestore/Auth emulators
 ```
 

@@ -11,7 +11,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import {
   collection, query, where, orderBy, limit, getDocs,
-  doc, updateDoc, deleteDoc, setDoc, serverTimestamp
+  doc, updateDoc, deleteDoc
 } from 'firebase/firestore';
 import { app, db } from '../lib/firebase';
 
@@ -110,8 +110,11 @@ export const useRoles = () =>
   useQuery(() => ({ q: query(collection(db, 'roles'), limit(LIST_CAP)) }), []);
 
 export const setLeadStatus = (id, status) => updateDoc(doc(db, 'leads', id), { status });
-export const setUserStatus = (id, status) => updateDoc(doc(db, 'users', id), { status });
 export const removeLead = id => deleteDoc(doc(db, 'leads', id));
+
+// There is deliberately no setUserStatus here. Approval status and role are two
+// views of the same decision, and letting the UI move one without the other is
+// how they drift apart — setRole below owns both.
 
 /**
  * Changes someone's access. Role is 'admin' | 'client' | 'none'.

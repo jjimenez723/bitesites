@@ -13,6 +13,12 @@ export default defineConfig({
         // in its own chunk, which is what keeps it off the startup path.
         manualChunks(id) {
           if (!id.includes('node_modules')) return undefined;
+          // Callable Functions are reached from one button in the admin Users
+          // tab. Left in the 'firebase' chunk below they would ride along with
+          // the analytics writes every visitor makes, so they get their own.
+          if (id.includes('/@firebase/functions') || id.includes('/firebase/functions')) {
+            return 'firebase-functions';
+          }
           if (id.includes('/firebase/') || id.includes('/@firebase/')) return 'firebase';
           if (id.includes('/react-router')) return 'router';
           if (id.includes('/react-dom/') || id.includes('/react/') || id.includes('/scheduler/')) return 'react';

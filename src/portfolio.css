@@ -227,6 +227,11 @@
    PORTFOLIO_KEEPS_OPEN, which is the same list. Buttons and links set their own. */
 .portfolio-story-copy { cursor: auto; }
 
+/* The launcher is fixed to the viewport at z-index 19 and the section is painted
+   below it, so while the stage is open it floats over the dossier — on a phone
+   directly on top of the live-site link, where it takes the tap meant for it. */
+body.portfolio-open .chat-launcher { opacity: 0; pointer-events: none; transition: opacity .2s ease; }
+
 .portfolio-demo > video { display: block; width: 100%; height: 100%; object-fit: cover; object-position: center top; filter: saturate(.9) contrast(1.05); }
 /* Weighted to the bottom, because that is where the dossier sits — the captures
    are of bright websites, and a scrim balanced around the edges left the title
@@ -234,6 +239,42 @@
    the frame stays clear: nothing is written there. */
 .portfolio-demo-vignette { position: absolute; inset: 0; background: linear-gradient(90deg,rgba(2,3,7,.72) 0%,rgba(2,3,7,.1) 44%,rgba(2,3,7,.14) 60%,rgba(2,3,7,.6) 100%),linear-gradient(180deg,rgba(2,3,7,.16) 0%,rgba(2,3,7,.16) 40%,rgba(2,3,7,.66) 76%,rgba(2,3,7,.86) 100%); opacity: 0; transition: opacity .7s ease; }
 .portfolio-section.portfolio-story-visible .portfolio-demo-vignette { opacity: 1; }
+
+/* Touch devices get a stage pinned to the viewport rather than one positioned
+   inside the section, which is the single reason the expanded stage was unusable
+   on a phone.
+
+   The frame hands vertical drags back to the page — touch-action: pan-y above,
+   and rightly so on a rail the visitor has to be able to scroll past. But an
+   absolutely positioned stage scrolls *with* the page, so once it was open the
+   first flick took the whole viewer with it: the back button and the details
+   toggle sit 82px from the top of the stage, and 200px of scroll later they were
+   a hundred pixels above the top of the screen with no way back to them. The
+   scrub bar went the other way, off the bottom, and the section below bled up
+   through the frame. Pinned, the controls stay where they were put and the clip
+   keeps the whole screen it was given.
+
+   Keyed on the input rather than the width: a phone held sideways is 844px
+   across and has exactly the same problem, as does a tablet.
+
+   Fixed at all times, not only while expanded, so that writePortfolioClipOrigin
+   measures the stage's real box on the way in and the closing animation collapses
+   toward the same one on the way out. */
+@media (hover: none) and (pointer: coarse) {
+  .portfolio-demo { position: fixed; }
+  /* Lifted over the page's own fixed chrome for as long as it is open. The header
+     is painted at z-index 10 and the chat launcher at 19, so both sat on top of a
+     viewer that covers the screen — the header across the back button, its burger
+     still live through the frame. Below the nav drawer and the chat panel, which
+     are still allowed to open over the top. */
+  .portfolio-section.portfolio-expanded { z-index: 20; }
+  /* With the stage pinned, a vertical drag would scroll the page behind a viewer
+     that never moves — a gesture with no visible result, ending with the visitor
+     somewhere they did not choose to be. So the open stage takes the whole
+     gesture. Nobody is held by it: the frame closes on a tap anywhere that is not
+     a control, and the back button is on screen throughout. */
+  .portfolio-section.portfolio-expanded .portfolio-demo { touch-action: none; }
+}
 
 /* Both chips sit in one row so the toggle keeps its place as the "Playing" chip
    fades under the dossier — an absolutely positioned pair would have had to
@@ -552,6 +593,19 @@
 }
 
 .portfolio-section.portfolio-scrubbing .portfolio-scrubber-track i { transition: none; }
+
+/* Compact stages — a phone either way up, or any window short enough that the
+   dossier is most of what is on screen. Half the desktop reveal: the two columns
+   are stacked rather than side by side, so there is no second thing to look at
+   while the first eases in, and the whole panel is small enough that the slower
+   move reads as lag rather than as poise. Paired with PORTFOLIO_DETAILS_LEAD_PHONE
+   the dossier is fully up within a second of the tap instead of two and a half.
+   The query is duplicated in main.jsx — isCompactStage — so keep the two in step. */
+@media (max-width: 760px), (max-height: 480px) {
+  .portfolio-story-heading,
+  .portfolio-story-copy { transform: translateY(18px); transition: opacity .3s ease, transform .38s cubic-bezier(.2,.8,.2,1); }
+  .portfolio-section.portfolio-story-visible .portfolio-story-copy { transition-delay: .06s; }
+}
 
 @media (max-width: 760px) {
   .portfolio-section { height: 100svh; }

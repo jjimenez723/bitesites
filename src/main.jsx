@@ -140,6 +140,14 @@ let reducedMotionQuery = null;
 const prefersReducedMotion = () =>
   (reducedMotionQuery ||= window.matchMedia('(prefers-reduced-motion: reduce)')).matches;
 
+// The compact-stage breakpoint from portfolio.css, read from JS so the reveal's
+// lead and its transition cannot drift apart. Live rather than latched: unlike
+// the clip variant, nothing here survives a rotation badly — every reader wants
+// the layout the visitor is looking at now.
+let compactStageQuery = null;
+const isCompactStage = () =>
+  (compactStageQuery ||= window.matchMedia('(max-width: 760px), (max-height: 480px)')).matches;
+
 // Three tiers, keyed on the shape of the viewport rather than its width.
 //
 // Aspect ratio is the right test because the defect was never resolution — it
@@ -187,6 +195,12 @@ const projectHost = url => {
 // land and the first frames to read, short enough that nobody has to earn the
 // copy. It then stays up until the visitor dismisses it.
 const PORTFOLIO_DETAILS_LEAD = 1400; // ms between opening a project and its dossier
+// A compact stage gets a much shorter one. The lead above is measured against a
+// stage that unfolds across a whole desktop frame; on a 390px screen the same
+// reveal is over in a third of the distance, and the wait that read as composure
+// on a laptop reads as a section that has not finished loading. There is no
+// second column to look at while it makes up its mind either — the two stack.
+const PORTFOLIO_DETAILS_LEAD_PHONE = 420;
 const PORTFOLIO_WHEEL_SPAN = 1400;  // px of wheel delta that covers a whole clip, any length
 const PORTFOLIO_RESUME_DELAY = 400; // ms of stillness before 1x playback takes back over
 // Sideways is the axis the rail already uses to move between projects, so the
@@ -201,6 +215,11 @@ const PORTFOLIO_SWIPE_TOUCH = 56;   // px of finger travel that commits one
 const PORTFOLIO_SWIPE_SETTLE = 420; // ms of stillness that ends a sideways gesture
 const PORTFOLIO_SWAP_MS = 560;      // outlives the swap animation, which the class drives
 const PORTFOLIO_CLICK_SLOP = 8;     // px of travel past which a press is a drag, not a click
+// A fingertip is not a cursor. Eight pixels of Manhattan travel is nothing on a
+// mouse and routine on a tap — a thumb that rolls three pixels on each axis has
+// already spent six of them — so every tap on the frame was being read as a drag
+// and the close-on-tap the desktop has never fired on a phone.
+const PORTFOLIO_TOUCH_SLOP = 22;    // …and the same threshold for a finger
 // Every surface inside the expanded stage that owns its own click. A click landing
 // anywhere else — which is to say, on the clip — closes the stage.
 const PORTFOLIO_KEEPS_OPEN = '.portfolio-back, .portfolio-scrubber, .portfolio-hud, .portfolio-story-copy, .portfolio-pager, .portfolio-demo-play';
@@ -874,7 +893,9 @@ function App() {
     // Under reduced motion the clip is held on its poster behind a play control,
     // so there is no opening move to stay out of the way of — the copy is the
     // only thing to read and it should be there on arrival.
-    const delay = prefersReducedMotion() ? 0 : PORTFOLIO_DETAILS_LEAD;
+    const delay = prefersReducedMotion() ? 0
+      : isCompactStage() ? PORTFOLIO_DETAILS_LEAD_PHONE
+      : PORTFOLIO_DETAILS_LEAD;
     portfolioDetailsTimerRef.current = window.setTimeout(() => {
       portfolioDetailsTimerRef.current = 0;
       // The visitor may have closed the stage inside the delay.
@@ -977,8 +998,10 @@ function App() {
     const dy = event.clientY - press.y;
     // Past the slop this pointer is dragging, and a drag must never be delivered
     // to the close handler as a click — scrubbing, swiping and selecting text all
-    // end in a mouseup that the browser is happy to call a click.
-    if (Math.abs(dx) + Math.abs(dy) > PORTFOLIO_CLICK_SLOP) press.moved = true;
+    // end in a mouseup that the browser is happy to call a click. The threshold is
+    // per input, because a tap and a click are not the same gesture at all.
+    const slop = event.pointerType === 'touch' ? PORTFOLIO_TOUCH_SLOP : PORTFOLIO_CLICK_SLOP;
+    if (Math.abs(dx) + Math.abs(dy) > slop) press.moved = true;
 
     if (!press.swipe || press.spent) return;
     // Vertical wins outright. That is the page scrolling, and this section's one
@@ -997,19 +1020,33 @@ function App() {
   // close arrives after it, and the travel it needs to read lives here. A cancelled
   // pointer produces no click, so that one does clear.
   const handlePortfolioPointerCancel = () => { portfolioTouchRef.current = null; };
-  // Clicking the clip closes the stage, exactly as the back button does — the
-  // backdrop-dismiss every full-screen viewer has. Everything with a job of its own
-  // is excluded by name; the dossier's copy card is in that list because it is a
-  // reading surface with a link in it, and dismissing the stage out from under
-  // someone reaching for that link would be the worst possible reading of a click.
+  // Tapping or clicking the clip closes the stage, exactly as the back button does
+  // — the backdrop-dismiss every full-screen viewer has. Everything with a job of
+  // its own is excluded by name; the dossier's copy card is in that list because it
+  // is a reading surface with a link in it, and dismissing the stage out from under
+  // someone reaching for that link would be the worst possible reading of a tap.
   // The bare title beside it is painted straight on the frame, so it closes.
-  const handlePortfolioDemoClick = event => {
-    if (!portfolioExpandedRef.current) return;
+  //
+  // One decision per press, whichever event gets here first — see the pointerup
+  // handler for why touch does not wait for the click.
+  const resolvePortfolioDismiss = target => {
     const press = portfolioTouchRef.current;
-    portfolioTouchRef.current = null;
-    if (press?.moved) return;
-    if (event.target.closest?.(PORTFOLIO_KEEPS_OPEN)) return;
+    if (press?.done) return;
+    if (press) press.done = true;
+    if (!portfolioExpandedRef.current || press?.moved) return;
+    if (target?.closest?.(PORTFOLIO_KEEPS_OPEN)) return;
     closePortfolioProject(true);
+  };
+  const handlePortfolioDemoClick = event => resolvePortfolioDismiss(event.target);
+  // Touch decides on pointerup rather than waiting for the click. iOS only
+  // synthesises a click for elements it considers interactive, and a bare <div>
+  // carrying a full-screen video is not one of them however many handlers React
+  // has put on it — so on a phone the click the desktop relies on may simply never
+  // arrive. When it does arrive the `done` flag above has already spent this press,
+  // so the two paths cannot both fire.
+  const handlePortfolioPointerUp = event => {
+    if (event.pointerType !== 'touch') return;
+    resolvePortfolioDismiss(event.target);
   };
   const playPortfolioDemo = () => {
     const video = portfolioVideo.current;
@@ -1311,6 +1348,15 @@ function App() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [portfolioPhase.expanded]);
 
+  // The page's own fixed furniture has to stand down while the stage is open: on a
+  // phone the chat launcher lands squarely on top of the dossier's live-site link,
+  // and it is painted above the section, so it wins the tap. Same class the nav
+  // drawer uses, same reason.
+  useEffect(() => {
+    document.body.classList.toggle('portfolio-open', portfolioPhase.expanded);
+  }, [portfolioPhase.expanded]);
+  useEffect(() => () => document.body.classList.remove('portfolio-open'), []);
+
   // The rail's clips used to carry `autoPlay`, so four decoders ran from page
   // load onwards — off screen, in a background tab, and straight through the
   // scrub, which is the one moment the decoder is needed elsewhere.
@@ -1510,6 +1556,7 @@ function App() {
             ref={portfolioDemo}
             onPointerDown={handlePortfolioPointerDown}
             onPointerMove={handlePortfolioPointerMove}
+            onPointerUp={handlePortfolioPointerUp}
             onPointerCancel={handlePortfolioPointerCancel}
             onClick={handlePortfolioDemoClick}
           >
