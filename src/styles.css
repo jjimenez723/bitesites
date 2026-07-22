@@ -31,6 +31,17 @@
 /* Keep the main navigation fully white in both its default and scrolled states. */
 header,header.scrolled{background:#fff}
 
+/* Scroll-retracting header. JS runs a spring and writes --nav-hide, 0 → 1, so the
+   bar inherits the speed of the flick that sent it away. A percentage translate
+   resolves against the header's own box, which the logo morph is still busy
+   resizing, so the two never have to agree on a height. The base `header` rule
+   transitions every property at .3s — that has to be narrowed to the paint-only
+   ones here, or it would interpolate against the per-frame transform writes. */
+.site-header{transform:translate3d(0,calc(var(--nav-hide,0) * -100%),0);transition:background-color .3s,border-color .3s;will-change:transform;overflow:hidden}
+/* The contents lead the bar out by a few pixels and are clipped by its own top
+   edge, so the nav peels away in two layers rather than sliding off as one slab. */
+.site-header nav{transform:translate3d(0,calc(var(--nav-hide,0) * -22px),0)}
+
 /* Scroll-driven BiteSites logo: full lockup to wordmark to compact mark. */
 /* min-height is a layout property and JS already writes --nav-height once per
    frame; transitioning it on top meant layout kept interpolating for 60ms after

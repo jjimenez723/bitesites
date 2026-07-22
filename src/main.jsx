@@ -122,6 +122,12 @@ const smoothStep = (start, end, value) => {
   return progress * progress * (3 - 2 * progress);
 };
 
+// Scroll distance the header logo takes to collapse from the full lockup down to
+// the compact mark. The retracting header holds station until this is done, so it
+// lives out here rather than inside either effect — retune the morph and the bar
+// follows it instead of quietly starting to leave halfway through.
+const logoMorphTravel = () => Math.max(260, window.innerHeight * .34);
+
 // Cached: this is read inside a non-passive wheel handler, and parsing the query
 // string on every wheel event is latency the compositor waits on.
 let reducedMotionQuery = null;
@@ -157,12 +163,24 @@ const portfolioClip = project => {
 const portfolioPoster = project =>
   (portfolioTier() === 'portrait' && project.posterPortrait) ? project.posterPortrait : project.poster;
 
+// Shown under the "Visit the live site" link. The bare domain is the proof — it
+// tells the visitor this is a real site they can go and use, not a mockup — and
+// deriving it means the project list never carries the same string twice.
+const projectHost = url => {
+  try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; }
+};
+
 // Every pacing number here is a *fraction of the clip*, never an absolute time.
 // The previous build mapped whatever duration a clip happened to have onto a
 // fixed 1628px of wheel travel, so one flick moved 20.6s of Stone Bellisimo but
 // only 5.5s of Nexus Verium — 3.7x apart, and far too fast in both cases.
-const PORTFOLIO_STORY_LEAD = 3.5;   // story panel opens this long before the end…
-const PORTFOLIO_STORY_FLOOR = .6;   // …but never before 60% in, so short recuts still breathe
+// A beat, not a gate. The dossier used to wait for the clip's final 3.5 seconds,
+// so on a 24s capture a visitor saw a video and nothing else for twenty of them —
+// the project's name, stack and live link were, in practice, invisible. It now
+// eases in once the stage has finished opening: long enough for the reveal to
+// land and the first frames to read, short enough that nobody has to earn the
+// copy. It then stays up until the visitor dismisses it.
+const PORTFOLIO_DETAILS_LEAD = 1400; // ms between opening a project and its dossier
 const PORTFOLIO_WHEEL_SPAN = 1400;  // px of wheel delta that covers a whole clip, any length
 const PORTFOLIO_RESUME_DELAY = 400; // ms of stillness before 1x playback takes back over
 const PORTFOLIO_PROGRESS_MARKS = [25, 50, 75, 100];
@@ -200,7 +218,7 @@ function MorphingLogo({ location = 'header', onClick }) {
       if (!inRange) return;
 
       const reducedMotion = motionQuery.matches;
-      const scrollTravel = Math.max(260, window.innerHeight * .34);
+      const scrollTravel = logoMorphTravel();
       // Matches the CSS breakpoint where the wings collapse into the burger menu.
       const compact = window.innerWidth <= 900;
       const startSize = compact ? 124 : 158;
@@ -513,6 +531,7 @@ function App() {
   // reads these, rather than being torn down and rebuilt on every phase change.
   const portfolioExpandedRef = useRef(false);
   const portfolioStoryRef = useRef(false);
+  const portfolioDetailsTimerRef = useRef(0);
   const portfolioScrubbingRef = useRef(false);
   const portfolioResumeTimerRef = useRef(0);
   const portfolioAnnouncedRef = useRef(-1);
@@ -546,6 +565,107 @@ function App() {
     return () => { window.removeEventListener('scroll', onScroll); observer.disconnect(); };
   }, []);
 
+  // The bar retracts as you head into the page and springs back the instant you
+  // turn for the top. It runs on an actual spring rather than a CSS transition so
+  // the gesture's own speed carries into the motion — a hard flick throws it off
+  // screen, a slow drag eases it away — and so a reversal mid-flight gets caught
+  // and turned around from wherever it is instead of restarting.
+  useEffect(() => {
+    const header = document.querySelector('.site-header');
+    if (!header) return undefined;
+    const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+
+    // Deliberately a soft spring with a hard shove: left alone it takes about half
+    // a second, which is the pace of a slow drag, and the kick from a fast flick is
+    // big enough to dominate it and get the bar out in under two hundred ms. Stiffen
+    // the spring and every gesture ends up feeling the same speed.
+    const STIFFNESS = 96;    // spring constant, in units of travel/s² per unit of offset
+    const DAMPING = 19;      // a shade under critical: arrives fast, lands without wobble
+    const KICK = 16;         // travel/s handed to the spring by a full-speed flick
+    const FLICK = 3200;      // px/s that counts as full speed
+    const COMMIT = 46;       // px of sustained travel before the bar changes its mind
+
+    let hidden = 0;          // 0 = parked on screen, 1 = fully retracted
+    let springVelocity = 0;
+    let target = 0;
+    let intent = 0;          // signed run of scroll travel in the current direction
+    let lastY = window.scrollY;
+    let lastTime = 0;
+    let painted = -1;
+    let frame = 0;
+
+    const tick = now => {
+      frame = 0;
+      const dt = lastTime ? Math.min(.05, (now - lastTime) / 1000) : 1 / 60;
+      lastTime = now;
+
+      const y = window.scrollY;
+      const delta = y - lastY;
+      lastY = y;
+
+      // Direction has to be sustained to flip the target, so trackpad jitter and
+      // rubber-banding at the edges never strobe the bar in and out.
+      if (delta * intent < 0) intent = 0;
+      intent = Math.max(-COMMIT, Math.min(COMMIT, intent + delta));
+
+      // Keyboard focus inside the header pins it open: tabbing to a link that is
+      // parked off screen would strand the focus ring somewhere nobody can see. A
+      // mouse click deliberately does not count, or clicking a nav link would
+      // leave the bar hanging open over the section it just jumped to.
+      // The bar also holds station until the logo has finished collapsing to its
+      // compact mark, so the two read as one sequence instead of a scramble.
+      const focused = document.activeElement;
+      const held = y <= logoMorphTravel()
+        || document.body.classList.contains('menu-open')
+        || (focused && header.contains(focused) && focused.matches?.(':focus-visible'));
+      const wants = held ? 0 : intent >= COMMIT ? 1 : intent <= -COMMIT ? 0 : target;
+
+      if (wants !== target) {
+        target = wants;
+        // The speed of the gesture is the whole point: hand it to the spring as a
+        // shove in the direction the page is already travelling.
+        const kick = Math.min(1, Math.abs(delta) / Math.max(dt, .004) / FLICK) * KICK;
+        // Flicking one way and immediately back stacks two kicks, so cap the total.
+        springVelocity = Math.max(-2 * KICK, Math.min(2 * KICK, springVelocity + (target ? kick : -kick)));
+      }
+
+      // Fixed sub-steps, so one long frame cannot blow the integrator up.
+      for (let left = dt; left > 0; left -= 1 / 240) {
+        const step = Math.min(left, 1 / 240);
+        springVelocity += (-STIFFNESS * (hidden - target) - DAMPING * springVelocity) * step;
+        hidden += springVelocity * step;
+      }
+      // Overshooting past the top edge costs nothing, the bar is already gone.
+      // Overshooting the other way would drop it below its resting line and open a
+      // strip of bare page above it, so that end is a hard stop.
+      hidden = Math.min(1.1, hidden);
+      if (hidden < 0) { hidden = 0; springVelocity = Math.max(0, springVelocity); }
+      if (motionQuery.matches) { hidden = target; springVelocity = 0; }
+
+      const quantised = Math.round(hidden * 1e3) / 1e3;
+      if (quantised !== painted) {
+        painted = quantised;
+        header.style.setProperty('--nav-hide', String(quantised));
+      }
+
+      // Idle out once the spring has landed; the scroll listener wakes it again.
+      if (Math.abs(hidden - target) > 6e-4 || Math.abs(springVelocity) > 4e-3) frame = window.requestAnimationFrame(tick);
+      else lastTime = 0;
+    };
+
+    const wake = () => { if (!frame) { lastTime = 0; frame = window.requestAnimationFrame(tick); } };
+    window.addEventListener('scroll', wake, { passive: true });
+    header.addEventListener('focusin', wake);
+    header.addEventListener('focusout', wake);
+    return () => {
+      window.removeEventListener('scroll', wake);
+      header.removeEventListener('focusin', wake);
+      header.removeEventListener('focusout', wake);
+      if (frame) window.cancelAnimationFrame(frame);
+      header.style.removeProperty('--nav-hide');
+    };
+  }, []);
+
   useEffect(() => {
     const nudgeTimer = window.setTimeout(() => setReceptionistNudge(true), 12000);
     return () => window.clearTimeout(nudgeTimer);
@@ -562,10 +682,13 @@ function App() {
   useEffect(() => () => {
     if (portfolioScrubFrameRef.current) window.cancelAnimationFrame(portfolioScrubFrameRef.current);
     if (portfolioResumeTimerRef.current) window.clearTimeout(portfolioResumeTimerRef.current);
+    if (portfolioDetailsTimerRef.current) window.clearTimeout(portfolioDetailsTimerRef.current);
   }, []);
 
-  // A different clip means a different duration and playhead — and, per the latch
-  // in writePortfolioProgress, a story panel that has to earn its way back on.
+  // A different clip means a different duration and playhead — and a dossier that
+  // resets to the new project's copy. It re-enters on its own beat rather than
+  // cutting over, so switching projects reads as a new panel arriving rather than
+  // the old one's text being swapped underneath.
   useEffect(() => {
     endPortfolioScrub(false);
     portfolioVideoDurationRef.current = 0;
@@ -573,6 +696,12 @@ function App() {
     portfolioTargetTimeRef.current = 0;
     portfolioAnnouncedRef.current = -1;
     portfolioStoryRef.current = false;
+    // Runs on the open path too: openPortfolioProject sets the active index, so
+    // this fires immediately after it for any card that was not already active.
+    // Scheduling in both places is deliberate — scheduling is idempotent, and
+    // opening the already-active card never reaches this effect at all.
+    if (portfolioExpandedRef.current) schedulePortfolioDetails();
+    else clearPortfolioDetailsTimer();
     // Consent was for the clip that just left, so a reduced-motion visitor gets
     // the play control back rather than the next project starting on its own.
     portfolioConsentedRef.current = false;
@@ -682,8 +811,8 @@ function App() {
   };
   // The only continuous value the section still has. It goes onto the DOM
   // directly — a custom property the scrub bar transforms by, and the slider's
-  // aria value — so neither playback nor scrubbing costs a React render. The
-  // story latch below is the sole exception, and it fires once per project.
+  // aria value — so neither playback nor scrubbing costs a React render, and
+  // nothing on this path touches state at all.
   const writePortfolioProgress = time => {
     const duration = portfolioVideoDurationRef.current;
     const fraction = duration ? Math.min(1, Math.max(0, time / duration)) : 0;
@@ -694,17 +823,37 @@ function App() {
       portfolioAnnouncedRef.current = percent;
       portfolioScrubber.current?.setAttribute('aria-valuenow', String(percent));
     }
-
-    // Latched on purpose. The clip loops, so currentTime drops back to 0 every
-    // pass; an unlatched threshold would snap the story panel off and back on at
-    // every wrap. Once a project has told its story it keeps telling it until the
-    // visitor picks a different one — the latch resets in the [activeProject]
-    // effect above and on close.
-    if (!duration || portfolioStoryRef.current) return;
-    const storyStart = Math.max(duration - PORTFOLIO_STORY_LEAD, duration * PORTFOLIO_STORY_FLOOR);
-    if (time < storyStart) return;
-    portfolioStoryRef.current = true;
-    setPortfolioPhase(current => (current.story ? current : { ...current, story: true }));
+  };
+  // The dossier is tied to opening a project, not to the playhead, so nothing on
+  // the playback path can show or hide it and this stays the one render the
+  // section does per open.
+  const clearPortfolioDetailsTimer = () => {
+    if (!portfolioDetailsTimerRef.current) return;
+    window.clearTimeout(portfolioDetailsTimerRef.current);
+    portfolioDetailsTimerRef.current = 0;
+  };
+  const setPortfolioDetails = open => {
+    portfolioStoryRef.current = open;
+    setPortfolioPhase(current => (current.story === open ? current : { ...current, story: open }));
+  };
+  const schedulePortfolioDetails = () => {
+    clearPortfolioDetailsTimer();
+    setPortfolioDetails(false);
+    // Under reduced motion the clip is held on its poster behind a play control,
+    // so there is no opening move to stay out of the way of — the copy is the
+    // only thing to read and it should be there on arrival.
+    const delay = prefersReducedMotion() ? 0 : PORTFOLIO_DETAILS_LEAD;
+    portfolioDetailsTimerRef.current = window.setTimeout(() => {
+      portfolioDetailsTimerRef.current = 0;
+      // The visitor may have closed the stage inside the delay.
+      if (portfolioExpandedRef.current) setPortfolioDetails(true);
+    }, delay);
+  };
+  // Dismissing cancels any pending reveal, so a panel the visitor just hid cannot
+  // be pushed back over the video a moment later by a timer they never saw.
+  const togglePortfolioDetails = () => {
+    clearPortfolioDetailsTimer();
+    setPortfolioDetails(!portfolioStoryRef.current);
   };
   const playPortfolioDemo = () => {
     const video = portfolioVideo.current;
@@ -861,10 +1010,12 @@ function App() {
       setPortfolioNeedsPlay(true);
     }
     setPortfolioPhase(current => (current.expanded ? current : { ...current, expanded: true }));
+    schedulePortfolioDetails();
   };
   const closePortfolioProject = (returnFocus = false) => {
     portfolioExpandedRef.current = false;
     portfolioStoryRef.current = false;
+    clearPortfolioDetailsTimer();
     endPortfolioScrub(false);
     const video = portfolioVideo.current;
     if (video) {
@@ -929,15 +1080,17 @@ function App() {
   };
   // Scoped to the expanded demo and non-passive, because it has to be able to
   // preventDefault. It only does so while the seek stays inside the clip: at
-  // either end, once the story panel is up, or on a sideways gesture, the wheel
-  // belongs to the page again. There is no state in which the visitor is held
-  // inside the section — being held is what made the old build feel broken.
+  // either end, over the dossier, or on a sideways gesture, the wheel belongs to
+  // the page again. There is no state in which the visitor is held inside the
+  // section — being held is what made the old build feel broken.
   const handlePortfolioDemoWheel = event => {
     if (!portfolioExpandedRef.current || prefersReducedMotion()) return;
-    // The story panel means the visitor is reading, not scrubbing. Rewinding the
-    // clip out from under them because they scrolled up a line would be absurd;
-    // the drag bar is still there for anyone who wants the playhead back.
-    if (portfolioStoryRef.current) return;
+    // Over the dossier the visitor is reading, not scrubbing — rewinding the clip
+    // because they scrolled a line inside a block of copy would be absurd. The
+    // test is the pointer's position rather than "are the details up", which is
+    // what it used to be: the panel is now open for most of the visit, and that
+    // older test disabled the wheel scrub outright.
+    if (event.target instanceof Element && event.target.closest('.portfolio-story')) return;
     if (!event.deltaY || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
     const duration = portfolioVideoDurationRef.current;
     if (!duration) return;
@@ -1124,7 +1277,7 @@ function App() {
           <div className="portfolio-intro wrap" aria-hidden={portfolioPhase.expanded}>
             <Eyebrow>Featured work</Eyebrow>
             <h2>Work worth stepping into.</h2>
-            <p>Browse sideways, then open a project to watch it play. Drag the bar to scrub — it picks playback back up wherever you stop.</p>
+            <p>Browse sideways, then open a project — it plays, and the full story comes with it. Drag the bar to scrub; it picks playback back up wherever you stop.</p>
           </div>
 
           <div className="portfolio-rail" aria-hidden={portfolioPhase.expanded}>
@@ -1167,7 +1320,23 @@ function App() {
                 clip plays once and hands the play control back on ended. */}
             <video key={projects[activeProject].video} ref={portfolioVideo} muted loop={!prefersReducedMotion()} playsInline preload="metadata" poster={portfolioPoster(projects[activeProject])} onLoadedMetadata={handlePortfolioMetadata} onTimeUpdate={handlePortfolioTimeUpdate} onWaiting={handlePortfolioWaiting} onPlaying={handlePortfolioPlaying} onEnded={() => { if (prefersReducedMotion()) { portfolioConsentedRef.current = false; setPortfolioNeedsPlay(true); } }} aria-label={`${projects[activeProject].title} project demo`} src={portfolioClip(projects[activeProject])} />
             <div className="portfolio-demo-vignette" />
-            <div className="portfolio-playback" aria-hidden="true"><span /> Playing</div>
+            <div className="portfolio-hud">
+              <div className="portfolio-playback" aria-hidden="true"><span /> Playing</div>
+              {/* The dossier is up by default, so this reads as a way to get the
+                  frame back rather than as the only way to reach the copy. */}
+              <button
+                className="portfolio-details-toggle"
+                type="button"
+                onClick={togglePortfolioDetails}
+                aria-expanded={portfolioPhase.story}
+                aria-controls="portfolio-dossier"
+                tabIndex={portfolioPhase.expanded ? 0 : -1}
+                aria-hidden={!portfolioPhase.expanded}
+              >
+                <i aria-hidden="true">▾</i>
+                {portfolioPhase.story ? 'Hide details' : 'Project details'}
+              </button>
+            </div>
             {portfolioNeedsPlay && <button className="portfolio-demo-play" type="button" onClick={startPortfolioDemo}>
               <span aria-hidden="true">▶</span>
               <span>Play demo<small>{projects[activeProject].title}</small></span>
@@ -1179,16 +1348,20 @@ function App() {
             {/* data-section is what sectionOf() in analytics.js reads, so the
                 outbound click on "Visit the live project" is attributed to the
                 project that sent it rather than to a generic portfolio click. */}
-            <article className="portfolio-story" data-section={`portfolio:${projects[activeProject].title}`} aria-hidden={!portfolioPhase.story}>
+            <article className="portfolio-story" id="portfolio-dossier" data-section={`portfolio:${projects[activeProject].title}`} aria-hidden={!portfolioPhase.story}>
               <div className="portfolio-story-heading">
-                <span>0{activeProject + 1} / 0{projects.length}</span>
+                <div className="portfolio-story-index"><b>0{activeProject + 1}</b><i /><span>0{projects.length}</span></div>
+                <p className="portfolio-story-kicker">Selected project</p>
                 <h3>{projects[activeProject].title}</h3>
+                <div className="stack-pills">{projects[activeProject].stack.map(item => <span className="pill" key={item}>{item}</span>)}</div>
               </div>
               <div className="portfolio-story-copy">
                 <p>{projects[activeProject].text}</p>
                 <ul>{projects[activeProject].bullets.map(item => <li key={item}>{item}</li>)}</ul>
-                <div className="stack-pills">{projects[activeProject].stack.map(item => <span className="pill" key={item}>{item}</span>)}</div>
-                <a href={projects[activeProject].url} target="_blank" rel="noreferrer" tabIndex={portfolioPhase.story ? 0 : -1}>Visit the live project <span aria-hidden="true">↗</span></a>
+                <a className="portfolio-story-visit" href={projects[activeProject].url} target="_blank" rel="noreferrer" tabIndex={portfolioPhase.story ? 0 : -1}>
+                  <span>Visit the live site<small>{projectHost(projects[activeProject].url)}</small></span>
+                  <i aria-hidden="true">↗</i>
+                </a>
               </div>
             </article>
             <div
@@ -1213,7 +1386,7 @@ function App() {
           <div className="portfolio-footer wrap" aria-hidden={portfolioPhase.expanded}>
             <div className="portfolio-count"><span>0{activeProject + 1}</span><i /><span>0{projects.length}</span></div>
             <div className="portfolio-dots" role="tablist" aria-label="Choose project">{projects.map((project, index) => <button type="button" key={project.title} className={activeProject === index ? 'active' : ''} onClick={() => showProject(index)} aria-label={`View ${project.title}`} aria-selected={activeProject === index} role="tab" tabIndex={portfolioPhase.expanded ? -1 : 0} />)}</div>
-            <p><span className="gesture-sideways">↔ Browse</span><span>Open a project to play</span></p>
+            <p><span className="gesture-sideways">↔ Browse</span><span>Open a project for the full story</span></p>
           </div>
         </div>
       </section>

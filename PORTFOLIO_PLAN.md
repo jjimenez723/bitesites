@@ -731,3 +731,76 @@ on a portrait iPad 38%, both top-anchored.
   capture; `timeScale` is the escape hatch if a specific site needs it.
 - **Real-device pass still outstanding** (§12.6). WebKit-in-Playwright is much
   closer to iOS Safari than Chrome emulation, but it is not an iPhone.
+
+---
+
+## 14. The dossier — 2026-07-22
+
+### 14.1 The details were, in practice, invisible
+
+§4.3 specified the story panel as a finale: `max(duration - 3.5, duration * 0.6)`.
+That is a correct *finale* rule and it was implemented correctly. It was the wrong
+rule.
+
+The captures shipped at 16–26s ([§13.3](#133-inventory)), so the panel opened
+16.5–22.5s after the visitor clicked a card. Nobody watches a silent scroll-through
+of a website for twenty seconds to find out whose it is. The observable behaviour
+was: open a project, get a video, get no name, no stack, no link — the project copy
+existed in the DOM the entire time at `opacity: 0`.
+
+The acceptance criterion in §4.4 — *"Story panel appears near the end and stays
+through subsequent loops"* — passed. It tested the mechanism, not the outcome.
+
+### 14.2 What replaced it
+
+Opening a project schedules the panel on a **1.4s timer** (`PORTFOLIO_DETAILS_LEAD`),
+long enough for the `clip-path` reveal to land and the first frames to read. Zero
+under `prefers-reduced-motion`, where the clip is held on its poster anyway and the
+copy is the only thing on offer. It then stays until dismissed.
+
+Nothing on the playback path can show or hide it any more, so §10.6 holds harder
+than before: `writePortfolioProgress` no longer calls `setState` at all. The latch
+of §10.2 is gone with the threshold that needed it — a timer cannot re-fire on a
+loop.
+
+A **toggle** in a new `.portfolio-hud` cluster (top right, beside the "Playing"
+chip) collapses it back to a clean frame and cancels any pending reveal, so a panel
+the visitor just dismissed cannot be pushed back over the video by a timer they
+never saw.
+
+### 14.3 What the change broke, and the fixes
+
+- **Wheel scrub was dead on arrival.** The wheel handler released to the page
+  whenever `portfolioStoryRef` was set — sound when the panel meant "the visitor
+  reached the end and is reading", nonsense when it is up for the whole visit. The
+  test is now the pointer's position: `event.target.closest('.portfolio-story')`.
+  Over the video it scrubs, over the copy card it scrolls.
+- **The panel was a frame-sized click target.** `pointer-events: auto` on an
+  `inset: 0` overlay swallowed drags aimed at the video, and while hidden it left an
+  invisible sheet of clickable nothing over the stage. Now `none` on the panel,
+  `auto` on the copy card only, and only while `.portfolio-story-visible`.
+- **Overlay chrome washed out on hover.** `.portfolio-back` and the new toggle
+  hovered to `rgba(255,255,255,.14)` — invisible over a white capture, which is
+  every capture for most of its runtime. Hover now goes *darker*.
+
+### 14.4 Reading copy over a website capture
+
+The copy column is a **glass card** (`backdrop-filter: blur(26px) saturate(150%)`)
+rather than bare text, because a paragraph laid straight over a scroll-through is
+unreadable the moment a pale section passes behind it. The heading has no card, so
+it carries its own `text-shadow` — and the gradient-filled `h3`, whose glyphs are
+`color: transparent` under `background-clip: text`, uses `drop-shadow()` instead.
+
+The frame vignette was rebalanced bottom-heavy: everything written sits in the
+lower third, and the top of the frame is where the captured site's own header is.
+On ≤760px it becomes a single vertical scrim — a phone has no side margins for a
+horizontal gradient to work in — and the bullet list drops, leaving the paragraph,
+the stack pills and the live link.
+
+### 14.5 Verified
+
+Playwright, 1512×860 / 1280×660 / 390×844, worst-case frame parked on StockRoom NJ's
+product grid: panel arrives unaided at ~1.4s; wheel over the video scrubs (1.94s →
+13.89s) while the panel is up; wheel over the card scrolls the page; collapse holds
+through a subsequent 1.6s; Escape closes; reopening a different project shows that
+project's copy. No console errors.

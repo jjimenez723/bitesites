@@ -1,6 +1,10 @@
 /* Keep every service card in the same visual system as AI Automation. */
+/* .services-section paints itself dark and sets color:#fff, but the cards stay
+   white — so anything in them without its own color (the h3 titles) inherits
+   white on white. Pin the card back to the light-surface text colour. */
 .services-grid .service-card {
   --service-accent: #7c3aed;
+  color: var(--text);
   isolation: isolate;
   box-shadow: 0 0 0 1.5px #7c3aed;
 }

@@ -181,35 +181,78 @@
 }
 
 .portfolio-demo > video { display: block; width: 100%; height: 100%; object-fit: cover; object-position: center top; filter: saturate(.9) contrast(1.05); }
-.portfolio-demo-vignette { position: absolute; inset: 0; background: linear-gradient(90deg,rgba(2,3,7,.7) 0%,rgba(2,3,7,.08) 43%,rgba(2,3,7,.12) 62%,rgba(2,3,7,.72) 100%),linear-gradient(180deg,rgba(2,3,7,.2),rgba(2,3,7,.2) 55%,rgba(2,3,7,.7)); opacity: 0; transition: opacity .7s ease; }
+/* Weighted to the bottom, because that is where the dossier sits — the captures
+   are of bright websites, and a scrim balanced around the edges left the title
+   fighting whatever pale section happened to scroll past behind it. The top of
+   the frame stays clear: nothing is written there. */
+.portfolio-demo-vignette { position: absolute; inset: 0; background: linear-gradient(90deg,rgba(2,3,7,.72) 0%,rgba(2,3,7,.1) 44%,rgba(2,3,7,.14) 60%,rgba(2,3,7,.6) 100%),linear-gradient(180deg,rgba(2,3,7,.16) 0%,rgba(2,3,7,.16) 40%,rgba(2,3,7,.66) 76%,rgba(2,3,7,.86) 100%); opacity: 0; transition: opacity .7s ease; }
 .portfolio-section.portfolio-story-visible .portfolio-demo-vignette { opacity: 1; }
 
-.portfolio-playback {
+/* Both chips sit in one row so the toggle keeps its place as the "Playing" chip
+   fades under the dossier — an absolutely positioned pair would have had to
+   agree on each other's widths to avoid shifting. */
+.portfolio-hud {
   position: absolute;
+  z-index: 7;
   top: clamp(25px,5vw,58px);
   right: clamp(22px,5vw,64px);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .35s ease;
+}
+
+.portfolio-section.portfolio-expanded .portfolio-hud { opacity: 1; pointer-events: auto; }
+
+.portfolio-playback {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 9px 13px;
   border: 1px solid rgba(255,255,255,.19);
   border-radius: 100px;
-  background: rgba(4,5,9,.48);
+  background: rgba(5,6,11,.66);
   backdrop-filter: blur(15px);
   color: rgba(255,255,255,.76);
   font-size: 11px;
   font-weight: 800;
   letter-spacing: .06em;
   text-transform: uppercase;
-  opacity: 0;
   transition: opacity .35s ease;
 }
 
-/* It reads "Playing", so it steps aside once the story panel takes the frame. */
-.portfolio-section.portfolio-expanded .portfolio-playback { opacity: 1; }
+/* It reads "Playing", so it steps aside once the dossier takes the frame — but
+   it keeps its box, which is what stops the toggle beside it from sliding. */
 .portfolio-section.portfolio-story-visible .portfolio-playback { opacity: 0; }
 
 .portfolio-playback span { width: 7px; height: 7px; border-radius: 50%; background: #9cf0c4; box-shadow: 0 0 0 4px rgba(156,240,196,.13); }
+
+.portfolio-details-toggle {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 15px 9px 10px;
+  border: 1px solid rgba(255,255,255,.22);
+  border-radius: 100px;
+  background: rgba(5,6,11,.72);
+  backdrop-filter: blur(15px);
+  -webkit-backdrop-filter: blur(15px);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background .25s ease, border-color .25s ease;
+}
+
+.portfolio-details-toggle:hover { background: rgba(5,6,11,.88); border-color: rgba(255,255,255,.42); }
+.portfolio-details-toggle:focus-visible { outline: 2px solid #a99bff; outline-offset: 3px; }
+.portfolio-details-toggle i { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: rgba(255,255,255,.14); font-size: 9px; font-style: normal; line-height: 1; transition: transform .35s cubic-bezier(.2,.8,.2,1); }
+.portfolio-section.portfolio-story-visible .portfolio-details-toggle i { transform: rotate(180deg); }
 
 .portfolio-back {
   position: absolute;
@@ -222,51 +265,144 @@
   padding: 9px 14px 9px 10px;
   border: 1px solid rgba(255,255,255,.22);
   border-radius: 100px;
-  background: rgba(4,5,9,.56);
+  background: rgba(5,6,11,.72);
   backdrop-filter: blur(15px);
+  -webkit-backdrop-filter: blur(15px);
   color: #fff;
   cursor: pointer;
   opacity: 0;
   transform: translateX(-12px);
   pointer-events: none;
-  transition: opacity .35s ease, transform .35s ease, background .25s ease;
+  transition: opacity .35s ease, transform .35s ease, background .25s ease, border-color .25s ease;
 }
 
 .portfolio-back.visible { opacity: 1; transform: none; pointer-events: auto; }
-.portfolio-back:hover { background: rgba(255,255,255,.14); }
+/* Hover goes darker, not lighter. A white wash reads as a highlight over a dark
+   capture and as nothing at all over a bright one — and every one of these clips
+   is a scroll through a white website, so the pale half is the common case. */
+.portfolio-back:hover { background: rgba(5,6,11,.88); border-color: rgba(255,255,255,.42); }
 .portfolio-back:focus-visible { outline: 2px solid #a99bff; outline-offset: 3px; }
 .portfolio-back > span:first-child { display: grid; place-items: center; width: 27px; height: 27px; border-radius: 50%; background: rgba(255,255,255,.13); font-size: 17px; }
 .portfolio-back > span:last-child { display: grid; gap: 1px; text-align: left; font-size: 11px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; }
 .portfolio-back small { color: rgba(255,255,255,.52); font-size: 8px; font-weight: 700; letter-spacing: .04em; }
 
+/* The dossier: who the project is on the left, what was built on the right, both
+   bottom-anchored so the middle band of the capture — where a website's own
+   content sits — stays in view behind them.
+
+   It is a frame-sized overlay that takes no pointer at all; only the surfaces
+   carrying content opt back in, and only while the panel is actually up. As one
+   `pointer-events: auto` block it would have swallowed every wheel and drag
+   aimed at the video, and while hidden it would have left an invisible sheet of
+   clickable nothing over the whole stage. */
 .portfolio-story {
   position: absolute;
+  z-index: 6;
   inset: 0;
   display: grid;
-  grid-template-columns: minmax(0,1.12fr) minmax(320px,.88fr);
-  gap: clamp(42px,8vw,140px);
+  grid-template-columns: minmax(0,1.06fr) minmax(330px,.94fr);
+  gap: clamp(34px,6vw,104px);
   align-items: end;
   /* Bottom padding clears the scrub bar, which is painted above this panel. */
-  padding: clamp(96px,12vw,170px) clamp(28px,7vw,104px) clamp(72px,8vh,96px);
-  opacity: 0;
-  transform: translateY(42px);
-  transition: opacity .7s ease, transform .8s cubic-bezier(.2,.8,.2,1);
+  padding: clamp(92px,11vw,164px) clamp(28px,7vw,104px) clamp(74px,9svh,102px);
   pointer-events: none;
 }
 
-.portfolio-section.portfolio-story-visible .portfolio-story { opacity: 1; transform: none; pointer-events: auto; }
+/* Each column carries its own transition rather than the panel moving as one
+   slab, so the title lands first and the card follows it in. */
+.portfolio-story-heading,
+.portfolio-story-copy {
+  opacity: 0;
+  transform: translateY(30px);
+  transition: opacity .6s ease, transform .78s cubic-bezier(.2,.8,.2,1);
+}
 
-.portfolio-story-heading > span { display: block; margin-bottom: 16px; color: #a8b7ff; font-size: 11px; font-weight: 800; letter-spacing: .18em; }
-.portfolio-story-heading h3 { max-width: 760px; font-size: clamp(50px,7.4vw,116px); line-height: .85; letter-spacing: -.075em; text-wrap: balance; }
-.portfolio-story-copy { max-width: 520px; padding-bottom: 4px; }
-.portfolio-story-copy > p { color: rgba(255,255,255,.82); font-size: clamp(15px,1.25vw,19px); line-height: 1.6; }
-.portfolio-story-copy ul { display: grid; gap: 10px; margin: 24px 0; padding: 0; list-style: none; }
-.portfolio-story-copy li { position: relative; padding-left: 19px; color: rgba(255,255,255,.62); font-size: 13px; line-height: 1.5; }
-.portfolio-story-copy li::before { content: "↗"; position: absolute; left: 0; color: #b3a4ff; }
-.portfolio-story .stack-pills { margin: 0 0 25px; }
-.portfolio-story .pill { border-color: rgba(255,255,255,.18); background: rgba(255,255,255,.08); color: rgba(255,255,255,.72); }
-.portfolio-story-copy > a { display: inline-flex; align-items: center; gap: 9px; padding-bottom: 6px; border-bottom: 1px solid rgba(255,255,255,.48); font-size: 14px; font-weight: 800; }
-.portfolio-story-copy > a span { font-size: 18px; }
+.portfolio-section.portfolio-story-visible .portfolio-story-heading { opacity: 1; transform: none; }
+.portfolio-section.portfolio-story-visible .portfolio-story-copy { opacity: 1; transform: none; transition-delay: .12s; pointer-events: auto; }
+
+/* The copy column has a glass card to sit on; the heading is bare type straight
+   over the capture. These clips run through product grids and photography, so
+   the small type carries its own shadow rather than the frame being darkened far
+   enough to protect it — which would have cost the video the visitor came for. */
+.portfolio-story-heading { text-shadow: 0 1px 3px rgba(2,3,7,.5), 0 2px 20px rgba(2,3,7,.75); }
+.portfolio-story-index { display: flex; align-items: center; gap: 11px; margin-bottom: 15px; color: rgba(255,255,255,.5); font-size: 12px; font-weight: 700; letter-spacing: .08em; }
+.portfolio-story-index b { color: #fff; font-size: 15px; font-weight: 800; }
+.portfolio-story-index i { width: 30px; height: 1px; background: linear-gradient(90deg,#8ea2ff,rgba(255,255,255,.2)); }
+.portfolio-story-kicker { margin-bottom: 14px; color: #a8b7ff; font-size: 11px; font-weight: 800; letter-spacing: .18em; text-transform: uppercase; }
+
+/* Fades toward the bottom of the letterforms so the largest type on the page
+   settles into the frame instead of sitting flat on top of it. */
+.portfolio-story-heading h3 {
+  max-width: 760px;
+  /* drop-shadow rather than the inherited text-shadow: the gradient fill needs
+     background-clip, which paints the glyph transparent, and a text-shadow at
+     this size would read as a smear around the letterforms. */
+  filter: drop-shadow(0 6px 28px rgba(2,3,7,.62));
+  text-shadow: none;
+  background: linear-gradient(176deg,#fff 34%,rgba(255,255,255,.66));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  font-size: clamp(46px,6.6vw,104px);
+  line-height: .86;
+  letter-spacing: -.075em;
+  text-wrap: balance;
+}
+
+.portfolio-story .stack-pills { margin: 24px 0 0; }
+.portfolio-story .pill { border-color: rgba(255,255,255,.2); background: rgba(255,255,255,.09); color: rgba(255,255,255,.78); text-shadow: none; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+
+/* Glass rather than bare text: these captures are of bright websites, and body
+   copy laid straight over one is unreadable the moment a pale frame scrolls
+   past underneath. */
+.portfolio-story-copy {
+  position: relative;
+  /* Flush with the frame's right padding, so the card and the title are held by
+     the same margin rather than the card floating short of the edge whenever the
+     column happens to be wider than the cap. */
+  justify-self: end;
+  max-width: 540px;
+  padding: 27px 29px 29px;
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,.14);
+  border-radius: 24px;
+  background: linear-gradient(163deg,rgba(255,255,255,.13),rgba(255,255,255,.045));
+  backdrop-filter: blur(26px) saturate(150%);
+  -webkit-backdrop-filter: blur(26px) saturate(150%);
+  box-shadow: 0 32px 80px rgba(0,0,0,.46);
+}
+
+/* Catches the light along the top edge, the way a real pane of glass does. */
+.portfolio-story-copy::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 1px;
+  background: linear-gradient(90deg,transparent,rgba(255,255,255,.6) 32%,rgba(255,255,255,.16));
+}
+
+.portfolio-story-copy > p { color: rgba(255,255,255,.86); font-size: clamp(14.5px,1.15vw,17px); line-height: 1.6; }
+.portfolio-story-copy ul { margin: 20px 0 24px; padding: 0; list-style: none; border-top: 1px solid rgba(255,255,255,.11); }
+.portfolio-story-copy li { position: relative; padding: 11px 0 11px 22px; border-bottom: 1px solid rgba(255,255,255,.11); color: rgba(255,255,255,.68); font-size: 13px; line-height: 1.5; }
+.portfolio-story-copy li::before { content: "↗"; position: absolute; top: 11px; left: 0; color: #b3a4ff; }
+
+.portfolio-story-visit {
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+  padding: 9px 10px 9px 19px;
+  border: 1px solid rgba(255,255,255,.2);
+  border-radius: 100px;
+  background: rgba(255,255,255,.1);
+  transition: background .25s ease, border-color .25s ease, transform .25s ease;
+}
+
+.portfolio-story-visit:hover { background: rgba(255,255,255,.19); border-color: rgba(255,255,255,.38); transform: translateY(-1px); }
+.portfolio-story-visit:focus-visible { outline: 2px solid #a99bff; outline-offset: 3px; }
+.portfolio-story-visit > span { display: grid; gap: 2px; font-size: 13.5px; font-weight: 800; }
+.portfolio-story-visit small { color: rgba(255,255,255,.52); font-size: 11px; font-weight: 700; }
+.portfolio-story-visit i { display: grid; place-items: center; width: 33px; height: 33px; border-radius: 50%; background: #fff; color: #101117; font-size: 14px; font-style: normal; transition: transform .25s ease; }
+.portfolio-story-visit:hover i { transform: translate(2px,-2px); }
 
 .portfolio-stage > .portfolio-footer {
   position: relative;
@@ -358,12 +494,31 @@
   .portfolio-project .project-number { top: 13px; left: 13px; width: 35px; height: 35px; }
   .portfolio-project-title { left: 18px; right: 18px; bottom: 18px; }
   .portfolio-project-title h3 { font-size: 25px; }
-  .portfolio-story { grid-template-columns: 1fr; align-content: end; gap: 25px; padding: 110px 24px 62px; }
-  .portfolio-story-heading h3 { font-size: clamp(48px,15vw,76px); }
-  .portfolio-story-copy > p { font-size: 14px; }
+  /* One column of copy stacked at the bottom needs a scrim that runs the height
+     of the frame, not one weighted to the left and right edges — on a phone
+     there are no side margins for a horizontal gradient to work in. */
+  .portfolio-demo-vignette { background: linear-gradient(180deg,rgba(2,3,7,.3) 0%,rgba(2,3,7,.22) 24%,rgba(2,3,7,.88) 52%,rgba(2,3,7,.96) 100%); }
+  .portfolio-story { grid-template-columns: 1fr; align-content: end; gap: 18px; padding: 104px 18px 60px; }
+  .portfolio-story-index { margin-bottom: 11px; }
+  .portfolio-story-kicker { margin-bottom: 10px; }
+  .portfolio-story-heading h3 { font-size: clamp(38px,11vw,64px); }
+  .portfolio-story .stack-pills { margin-top: 15px; gap: 6px; }
+  .portfolio-story .pill { padding: 5px 10px; font-size: 10.5px; }
+  .portfolio-story-copy { max-width: none; padding: 19px 20px 21px; border-radius: 20px; }
+  /* The paragraph carries the gap the hidden list used to. */
+  .portfolio-story-copy > p { margin-bottom: 17px; font-size: 13.5px; }
+  /* The bullets are the first thing to go on a phone: the paragraph, the stack
+     and the live link are the whole pitch, and three more lines of copy would
+     push the card up over the frame it is describing. */
   .portfolio-story-copy ul { display: none; }
-  .portfolio-story .stack-pills { margin-bottom: 19px; }
-  .portfolio-playback { top: 82px; right: 18px; }
+  .portfolio-story-visit { padding-left: 16px; }
+  .portfolio-story-visit > span { font-size: 12.5px; }
+  /* Two chips plus the back button will not fit across a phone. The scrub bar
+     already says the clip is running, so the "Playing" chip is the one to drop. */
+  .portfolio-hud { top: 82px; right: 18px; }
+  .portfolio-playback { display: none; }
+  .portfolio-details-toggle { padding: 7px 13px 7px 8px; font-size: 10px; }
+  .portfolio-details-toggle i { width: 21px; height: 21px; }
   .portfolio-back { top: 82px; left: 18px; }
   .portfolio-back small { display: none; }
   /* Taller hit area than the desktop bar — a fingertip is not a cursor. */
@@ -382,8 +537,15 @@
   .portfolio-intro p { display: none; }
   .portfolio-rail { padding-block: 8px; }
   .portfolio-stage > .portfolio-footer { padding-bottom: 20px; }
-  .portfolio-story { padding-top: 80px; padding-bottom: 40px; }
-  .portfolio-story-heading h3 { font-size: clamp(48px,7vw,90px); }
+  .portfolio-story { padding-top: 80px; padding-bottom: 44px; }
+  .portfolio-story-heading h3 { font-size: clamp(40px,5.6vw,74px); }
+  /* Same trade as the phone, for the same reason: on a 660px-tall window the
+     card plus a three-line title is taller than the space between the toggle
+     and the scrub bar, and the list is the part the stack pills already imply. */
+  .portfolio-story-copy { padding: 21px 22px 23px; }
+  .portfolio-story-copy > p { margin-bottom: 18px; }
+  .portfolio-story-copy ul { display: none; }
+  .portfolio-story .stack-pills { margin-top: 16px; }
 }
 
 /* Phones held sideways: the intro alone can be most of the viewport, so the
@@ -413,7 +575,9 @@
      overlay would otherwise stretch to the full document rather than the frame. */
   .portfolio-demo { position: fixed; clip-path: none; transition: none; }
   .portfolio-section.portfolio-expanded .portfolio-demo { clip-path: none; }
-  .portfolio-demo-vignette, .portfolio-playback, .portfolio-story { transition: none; }
+  .portfolio-demo-vignette, .portfolio-hud, .portfolio-playback, .portfolio-story-heading, .portfolio-story-copy { transition: none; }
+  .portfolio-details-toggle i { transition: none; }
+  .portfolio-story-heading, .portfolio-story-copy { transform: none; }
 }
 
 /* Reduced motion only: the consent gate in playPortfolioDemo. */
