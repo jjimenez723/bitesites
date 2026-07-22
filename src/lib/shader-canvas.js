@@ -42,7 +42,11 @@ export function mountShaderCanvas(container, {
 
     const scene = new THREE.Scene();
     const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-    const clock = new THREE.Clock();
+    // performance.now() rather than THREE.Clock, which three has deprecated in
+    // favour of an addon — and the only thing ever asked of it was elapsed
+    // seconds, which is one subtraction. Stamped at setup instead of on the first
+    // frame, so the shader's clock starts when the canvas does.
+    const startedAt = performance.now();
     // Plain typed arrays rather than THREE.Vector2/Matrix3: three uploads either,
     // and this keeps shaders from having to import three to describe a uniform.
     const uniforms = {
@@ -77,7 +81,7 @@ export function mountShaderCanvas(container, {
     const frameInterval = 1 / fps;
     let lastRender = -Infinity;
     const render = () => {
-      const time = clock.getElapsedTime();
+      const time = (performance.now() - startedAt) / 1000;
       if (time - lastRender < frameInterval) return;
       lastRender = time;
       uniforms.iTime.value = time;

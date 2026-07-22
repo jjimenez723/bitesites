@@ -188,6 +188,19 @@ const portfolioClip = project => {
 const portfolioPoster = project =>
   (portfolioTier() === 'portrait' && project.posterPortrait) ? project.posterPortrait : project.poster;
 
+// The rail and the demo are not the same job, and until now they shared a source.
+// A card is a thumbnail — 64vw at its widest, three of them on screen — while the
+// demo is one clip filling the frame, so the full tier had the rail decoding six
+// 1880x1080 masters at once behind a stage that shows them at a third of that
+// size. Chrome runs out of video decoders long before it runs out of bandwidth,
+// and what comes back is MEDIA_ERR_DECODE, which pauses the element: every card
+// frozen a second or two in, with a full buffer and no way back. So the cards take
+// the 720 recut at both landscape tiers, and only the project the visitor actually
+// opens is worth a master. Portrait is unchanged — it is the only asset cropped
+// for a card that is taller than it is wide, and it is the smaller file anyway.
+const portfolioRailClip = project =>
+  (portfolioTier() === 'portrait' && project.videoPortrait) ? project.videoPortrait : project.video720;
+
 // Shown under the "Visit the live site" link. The bare domain is the proof — it
 // tells the visitor this is a real site they can go and use, not a mockup — and
 // deriving it means the project list never carries the same string twice.
@@ -235,6 +248,12 @@ const PORTFOLIO_TOUCH_SLOP = 22;    // …and the same threshold for a finger
 // anywhere else — which is to say, on the clip — closes the stage.
 const PORTFOLIO_KEEPS_OPEN = '.portfolio-back, .portfolio-scrubber, .portfolio-hud, .portfolio-story-copy, .portfolio-pager, .portfolio-demo-play';
 const PORTFOLIO_PROGRESS_MARKS = [25, 50, 75, 100];
+// Cards either side of the active one that keep a decoder and a download. The rail
+// shows one card and the inside edges of its two neighbours, so one either way is
+// exactly what is on screen — and three clips is a load any machine can carry,
+// where six was not. Everything outside the window holds its poster, which is the
+// frame those cards were showing anyway once the decode gave out.
+const PORTFOLIO_RAIL_WINDOW = 1;
 // Under a second on a card is someone scrolling past it, not viewing it. Without
 // this floor a single sweep of the rail would spend five of the session's 300
 // events reporting views nobody had.
@@ -573,6 +592,7 @@ function App() {
   const portfolioSection = useRef(null);
   const portfolioDemo = useRef(null);
   const portfolioVideo = useRef(null);
+  const portfolioBack = useRef(null);
   const portfolioScrubber = useRef(null);
   const portfolioVideoDurationRef = useRef(0);
   const portfolioVideoTimeRef = useRef(0);
@@ -609,6 +629,9 @@ function App() {
   // index reaches it through a ref rather than through its dependency list.
   const portfolioActiveRef = useRef(0);
   const portfolioNearRef = useRef(false);
+  // The rail effect's own sync, so the card that just became active can start its
+  // clip and the one that scrolled out of the window can give its decoder back.
+  const portfolioRailSyncRef = useRef(() => {});
   const portfolioMarksRef = useRef(new Set());
   const portfolioHealthRef = useRef({ requestedAt: 0, firstFrameMs: -1, stalls: 0, sent: false });
 
@@ -772,6 +795,8 @@ function App() {
     setPortfolioPhase(current => (current.story ? { ...current, story: false } : current));
 
     portfolioActiveRef.current = activeProject;
+    // Assigned above first: the window the rail plays is measured from this index.
+    portfolioRailSyncRef.current();
     // Zero unless the section is on screen right now: an off-screen card that
     // becomes active has not been viewed, and must not start accruing dwell.
     portfolioViewStartRef.current = portfolioNearRef.current ? performance.now() : 0;
@@ -1178,6 +1203,25 @@ function App() {
     writePortfolioProgress(time);
     recordPortfolioMilestone(time);
   };
+  // A decoder that gives out mid-clip reports MEDIA_ERR_DECODE and pauses the
+  // element, and nothing brings it back on its own — the buffer is full, the
+  // network is idle, and play() on a media element in the error state does
+  // nothing. That is a frozen card, which is what six masters decoding at once
+  // used to produce. The window above is the fix; this is the floor under it, for
+  // the machine that runs out anyway. load() clears the error and hands the clip
+  // back, once per element — a genuinely broken file must not become a retry loop.
+  const recoverPortfolioVideo = video => {
+    if (!video || video.error?.code !== MediaError.MEDIA_ERR_DECODE || video.dataset.recovered) return false;
+    video.dataset.recovered = '1';
+    video.load();
+    return true;
+  };
+  const handlePortfolioRailError = event => {
+    if (recoverPortfolioVideo(event.currentTarget)) portfolioRailSyncRef.current();
+  };
+  const handlePortfolioDemoError = event => {
+    if (recoverPortfolioVideo(event.currentTarget)) playPortfolioDemo();
+  };
   // Video health. `waiting` is the rebuffer the visitor actually sees; the first
   // `playing` after the play() request is time-to-first-frame.
   const handlePortfolioWaiting = () => { portfolioHealthRef.current.stalls += 1; };
@@ -1215,6 +1259,14 @@ function App() {
     }
     setPortfolioPhase(current => (current.expanded ? current : { ...current, expanded: true }));
     schedulePortfolioDetails();
+    // Focus has to come with the visitor. The card that was just clicked is about
+    // to go inert behind the stage, and an inert element loses focus to nothing —
+    // <body> — which strands a keyboard user outside the thing they just opened.
+    // The back button is where the stage's own route starts, and it is the mirror
+    // of the track regaining focus on close. After the commit, so it is no longer
+    // inert by the time this runs; preventScroll because the stage covers the
+    // frame already and there is nothing to scroll to.
+    window.requestAnimationFrame(() => portfolioBack.current?.focus({ preventScroll: true }));
   };
   const closePortfolioProject = (returnFocus = false) => {
     portfolioExpandedRef.current = false;
@@ -1379,14 +1431,22 @@ function App() {
     let near = false;
     const sync = () => {
       const play = near && !portfolioPhase.expanded && !document.hidden && !prefersReducedMotion();
-      for (const video of track.querySelectorAll('video')) {
+      const active = portfolioActiveRef.current;
+      [...track.querySelectorAll('video')].forEach((video, index) => {
         // Autoplay policy only permits play() on a muted element. React assigns
         // `muted` as a property rather than an attribute, so assert it here
         // rather than trust that it survived the render.
         video.muted = true;
-        if (play) video.play().catch(() => {});
-        else video.pause();
-      }
+        // A card outside the window is off screen or a sliver of one. It keeps its
+        // poster and costs nothing — no decoder, and with preload none in the
+        // markup, no download either until it comes into view.
+        if (!play || Math.abs(index - active) > PORTFOLIO_RAIL_WINDOW) {
+          video.pause();
+          return;
+        }
+        if (video.preload !== 'auto') video.preload = 'auto';
+        video.play().catch(() => {});
+      });
       // The demo follows the same rules — including going quiet in a background
       // tab, where a decoder running behind nothing is pure battery.
       if (portfolioPhase.expanded) {
@@ -1415,9 +1475,14 @@ function App() {
 
     observer.observe(section);
     document.addEventListener('visibilitychange', sync);
+    // Handed out rather than re-subscribed: the window moves with every card the
+    // rail scrolls past, and rebuilding the observer that often would restart the
+    // dwell clock and the section's whole analytics picture along with it.
+    portfolioRailSyncRef.current = sync;
     return () => {
       observer.disconnect();
       document.removeEventListener('visibilitychange', sync);
+      portfolioRailSyncRef.current = () => {};
     };
   }, [portfolioPhase.expanded]);
   const submit = async event => {
@@ -1524,7 +1589,14 @@ function App() {
             <p>Browse sideways, then open a project — it plays, and the full story comes with it. Keep swiping sideways to move through the work, or drag the bar to scrub.</p>
           </div>
 
-          <div className="portfolio-rail" aria-hidden={portfolioPhase.expanded}>
+          {/* inert, not aria-hidden alone. aria-hidden hides a subtree from assistive
+              technology but leaves it focusable, and the card that opened the stage
+              is focused at exactly the moment the rail goes hidden behind it — which
+              is a focused control no screen reader can reach, and what the browser
+              warns about. inert takes the focus back out, drops the whole subtree
+              from the tab order, and is what the tabIndex juggling below was
+              approximating. */}
+          <div className="portfolio-rail" aria-hidden={portfolioPhase.expanded} inert={portfolioPhase.expanded}>
             <div
               className="portfolio-track"
               ref={portfolioTrack}
@@ -1538,8 +1610,12 @@ function App() {
             >
               {projects.map((project, index) => <article className={`portfolio-project ${activeProject === index ? 'active' : ''}`} key={project.title}>
                 {/* Autoplay is driven by the rail effect, not the attribute: four
-                    looping decoders running behind the demo is what made it stutter. */}
-                <video muted loop playsInline preload="metadata" poster={portfolioPoster(project)} aria-hidden="true"><source src={portfolioClip(project)} type="video/mp4" /></video>
+                    looping decoders running behind the demo is what made it stutter.
+                    preload starts at none for the same reason the effect owns play —
+                    at metadata every card in the deck went to the network the moment
+                    the section came near, and the effect raises it to auto for the
+                    three that are actually on screen. */}
+                <video muted loop playsInline preload="none" poster={portfolioPoster(project)} aria-hidden="true" onError={handlePortfolioRailError}><source src={portfolioRailClip(project)} type="video/mp4" /></video>
                 <div className="portfolio-project-shade" />
                 <span className="project-number">0{index + 1}</span>
                 <div className="portfolio-project-title"><span>Selected project</span><h3>{project.title}</h3></div>
@@ -1576,7 +1652,7 @@ function App() {
                 At preload="auto" this pulled the full clip on every page load. */}
             {/* Looping is motion in its own right, so under reduced motion the
                 clip plays once and hands the play control back on ended. */}
-            <video key={projects[activeProject].video} ref={portfolioVideo} muted loop={!prefersReducedMotion()} playsInline preload="metadata" poster={portfolioPoster(projects[activeProject])} onLoadedMetadata={handlePortfolioMetadata} onTimeUpdate={handlePortfolioTimeUpdate} onWaiting={handlePortfolioWaiting} onPlaying={handlePortfolioPlaying} onEnded={() => { if (prefersReducedMotion()) { portfolioConsentedRef.current = false; setPortfolioNeedsPlay(true); } }} aria-label={`${projects[activeProject].title} project demo`} src={portfolioClip(projects[activeProject])} />
+            <video key={projects[activeProject].video} ref={portfolioVideo} muted loop={!prefersReducedMotion()} playsInline preload="metadata" poster={portfolioPoster(projects[activeProject])} onLoadedMetadata={handlePortfolioMetadata} onTimeUpdate={handlePortfolioTimeUpdate} onWaiting={handlePortfolioWaiting} onPlaying={handlePortfolioPlaying} onError={handlePortfolioDemoError} onEnded={() => { if (prefersReducedMotion()) { portfolioConsentedRef.current = false; setPortfolioNeedsPlay(true); } }} aria-label={`${projects[activeProject].title} project demo`} src={portfolioClip(projects[activeProject])} />
             <div className="portfolio-demo-vignette" />
             <div className="portfolio-hud">
               <div className="portfolio-playback" aria-hidden="true"><span /> Playing</div>
@@ -1590,6 +1666,7 @@ function App() {
                 aria-controls="portfolio-dossier"
                 tabIndex={portfolioPhase.expanded ? 0 : -1}
                 aria-hidden={!portfolioPhase.expanded}
+                inert={!portfolioPhase.expanded}
               >
                 <i aria-hidden="true">▾</i>
                 {portfolioPhase.story ? 'Hide details' : 'Project details'}
@@ -1599,14 +1676,14 @@ function App() {
               <span aria-hidden="true">▶</span>
               <span>Play demo<small>{projects[activeProject].title}</small></span>
             </button>}
-            <button className={`portfolio-back ${portfolioPhase.expanded ? 'visible' : ''}`} type="button" onClick={() => closePortfolioProject(true)} tabIndex={portfolioPhase.expanded ? 0 : -1} aria-hidden={!portfolioPhase.expanded}>
+            <button ref={portfolioBack} className={`portfolio-back ${portfolioPhase.expanded ? 'visible' : ''}`} type="button" onClick={() => closePortfolioProject(true)} tabIndex={portfolioPhase.expanded ? 0 : -1} aria-hidden={!portfolioPhase.expanded} inert={!portfolioPhase.expanded}>
               <span aria-hidden="true">←</span>
               <span>All projects<small>or press Escape</small></span>
             </button>
             {/* data-section is what sectionOf() in analytics.js reads, so the
                 outbound click on "Visit the live project" is attributed to the
                 project that sent it rather than to a generic portfolio click. */}
-            <article className="portfolio-story" id="portfolio-dossier" data-section={`portfolio:${projects[activeProject].title}`} aria-hidden={!portfolioPhase.story}>
+            <article className="portfolio-story" id="portfolio-dossier" data-section={`portfolio:${projects[activeProject].title}`} aria-hidden={!portfolioPhase.story} inert={!portfolioPhase.story}>
               <div className="portfolio-story-heading">
                 {/* The gesture is the primary way through the deck; these are how
                     it is discovered, and the only way a keyboard reaches it once
@@ -1657,7 +1734,7 @@ function App() {
             </div>
           </div>
 
-          <div className="portfolio-footer wrap" aria-hidden={portfolioPhase.expanded}>
+          <div className="portfolio-footer wrap" aria-hidden={portfolioPhase.expanded} inert={portfolioPhase.expanded}>
             <div className="portfolio-count"><span>0{activeProject + 1}</span><i /><span>0{projects.length}</span></div>
             <div className="portfolio-dots" role="tablist" aria-label="Choose project">{projects.map((project, index) => <button type="button" key={project.title} className={activeProject === index ? 'active' : ''} onClick={() => showProject(index)} aria-label={`View ${project.title}`} aria-selected={activeProject === index} role="tab" tabIndex={portfolioPhase.expanded ? -1 : 0} />)}</div>
             <p><span className="gesture-sideways">↔ Browse</span><span>Open a project for the full story</span></p>

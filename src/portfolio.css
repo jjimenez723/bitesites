@@ -28,6 +28,11 @@
   height: 100vh;
   height: 100svh;
   overflow: hidden;
+  /* The same guard as the rail's, for every sideways gesture that lands in the
+     section but not on a card — the intro, the footer, the band above and below
+     the deck. Those chain straight out to a page that cannot scroll sideways,
+     which is where the browser's swipe-back picks them up. */
+  overscroll-behavior-x: contain;
   isolation: isolate;
   background: #050507;
   color: #fff;
@@ -97,7 +102,15 @@
   scroll-padding-inline: 18vw;
   scroll-snap-type: x proximity;
   scrollbar-width: none;
-  overscroll-behavior-x: contain;
+  /* `none`, not `contain`. Both stop the scroll chaining out to the page, but
+     `contain` still lets the browser run its own overscroll affordance on this
+     element — and on macOS that affordance is history navigation. So the moment a
+     sideways gesture reached either end of the deck, or overshot a snap point on
+     the way, Chrome and Safari took it as a swipe-back and swallowed it. It only
+     ever showed up going one way, because a tab that has somewhere to go back to
+     usually has nowhere to go forward: browsing right worked, browsing left did
+     nothing. `none` leaves the gesture with the rail, which is whose it is. */
+  overscroll-behavior-x: none;
   touch-action: pan-x pan-y;
   cursor: grab;
 }
@@ -174,6 +187,12 @@
      consumes a horizontal drag as an overscroll or a back-navigation and the
      pointermove stream stops arriving mid-gesture. */
   touch-action: pan-y;
+  /* The wheel handler preventDefaults sideways gestures, which stops the swipe-back
+     on a trackpad. This covers the frames before a gesture declares itself.
+     Sideways only: vertical is deliberately handed back to the page at either end
+     of the clip and over the dossier, and containing that axis would hold the
+     visitor inside a stage the whole design says never holds them. */
+  overscroll-behavior-x: contain;
   transition: clip-path .68s cubic-bezier(.2,.8,.2,1), opacity .38s ease;
   will-change: clip-path, opacity;
 }
