@@ -21,32 +21,26 @@ import logoMark from './assets/bitesites-logo-mark.webp';
 // anywhere — Firebase, Cloudflare, or the browser — can serve the old bytes.
 // The -portrait pair is a separate capture of each site's *mobile* layout, not a
 // re-crop of the landscape master — see scripts/capture-portfolio.mjs.
-import cliftonClip from './assets/portfolio/cliftonaveanimalhospital.mp4';
 import cliftonClip720 from './assets/portfolio/cliftonaveanimalhospital-720.mp4';
 import cliftonClipPortrait from './assets/portfolio/cliftonaveanimalhospital-portrait.mp4';
 import cliftonPoster from './assets/portfolio/cliftonaveanimalhospital-poster.webp';
 import cliftonPosterPortrait from './assets/portfolio/cliftonaveanimalhospital-portrait-poster.webp';
-import stoneClip from './assets/portfolio/stonebellisimo.mp4';
 import stoneClip720 from './assets/portfolio/stonebellisimo-720.mp4';
 import stoneClipPortrait from './assets/portfolio/stonebellisimo-portrait.mp4';
 import stonePoster from './assets/portfolio/stonebellisimo-poster.webp';
 import stonePosterPortrait from './assets/portfolio/stonebellisimo-portrait-poster.webp';
-import nexusClip from './assets/portfolio/nexusverium.mp4';
 import nexusClip720 from './assets/portfolio/nexusverium-720.mp4';
 import nexusClipPortrait from './assets/portfolio/nexusverium-portrait.mp4';
 import nexusPoster from './assets/portfolio/nexusverium-poster.webp';
 import nexusPosterPortrait from './assets/portfolio/nexusverium-portrait-poster.webp';
-import bodegaClip from './assets/portfolio/bodegaproject.mp4';
 import bodegaClip720 from './assets/portfolio/bodegaproject-720.mp4';
 import bodegaClipPortrait from './assets/portfolio/bodegaproject-portrait.mp4';
 import bodegaPoster from './assets/portfolio/bodegaproject-poster.webp';
 import bodegaPosterPortrait from './assets/portfolio/bodegaproject-portrait-poster.webp';
-import bodegaAppClip from './assets/portfolio/bodegaprojectapp.mp4';
 import bodegaAppClip720 from './assets/portfolio/bodegaprojectapp-720.mp4';
 import bodegaAppClipPortrait from './assets/portfolio/bodegaprojectapp-portrait.mp4';
 import bodegaAppPoster from './assets/portfolio/bodegaprojectapp-poster.webp';
 import bodegaAppPosterPortrait from './assets/portfolio/bodegaprojectapp-portrait-poster.webp';
-import stockroomClip from './assets/portfolio/stockroomnj.mp4';
 import stockroomClip720 from './assets/portfolio/stockroomnj-720.mp4';
 import stockroomClipPortrait from './assets/portfolio/stockroomnj-portrait.mp4';
 import stockroomPoster from './assets/portfolio/stockroomnj-poster.webp';
@@ -114,12 +108,12 @@ const services = [
 // panel stays blank. See PORTFOLIO_PLAN.md §6 for the recipe, and verify with
 // ffprobe before adding a clip.
 const projects = [
-  { title: 'Clifton Ave Animal Hospital', video: cliftonClip, video720: cliftonClip720, videoPortrait: cliftonClipPortrait, poster: cliftonPoster, posterPortrait: cliftonPosterPortrait, text: 'Full-service veterinary care in Clifton, NJ — a warm, modern practice site that turns “every stage of your pet’s life” into booked wellness, dental, and same-day urgent visits.', bullets: ['Online booking wired straight into the IDEXX Vello scheduling platform', 'Service paths for wellness, dental, imaging, cardiology, and laser surgery', 'Client portal, pharmacy refills, and Cherry financing in one flow'], stack: ['WordPress', 'Custom PHP Theme', 'Vanilla JS', 'IDEXX Vello'], favicon: cliftonFavicon, url: 'https://cliftonaveanimalhospital.com' },
-  { title: 'Stone Bellisimo', video: stoneClip, video720: stoneClip720, videoPortrait: stoneClipPortrait, poster: stonePoster, posterPortrait: stonePosterPortrait, text: 'Custom stone fabrication in Union City, NJ — a showroom-grade site that turns granite, quartz, and marble work into booked in-home measurements across the Northeast.', bullets: ['Five-step estimate wizard capturing material, size, and timeline', 'Project gallery built for kitchens, vanities, and custom surrounds', '“Bella” 24/7 AI voice agent booking quotes around the clock'], stack: ['React', 'Vite', 'Tailwind CSS', 'AI Voice Agent'], favicon: stoneFavicon, url: 'https://stonebellisimollc.com' },
-  { title: 'Nexus Verium', video: nexusClip, video720: nexusClip720, videoPortrait: nexusClipPortrait, poster: nexusPoster, posterPortrait: nexusPosterPortrait, text: 'Restoration systems & environmental engineering — integrating AI and environmental science to heal ecosystems through the River Veins initiative.', bullets: ['River Veins monitoring network — floating AI wetlands, sensors, drones', 'Digital twin models of the Meadowlands for planning', 'Continuous AI-driven water quality analysis'], stack: ['Next.js', 'Tailwind CSS', 'Turbopack'], favicon: nexusFavicon, url: 'https://nexusverium.tech' },
-  { title: 'Rutgers Newark Bodega Project', video: bodegaClip, video720: bodegaClip720, videoPortrait: bodegaClipPortrait, poster: bodegaPoster, posterPortrait: bodegaPosterPortrait, text: 'The research programme behind the pilot — a USDA-funded Rutgers Business School–Newark and Bergen Community College initiative building a hyperlocal supply chain from farms and school gardens to Newark bodegas, published alongside the tools the team works in.', bullets: ['“Fast vs. Fresh” access map — Leaflet heatmaps, clusters, and Rutgers locations over Newark', 'KPI Builder modelling farm, distributor, and bodega margins across 40+ crops', 'Programme story, field blog, and photo gallery documenting Team Flow Chain'], stack: ['Vite', 'Vanilla JS', 'Leaflet', 'GitHub Pages'], favicon: bodegaFavicon, url: 'https://jjimenez723.github.io/Bodega-Project-2/' },
-  { title: 'Bodega Project App MVP', video: bodegaAppClip, video720: bodegaAppClip720, videoPortrait: bodegaAppClipPortrait, poster: bodegaAppPoster, posterPortrait: bodegaAppPosterPortrait, text: 'The product side of that research, in development with Rutgers — an MVP for the neighbour-to-neighbour half of the supply chain, linking rooftop hydroponics, community gardens, and backyard plots to people looking for fresh produce a few blocks away.', bullets: ['Harvest feed filtered by crop, with walking distance, price, and how recently it was picked', 'Local map of the growers, bodegas, and community gardens across Newark', '“My Harvest” listing flow, and CO₂e saved across the neighbourhood each week'], stack: ['Next.js', 'React', 'Tailwind CSS', 'Google Maps'], favicon: bodegaFavicon, url: 'https://jjimenez723.github.io/the-bodega-project-demo/' },
-  { title: 'StockRoom NJ', video: stockroomClip, video720: stockroomClip720, videoPortrait: stockroomClipPortrait, poster: stockroomPoster, posterPortrait: stockroomPosterPortrait, text: 'A hobby and collectibles shop in Wallington, NJ — cards, video games, consoles, and figures, with the counter’s real stock searchable online and every new drop live the moment it lands.', bullets: ['Live Firestore inventory, so new arrivals appear online as they hit the shelf', 'Search across product name, category, description, and price', 'Multi-photo product galleries, cart checkout, and an in-store events calendar'], stack: ['React', 'Vite', 'Firebase', 'Cloud Firestore'], favicon: stockroomFavicon, url: 'https://stockroomnj.com' }
+  { title: 'Clifton Ave Animal Hospital', video720: cliftonClip720, videoPortrait: cliftonClipPortrait, poster: cliftonPoster, posterPortrait: cliftonPosterPortrait, text: 'Full-service veterinary care in Clifton, NJ — a warm, modern practice site that turns “every stage of your pet’s life” into booked wellness, dental, and same-day urgent visits.', bullets: ['Online booking wired straight into the IDEXX Vello scheduling platform', 'Service paths for wellness, dental, imaging, cardiology, and laser surgery', 'Client portal, pharmacy refills, and Cherry financing in one flow'], stack: ['WordPress', 'Custom PHP Theme', 'Vanilla JS', 'IDEXX Vello'], favicon: cliftonFavicon, url: 'https://cliftonaveanimalhospital.com' },
+  { title: 'Stone Bellisimo', video720: stoneClip720, videoPortrait: stoneClipPortrait, poster: stonePoster, posterPortrait: stonePosterPortrait, text: 'Custom stone fabrication in Union City, NJ — a showroom-grade site that turns granite, quartz, and marble work into booked in-home measurements across the Northeast.', bullets: ['Five-step estimate wizard capturing material, size, and timeline', 'Project gallery built for kitchens, vanities, and custom surrounds', '“Bella” 24/7 AI voice agent booking quotes around the clock'], stack: ['React', 'Vite', 'Tailwind CSS', 'AI Voice Agent'], favicon: stoneFavicon, url: 'https://stonebellisimollc.com' },
+  { title: 'Nexus Verium', video720: nexusClip720, videoPortrait: nexusClipPortrait, poster: nexusPoster, posterPortrait: nexusPosterPortrait, text: 'Restoration systems & environmental engineering — integrating AI and environmental science to heal ecosystems through the River Veins initiative.', bullets: ['River Veins monitoring network — floating AI wetlands, sensors, drones', 'Digital twin models of the Meadowlands for planning', 'Continuous AI-driven water quality analysis'], stack: ['Next.js', 'Tailwind CSS', 'Turbopack'], favicon: nexusFavicon, url: 'https://nexusverium.tech' },
+  { title: 'Rutgers Newark Bodega Project', video720: bodegaClip720, videoPortrait: bodegaClipPortrait, poster: bodegaPoster, posterPortrait: bodegaPosterPortrait, text: 'The research programme behind the pilot — a USDA-funded Rutgers Business School–Newark and Bergen Community College initiative building a hyperlocal supply chain from farms and school gardens to Newark bodegas, published alongside the tools the team works in.', bullets: ['“Fast vs. Fresh” access map — Leaflet heatmaps, clusters, and Rutgers locations over Newark', 'KPI Builder modelling farm, distributor, and bodega margins across 40+ crops', 'Programme story, field blog, and photo gallery documenting Team Flow Chain'], stack: ['Vite', 'Vanilla JS', 'Leaflet', 'GitHub Pages'], favicon: bodegaFavicon, url: 'https://jjimenez723.github.io/Bodega-Project-2/' },
+  { title: 'Bodega Project App MVP', video720: bodegaAppClip720, videoPortrait: bodegaAppClipPortrait, poster: bodegaAppPoster, posterPortrait: bodegaAppPosterPortrait, text: 'The product side of that research, in development with Rutgers — an MVP for the neighbour-to-neighbour half of the supply chain, linking rooftop hydroponics, community gardens, and backyard plots to people looking for fresh produce a few blocks away.', bullets: ['Harvest feed filtered by crop, with walking distance, price, and how recently it was picked', 'Local map of the growers, bodegas, and community gardens across Newark', '“My Harvest” listing flow, and CO₂e saved across the neighbourhood each week'], stack: ['Next.js', 'React', 'Tailwind CSS', 'Google Maps'], favicon: bodegaFavicon, url: 'https://jjimenez723.github.io/the-bodega-project-demo/' },
+  { title: 'StockRoom NJ', video720: stockroomClip720, videoPortrait: stockroomClipPortrait, poster: stockroomPoster, posterPortrait: stockroomPosterPortrait, text: 'A hobby and collectibles shop in Wallington, NJ — cards, video games, consoles, and figures, with the counter’s real stock searchable online and every new drop live the moment it lands.', bullets: ['Live Firestore inventory, so new arrivals appear online as they hit the shelf', 'Search across product name, category, description, and price', 'Multi-photo product galleries, cart checkout, and an in-store events calendar'], stack: ['React', 'Vite', 'Firebase', 'Cloud Firestore'], favicon: stockroomFavicon, url: 'https://stockroomnj.com' }
 ];
 
 const prices = {
@@ -178,28 +172,26 @@ const portfolioTier = () => (portfolioTierValue ||= (
     : window.matchMedia('(max-width: 1100px), (max-height: 500px)').matches ? 'compact'
       : 'full'));
 
-// Each falls back a tier when an asset is missing, so a project can ship without
-// a portrait capture rather than 404ing.
-const portfolioClip = project => {
-  const tier = portfolioTier();
-  if (tier === 'portrait' && project.videoPortrait) return project.videoPortrait;
-  return tier === 'full' ? project.video : project.video720;
-};
+// Two tiers reach the browser, not three. The 1880x1080 masters the capture script
+// writes are the archive and the source the recuts are made from; they are no
+// longer served.
+//
+// They were served, for the stage, and they did not decode. Not on a slow
+// connection and not for want of buffer — with the clip fully buffered and the
+// network idle, Chrome returned MEDIA_ERR_DECODE a second in and paused the
+// element, which is a frozen frame with no way back. Reproducible on the deployed
+// site, every run, for five of the six projects; the same file plays perfectly in
+// a bare page, and the 1280x736 recut plays everywhere, every time, in both
+// engines. So the master is over some line this page's budget cannot afford, and
+// where that line sits is not something this code can measure on a visitor's
+// machine before choosing.
+//
+// It costs sharpness on the open stage, and it is worth it: a clip that plays for
+// everyone beats a crisper one that freezes for some.
+const portfolioClip = project =>
+  (portfolioTier() === 'portrait' && project.videoPortrait) ? project.videoPortrait : project.video720;
 const portfolioPoster = project =>
   (portfolioTier() === 'portrait' && project.posterPortrait) ? project.posterPortrait : project.poster;
-
-// The rail and the demo are not the same job, and until now they shared a source.
-// A card is a thumbnail — 64vw at its widest, three of them on screen — while the
-// demo is one clip filling the frame, so the full tier had the rail decoding six
-// 1880x1080 masters at once behind a stage that shows them at a third of that
-// size. Chrome runs out of video decoders long before it runs out of bandwidth,
-// and what comes back is MEDIA_ERR_DECODE, which pauses the element: every card
-// frozen a second or two in, with a full buffer and no way back. So the cards take
-// the 720 recut at both landscape tiers, and only the project the visitor actually
-// opens is worth a master. Portrait is unchanged — it is the only asset cropped
-// for a card that is taller than it is wide, and it is the smaller file anyway.
-const portfolioRailClip = project =>
-  (portfolioTier() === 'portrait' && project.videoPortrait) ? project.videoPortrait : project.video720;
 
 // Shown under the "Visit the live site" link. The bare domain is the proof — it
 // tells the visitor this is a real site they can go and use, not a mockup — and
@@ -986,6 +978,26 @@ function App() {
     showProject(next);
     return true;
   };
+  // The rail's counterpart to switchPortfolioProject: one card per gesture, from
+  // wherever the deck is now. It exists because leaving the wheel to the native
+  // scroller did not work reliably in either direction. The cards are 64vw and
+  // snap to centre, so the nearest snap point stays the current one until a
+  // gesture has travelled half a card — around 500px — and anything shorter than
+  // that is not slowed down, it is put back exactly where it started. A firm flick
+  // cleared the bar and a gentle one did nothing, which is the "only works
+  // sometimes" of it. Committing a card per gesture makes every deliberate swipe
+  // move the deck, and makes both directions cost the same.
+  const browsePortfolioRail = direction => {
+    const from = portfolioActiveRef.current;
+    const next = Math.min(projects.length - 1, Math.max(0, from + direction));
+    if (next === from) return false;
+    // Eagerly, for the same reason switchPortfolioProject does it: the rest of the
+    // gesture's events must count from the card being scrolled to, not the one
+    // being left. handlePortfolioScroll confirms it as the smooth scroll lands.
+    portfolioActiveRef.current = next;
+    showProject(next);
+    return true;
+  };
   const endPortfolioSwipe = () => {
     portfolioSwipeRef.current = 0;
     portfolioSwipeLockRef.current = false;
@@ -1005,7 +1017,11 @@ function App() {
     if (Math.abs(travel) < PORTFOLIO_SWIPE_WHEEL) return;
     portfolioSwipeLockRef.current = true;
     portfolioSwipeRef.current = 0;
-    switchPortfolioProject(travel > 0 ? 1 : -1);
+    // Same gesture, same threshold, same one-commit-per-flick lock, whether the
+    // deck is being browsed as cards or full screen. Only the mover differs.
+    const step = travel > 0 ? 1 : -1;
+    if (portfolioExpandedRef.current) switchPortfolioProject(step);
+    else browsePortfolioRail(step);
   };
   // One press record serves both gestures the stage reads from a pointer: the
   // touch swipe that changes project, and the plain click on the frame that closes
@@ -1206,10 +1222,12 @@ function App() {
   // A decoder that gives out mid-clip reports MEDIA_ERR_DECODE and pauses the
   // element, and nothing brings it back on its own — the buffer is full, the
   // network is idle, and play() on a media element in the error state does
-  // nothing. That is a frozen card, which is what six masters decoding at once
-  // used to produce. The window above is the fix; this is the floor under it, for
-  // the machine that runs out anyway. load() clears the error and hands the clip
-  // back, once per element — a genuinely broken file must not become a retry loop.
+  // nothing. That is a frozen frame, and it is what the visitor was reporting.
+  //
+  // Retiring the masters is what should stop this happening at all; this is the
+  // floor under it, for the machine that runs out anyway. load() clears the error
+  // and hands the clip back, once per element — a clip that cannot be decoded here
+  // at all must not become a retry loop.
   const recoverPortfolioVideo = video => {
     if (!video || video.error?.code !== MediaError.MEDIA_ERR_DECODE || video.dataset.recovered) return false;
     video.dataset.recovered = '1';
@@ -1385,13 +1403,31 @@ function App() {
     scrubPortfolioVideoTo(from + delta);
     schedulePortfolioResume();
   };
-  // Registered once: everything the handler reads is a ref, so it never goes
-  // stale and never has to be torn down and rebuilt on a phase change.
+  // The rail takes its sideways wheel the same way the open stage does, and for the
+  // same two reasons: the native scroller's snap was reverting anything short of
+  // half a card, and an unclaimed sideways gesture is what the browser reads as a
+  // swipe back. Vertical is never touched — the page has to scroll straight past
+  // this section — and touch is left on the native scroller, where a finger drags
+  // the deck under it and the snap has a real fling velocity to work from.
+  const handlePortfolioRailWheel = event => {
+    if (portfolioExpandedRef.current) return;
+    if (Math.abs(event.deltaX) <= Math.abs(event.deltaY)) return;
+    event.preventDefault();
+    const scale = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? window.innerWidth : 1;
+    accumulatePortfolioSwipe(event.deltaX * scale);
+  };
+  // Registered once: everything the handlers read is a ref, so they never go
+  // stale and never have to be torn down and rebuilt on a phase change.
   useEffect(() => {
     const demo = portfolioDemo.current;
-    if (!demo) return undefined;
+    const track = portfolioTrack.current;
+    if (!demo || !track) return undefined;
     demo.addEventListener('wheel', handlePortfolioDemoWheel, { passive: false });
-    return () => demo.removeEventListener('wheel', handlePortfolioDemoWheel);
+    track.addEventListener('wheel', handlePortfolioRailWheel, { passive: false });
+    return () => {
+      demo.removeEventListener('wheel', handlePortfolioDemoWheel);
+      track.removeEventListener('wheel', handlePortfolioRailWheel);
+    };
   }, []);
 
   useEffect(() => {
@@ -1615,7 +1651,7 @@ function App() {
                     at metadata every card in the deck went to the network the moment
                     the section came near, and the effect raises it to auto for the
                     three that are actually on screen. */}
-                <video muted loop playsInline preload="none" poster={portfolioPoster(project)} aria-hidden="true" onError={handlePortfolioRailError}><source src={portfolioRailClip(project)} type="video/mp4" /></video>
+                <video muted loop playsInline preload="none" poster={portfolioPoster(project)} aria-hidden="true" onError={handlePortfolioRailError}><source src={portfolioClip(project)} type="video/mp4" /></video>
                 <div className="portfolio-project-shade" />
                 <span className="project-number">0{index + 1}</span>
                 <div className="portfolio-project-title"><span>Selected project</span><h3>{project.title}</h3></div>
@@ -1652,7 +1688,11 @@ function App() {
                 At preload="auto" this pulled the full clip on every page load. */}
             {/* Looping is motion in its own right, so under reduced motion the
                 clip plays once and hands the play control back on ended. */}
-            <video key={projects[activeProject].video} ref={portfolioVideo} muted loop={!prefersReducedMotion()} playsInline preload="metadata" poster={portfolioPoster(projects[activeProject])} onLoadedMetadata={handlePortfolioMetadata} onTimeUpdate={handlePortfolioTimeUpdate} onWaiting={handlePortfolioWaiting} onPlaying={handlePortfolioPlaying} onError={handlePortfolioDemoError} onEnded={() => { if (prefersReducedMotion()) { portfolioConsentedRef.current = false; setPortfolioNeedsPlay(true); } }} aria-label={`${projects[activeProject].title} project demo`} src={portfolioClip(projects[activeProject])} />
+            {/* Keyed on the project, so a change remounts the element and the swap
+                animation runs from its first frame. It used to be keyed on the
+                master's URL, which no longer exists — and the title is the more
+                honest name for "this is a different project" in any case. */}
+            <video key={projects[activeProject].title} ref={portfolioVideo} muted loop={!prefersReducedMotion()} playsInline preload="metadata" poster={portfolioPoster(projects[activeProject])} onLoadedMetadata={handlePortfolioMetadata} onTimeUpdate={handlePortfolioTimeUpdate} onWaiting={handlePortfolioWaiting} onPlaying={handlePortfolioPlaying} onError={handlePortfolioDemoError} onEnded={() => { if (prefersReducedMotion()) { portfolioConsentedRef.current = false; setPortfolioNeedsPlay(true); } }} aria-label={`${projects[activeProject].title} project demo`} src={portfolioClip(projects[activeProject])} />
             <div className="portfolio-demo-vignette" />
             <div className="portfolio-hud">
               <div className="portfolio-playback" aria-hidden="true"><span /> Playing</div>
