@@ -993,8 +993,8 @@ const SERVICE_PRICING = {
 };
 
 const emailEnvironment = () => ({
-  from: process.env.POSTMARK_FROM_EMAIL || 'BiteSites <hello@bitesites.org>',
-  admin: process.env.ADMIN_NOTIFICATION_EMAIL || 'hello@bitesites.org',
+  from: process.env.POSTMARK_FROM_EMAIL || 'BiteSites <jensy@bitesites.org>',
+  admin: process.env.ADMIN_NOTIFICATION_EMAIL || 'jensy@bitesites.org',
   appUrl: (process.env.APP_URL || 'https://bitesites.org').replace(/\/$/, ''),
   transactionalStream: process.env.POSTMARK_MESSAGE_STREAM || 'outbound',
   broadcastStream: process.env.POSTMARK_BROADCAST_STREAM || 'broadcasts'
@@ -1146,15 +1146,23 @@ export const resendAccountConfirmation = onCall(
       const env = emailEnvironment();
       const verifyUrl = await auth.generateEmailVerificationLink(user.email, { url: `${env.appUrl}/#pricing` });
       const template = await getEmailTemplate(db, 'welcome');
-      await sendPostmark(POSTMARK_SERVER_TOKEN.value(), buildMessage({
+      const result = await sendPostmark(POSTMARK_SERVER_TOKEN.value(), buildMessage({
         from: env.from, to: user.email, template,
         variables: { first_name: firstName(user), verify_url: verifyUrl, pricing_url: `${env.appUrl}/#pricing` },
         stream: env.transactionalStream, tag: 'account-confirmation'
       }));
+      await recordDelivery(db, {
+        templateId: 'welcome', kind: 'account-confirmation', recipientCount: 1,
+        uid: user.uid, status: 'sent', postmark: [result.MessageID].filter(Boolean)
+      });
       return { ok: true, alreadyVerified: false };
     } catch (error) {
       const message = String(error?.message || '');
       console.error('[email] account confirmation resend failed:', message);
+      await recordDelivery(db, {
+        templateId: 'welcome', kind: 'account-confirmation', recipientCount: 1,
+        uid: user.uid, status: 'failed', error: str(message, 500)
+      });
       if (error?.code === 'auth/internal-error' && message.includes('TOO_MANY_ATTEMPTS_TRY_LATER')) {
         throw new HttpsError('resource-exhausted', 'Please wait a few minutes before requesting another confirmation email.');
       }

@@ -38,7 +38,7 @@ const CheckIcon = () => (
   <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m4 10.5 3.65 3.65L16 5.85" /></svg>
 );
 
-function AccountDialog({ onClose }) {
+function AccountDialog({ onClose, onConfirmationResult }) {
   const [view, setView] = useState('signup');
   const [signupStep, setSignupStep] = useState(1);
   const [signupDirection, setSignupDirection] = useState('forward');
@@ -102,13 +102,19 @@ function AccountDialog({ onClose }) {
         if (form.password !== form.confirmPassword) {
           throw new Error('Those passwords do not match.');
         }
-        await signUp({
+        const result = await signUp({
           displayName: form.displayName,
           company: form.company,
           email: form.email,
           password: form.password
         });
-        setStatus({ kind: 'success', text: 'Account created. Your prices are unlocking now, and a confirmation email is on its way.' });
+        setStatus({
+          kind: result.confirmation?.sent ? 'success' : 'error',
+          text: result.confirmation?.sent
+            ? 'Account created. Your prices are unlocking now, and a confirmation email is on its way.'
+            : `Account created. ${result.confirmation?.error || 'We could not send your confirmation email. Use Resend confirmation after this dialog closes.'}`
+        });
+        onConfirmationResult?.(result.confirmation);
         window.setTimeout(onClose, 900);
       } else if (view === 'login') {
         await signIn(form.email, form.password);
@@ -293,7 +299,11 @@ export default function ProtectedPricing({ tab, setTab }) {
   }, [session.user]);
 
   if (session.loading) return <div className="pricing-gate-loading" aria-label="Checking account access"><i /><i /><i /></div>;
-  if (!session.user) return <><LockedPricing onBegin={() => setDialog(true)} />{dialog && <AccountDialog onClose={() => setDialog(false)} />}</>;
+  if (!session.user) return <><LockedPricing onBegin={() => setDialog(true)} />{dialog && <AccountDialog onClose={() => setDialog(false)} onConfirmationResult={result => setConfirmation(
+    result?.sent
+      ? 'Confirmation email sent — check your inbox or spam folder'
+      : result?.error || 'Account created, but we could not send the confirmation email. Select here to try again.'
+  )} />}</>;
 
   const resend = async () => {
     if (resendingConfirmation) return;

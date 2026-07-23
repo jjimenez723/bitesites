@@ -24,7 +24,7 @@ test('escapes admin-provided recipient variables in HTML', () => {
 
 test('builds multipart Postmark messages without leaking template markup', () => {
   const message = buildMessage({
-    from: 'BiteSites <hello@bitesites.org>',
+    from: 'BiteSites <jensy@bitesites.org>',
     to: 'alex@example.com',
     template: DEFAULT_EMAIL_TEMPLATES.password_reset,
     variables: { first_name: 'Alex', reset_url: 'https://example.com/reset' },
@@ -40,7 +40,7 @@ test('builds multipart Postmark messages without leaking template markup', () =>
 test('system templates include the BiteSites logo and resolve branded defaults', () => {
   for (const template of Object.values(DEFAULT_EMAIL_TEMPLATES)) {
     const message = buildMessage({
-      from: 'BiteSites <hello@bitesites.org>',
+      from: 'BiteSites <jensy@bitesites.org>',
       to: 'alex@example.com',
       template,
       variables: {

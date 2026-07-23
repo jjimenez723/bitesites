@@ -53,6 +53,51 @@ export const friendlyAuthError = error =>
 const clean = (value, maxLen) =>
   typeof value === 'string' ? value.trim().slice(0, maxLen) : '';
 
+const confirmationActionSettings = { url: 'https://bitesites.org/#pricing' };
+
+const confirmationFailureMessage = error => {
+  if (error?.code === 'auth/too-many-requests' || error?.code === 'functions/resource-exhausted') {
+    return 'For your security, please wait a few minutes before requesting another confirmation email.';
+  }
+  if (error?.code === 'auth/unauthorized-continue-uri') {
+    return 'Confirmation email is temporarily unavailable. Please contact BiteSites support.';
+  }
+  return 'We could not send your confirmation email just now. Please try again shortly.';
+};
+
+// Postmark is the preferred delivery path because it uses the editable
+// BiteSites template. While its account or sender is unavailable, Firebase
+// remains a reliable fallback so no customer is left without a confirmation
+// route.
+async function deliverConfirmation(user) {
+  if (user.emailVerified) return { sent: true, alreadyVerified: true, provider: 'none' };
+
+  try {
+    // A freshly-created user can reach this before the SDK has refreshed its
+    // ID token. Await it explicitly so the callable receives the new session.
+    await user.getIdToken();
+    const { getFunctions, httpsCallable } = await import('firebase/functions');
+    const call = httpsCallable(getFunctions(app, 'us-central1'), 'resendAccountConfirmation');
+    const { data } = await call();
+    return { sent: true, provider: 'postmark', ...data };
+  } catch (postmarkError) {
+    // Firebase applies the same action-code rate limit to both paths. Retrying
+    // through the client would only add another rejected request.
+    if (postmarkError?.code === 'functions/resource-exhausted') {
+      return { sent: false, error: confirmationFailureMessage(postmarkError) };
+    }
+
+    console.warn('[auth] branded confirmation unavailable; using Firebase fallback', postmarkError?.code);
+    try {
+      await sendEmailVerification(user, confirmationActionSettings);
+      return { sent: true, alreadyVerified: false, provider: 'firebase' };
+    } catch (firebaseError) {
+      console.error('[auth] Firebase confirmation fallback failed', firebaseError?.code);
+      return { sent: false, error: confirmationFailureMessage(firebaseError) };
+    }
+  }
+}
+
 // Set while signUp() is mid-flight. onAuthStateChanged fires the instant the
 // account exists, so without this the session watcher would race signUp to
 // write users/{uid} and the bare profile could clobber the richer one.
@@ -114,20 +159,13 @@ export async function signUp({ email, password, displayName = '', company = '', 
     const phoneNumber = clean(phone, 40);
     if (phoneNumber) profile.phone = phoneNumber;
 
-    // Deliver the verification message before creating the profile document.
-    // The document trigger handles the internal new-account notification, and
-    // must never race this customer-facing confirmation email.
-    try {
-      await sendEmailVerification(user, { url: 'https://bitesites.org/#pricing' });
-    } catch (error) {
-      // Account creation succeeded. The signed-in member can use the resend
-      // control, which presents a clear message if Firebase asks for a pause.
-      console.warn('[auth] could not send initial verification email', error?.code);
-    }
+    // Prefer the editable Postmark template. If Postmark is still under review
+    // or rejects delivery, Firebase sends its branded fallback instead.
+    const confirmation = await deliverConfirmation(user);
 
     await setDoc(doc(db, 'users', user.uid), profile);
 
-    return user;
+    return { user, confirmation };
   } finally {
     signUpInFlight = false;
   }
@@ -203,20 +241,9 @@ export async function resendConfirmation() {
   const user = auth.currentUser;
   if (!user?.email) throw new Error('Sign in to resend your confirmation email.');
 
-  // Firebase sends this directly, so account confirmation remains available
-  // while the transactional-email provider is awaiting approval.
-  try {
-    await sendEmailVerification(user, { url: 'https://bitesites.org/#pricing' });
-    return { ok: true, alreadyVerified: false };
-  } catch (error) {
-    if (error?.code === 'auth/too-many-requests') {
-      throw new Error('For your security, please wait a few minutes before requesting another confirmation email.');
-    }
-    if (error?.code === 'auth/unauthorized-continue-uri') {
-      throw new Error('Confirmation email is temporarily unavailable. Please contact BiteSites support.');
-    }
-    throw new Error('We could not send your confirmation email just now. Please try again shortly.');
-  }
+  const result = await deliverConfirmation(user);
+  if (!result.sent) throw new Error(result.error);
+  return { ok: true, alreadyVerified: Boolean(result.alreadyVerified), provider: result.provider };
 }
 
 export async function fetchServicePricing() {

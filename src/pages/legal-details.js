@@ -18,7 +18,7 @@ export const LEGAL = {
   // Address used for legal notices. Required for a valid notice clause.
   mailingAddress: '[Street address], New Jersey [ZIP], United States',
 
-  contactEmail: 'hello@bitesites.org',
+  contactEmail: 'jensy@bitesites.org',
   privacyEmail: 'privacy@bitesites.org',
 
   governingState: 'New Jersey',

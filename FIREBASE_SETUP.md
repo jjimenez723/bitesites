@@ -436,12 +436,12 @@ dashboard sends are delivered by Postmark. Set the server token as a Firebase se
 firebase functions:secrets:set POSTMARK_SERVER_TOKEN
 ```
 
-The Postmark server must have `hello@bitesites.org` (or the whole domain) as a verified
+The Postmark server must have `jensy@bitesites.org` (or the whole domain) as a verified
 sender. Non-secret runtime settings use these optional Functions environment variables:
 
 ```dotenv
-POSTMARK_FROM_EMAIL="BiteSites <hello@bitesites.org>"
-ADMIN_NOTIFICATION_EMAIL="hello@bitesites.org"
+POSTMARK_FROM_EMAIL="BiteSites <jensy@bitesites.org>"
+ADMIN_NOTIFICATION_EMAIL="jensy@bitesites.org"
 APP_URL="https://bitesites.org"
 POSTMARK_MESSAGE_STREAM="outbound"
 POSTMARK_BROADCAST_STREAM="broadcasts"
