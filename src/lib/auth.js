@@ -19,7 +19,8 @@ import {
   GoogleAuthProvider,
   signInWithPopup,
   signInWithRedirect,
-  getRedirectResult
+  getRedirectResult,
+  sendEmailVerification
 } from 'firebase/auth';
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { app, db } from './firebase';
@@ -113,6 +114,17 @@ export async function signUp({ email, password, displayName = '', company = '', 
     const phoneNumber = clean(phone, 40);
     if (phoneNumber) profile.phone = phoneNumber;
 
+    // Deliver the verification message before creating the profile document.
+    // The document trigger handles the internal new-account notification, and
+    // must never race this customer-facing confirmation email.
+    try {
+      await sendEmailVerification(user, { url: 'https://bitesites.org/#pricing' });
+    } catch (error) {
+      // Account creation succeeded. The signed-in member can use the resend
+      // control, which presents a clear message if Firebase asks for a pause.
+      console.warn('[auth] could not send initial verification email', error?.code);
+    }
+
     await setDoc(doc(db, 'users', user.uid), profile);
 
     return user;
@@ -188,10 +200,23 @@ export async function resetPassword(email) {
 }
 
 export async function resendConfirmation() {
-  const { getFunctions, httpsCallable } = await import('firebase/functions');
-  const call = httpsCallable(getFunctions(app, 'us-central1'), 'resendAccountConfirmation');
-  const { data } = await call();
-  return data;
+  const user = auth.currentUser;
+  if (!user?.email) throw new Error('Sign in to resend your confirmation email.');
+
+  // Firebase sends this directly, so account confirmation remains available
+  // while the transactional-email provider is awaiting approval.
+  try {
+    await sendEmailVerification(user, { url: 'https://bitesites.org/#pricing' });
+    return { ok: true, alreadyVerified: false };
+  } catch (error) {
+    if (error?.code === 'auth/too-many-requests') {
+      throw new Error('For your security, please wait a few minutes before requesting another confirmation email.');
+    }
+    if (error?.code === 'auth/unauthorized-continue-uri') {
+      throw new Error('Confirmation email is temporarily unavailable. Please contact BiteSites support.');
+    }
+    throw new Error('We could not send your confirmation email just now. Please try again shortly.');
+  }
 }
 
 export async function fetchServicePricing() {

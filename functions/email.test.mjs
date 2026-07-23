@@ -36,3 +36,22 @@ test('builds multipart Postmark messages without leaking template markup', () =>
   assert.match(message.HtmlBody, /https:\/\/example.com\/reset/);
   assert.doesNotMatch(message.TextBody, /{{/);
 });
+
+test('system templates include the BiteSites logo and resolve branded defaults', () => {
+  for (const template of Object.values(DEFAULT_EMAIL_TEMPLATES)) {
+    const message = buildMessage({
+      from: 'BiteSites <hello@bitesites.org>',
+      to: 'alex@example.com',
+      template,
+      variables: {
+        first_name: 'Alex', email: 'alex@example.com', company: 'Example Co',
+        verify_url: 'https://example.com/verify', pricing_url: 'https://example.com/pricing',
+        reset_url: 'https://example.com/reset', admin_url: 'https://example.com/admin',
+        headline: 'A brighter digital experience', message: 'A short update from BiteSites.',
+        cta_label: 'Learn more', cta_url: 'https://example.com'
+      }
+    });
+    assert.match(message.HtmlBody, /https:\/\/bitesites\.org\/apple-touch-icon\.png/);
+    assert.doesNotMatch(message.HtmlBody, /{{\s*(brand_url|logo_url)\s*}}/);
+  }
+});

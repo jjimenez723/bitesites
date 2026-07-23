@@ -139,23 +139,16 @@ function SignIn() {
   );
 }
 
-function Denied({ email }) {
+function Denied() {
   return (
     <div className="bs-admin">
       <div className="admin-auth">
         <div className="admin-auth-card admin-denied">
-          <h1>No access yet</h1>
+          <AdminLogo />
           <p>
-            <strong>{email}</strong> is signed in but has not been granted a role.
-            Roles are stored server-side and cannot be assigned from this screen —
-            that is what stops anyone promoting themselves.
+            Ooops! Maybe you're not supposed to be here, but if you are contact the
+            administrator or try again from a different account. Thank you!
           </p>
-          <p className="admin-note">
-            An existing admin can grant access from the Users tab, or from a terminal:
-          </p>
-          <div className="chip" style={{ display: 'block', margin: '10px 0 20px', overflowX: 'auto' }}>
-            npm run role -- {email} admin
-          </div>
           <button className="btn-admin" type="button" onClick={signOutUser}>Sign out</button>
         </div>
       </div>
@@ -170,7 +163,7 @@ export default function AdminApp() {
 
   if (session.loading) return <div className="admin-boot">Checking your session…</div>;
   if (!session.user) return <SignIn />;
-  if (session.role !== 'admin') return <Denied email={session.user.email} />;
+  if (session.role !== 'admin') return <Denied />;
 
   const email = session.user.email || '';
   const name = session.profile?.displayName || session.user.displayName || email.split('@')[0];

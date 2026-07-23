@@ -1036,7 +1036,8 @@ export const getServicePricing = onCall(
 );
 
 // A profile is the durable account-created event for both password and Google
-// sign-ups. Sending from here avoids a fragile client-side "welcome" request.
+// sign-ups. Customer confirmation is sent through Firebase Auth at sign-up;
+// this trigger is only for the internal new-account notification.
 export const sendAccountCreatedEmails = onDocumentCreated(
   { document: 'users/{uid}', secrets: [POSTMARK_SERVER_TOKEN], maxInstances: 10 },
   async event => {
@@ -1044,73 +1045,34 @@ export const sendAccountCreatedEmails = onDocumentCreated(
     if (!profile?.email) return;
 
     const db = getFirestore();
-    const auth = getAuth();
     const env = emailEnvironment();
-    const user = await auth.getUser(event.params.uid).catch(() => null);
-    if (!user) return;
-
-    let verifyUrl = `${env.appUrl}/#pricing`;
-    if (!user.emailVerified) {
-      try {
-        verifyUrl = await auth.generateEmailVerificationLink(user.email, {
-          url: `${env.appUrl}/#pricing`
-        });
-      } catch (error) {
-        console.error('[email] could not create verification link:', error.message);
-      }
-    }
-
-    const [welcome, adminNotice] = await Promise.all([
-      getEmailTemplate(db, 'welcome'),
-      getEmailTemplate(db, 'new_account_admin')
-    ]);
-    const messages = [
-      buildMessage({
-        from: env.from,
-        to: user.email,
-        template: welcome,
-        variables: {
-          first_name: firstName(user),
-          verify_url: verifyUrl,
-          pricing_url: `${env.appUrl}/#pricing`
-        },
-        stream: env.transactionalStream,
-        tag: 'account-created'
-      })
-    ];
-    if (env.admin) {
-      messages.push(buildMessage({
-        from: env.from,
-        to: env.admin,
-        template: adminNotice,
-        variables: {
-          first_name: profile.displayName || firstName(user),
-          email: user.email,
-          company: profile.company || '—',
-          admin_url: `${env.appUrl}/admin/users`
-        },
-        stream: env.transactionalStream,
-        tag: 'new-account-admin'
-      }));
-    }
+    if (!env.admin) return;
+    const adminNotice = await getEmailTemplate(db, 'new_account_admin');
+    const message = buildMessage({
+      from: env.from,
+      to: env.admin,
+      template: adminNotice,
+      variables: {
+        first_name: profile.displayName || str(profile.email, 200).split('@')[0] || 'there',
+        email: profile.email,
+        company: profile.company || '—',
+        admin_url: `${env.appUrl}/admin/users`
+      },
+      stream: env.transactionalStream,
+      tag: 'new-account-admin'
+    });
 
     try {
-      const result = await sendPostmark(POSTMARK_SERVER_TOKEN.value(), messages);
+      const result = await sendPostmark(POSTMARK_SERVER_TOKEN.value(), message);
       await recordDelivery(db, {
-        templateId: 'welcome',
-        kind: 'account-created',
-        recipientCount: messages.length,
-        uid: user.uid,
-        status: 'sent',
-        postmark: Array.isArray(result)
-          ? result.map(item => item.MessageID || '').filter(Boolean)
-          : [result.MessageID].filter(Boolean)
+        templateId: 'new_account_admin', kind: 'new-account-admin', recipientCount: 1,
+        uid: event.params.uid, status: 'sent', postmark: [result.MessageID].filter(Boolean)
       });
     } catch (error) {
       console.error('[email] account-created send failed:', error.message);
       await recordDelivery(db, {
-        templateId: 'welcome', kind: 'account-created', recipientCount: messages.length,
-        uid: user.uid, status: 'failed', error: str(error.message, 500)
+        templateId: 'new_account_admin', kind: 'new-account-admin', recipientCount: 1,
+        uid: event.params.uid, status: 'failed', error: str(error.message, 500)
       });
     }
   }
@@ -1180,15 +1142,27 @@ export const resendAccountConfirmation = onCall(
     const user = await auth.getUser(request.auth.uid);
     if (!user.email) throw new HttpsError('failed-precondition', 'This account has no email address.');
     if (user.emailVerified) return { ok: true, alreadyVerified: true };
-    const env = emailEnvironment();
-    const verifyUrl = await auth.generateEmailVerificationLink(user.email, { url: `${env.appUrl}/#pricing` });
-    const template = await getEmailTemplate(db, 'welcome');
-    await sendPostmark(POSTMARK_SERVER_TOKEN.value(), buildMessage({
-      from: env.from, to: user.email, template,
-      variables: { first_name: firstName(user), verify_url: verifyUrl, pricing_url: `${env.appUrl}/#pricing` },
-      stream: env.transactionalStream, tag: 'account-confirmation'
-    }));
-    return { ok: true, alreadyVerified: false };
+    try {
+      const env = emailEnvironment();
+      const verifyUrl = await auth.generateEmailVerificationLink(user.email, { url: `${env.appUrl}/#pricing` });
+      const template = await getEmailTemplate(db, 'welcome');
+      await sendPostmark(POSTMARK_SERVER_TOKEN.value(), buildMessage({
+        from: env.from, to: user.email, template,
+        variables: { first_name: firstName(user), verify_url: verifyUrl, pricing_url: `${env.appUrl}/#pricing` },
+        stream: env.transactionalStream, tag: 'account-confirmation'
+      }));
+      return { ok: true, alreadyVerified: false };
+    } catch (error) {
+      const message = String(error?.message || '');
+      console.error('[email] account confirmation resend failed:', message);
+      if (error?.code === 'auth/internal-error' && message.includes('TOO_MANY_ATTEMPTS_TRY_LATER')) {
+        throw new HttpsError('resource-exhausted', 'Please wait a few minutes before requesting another confirmation email.');
+      }
+      if (message.includes('pending approval')) {
+        throw new HttpsError('failed-precondition', 'Confirmation email is temporarily unavailable. Please contact BiteSites support.');
+      }
+      throw new HttpsError('internal', 'We could not send your confirmation email just now. Please try again shortly.');
+    }
   }
 );
 

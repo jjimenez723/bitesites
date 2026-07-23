@@ -1,5 +1,6 @@
 import { memo, useEffect, useId, useMemo, useRef } from 'react';
 import bitMascotSvg from '../../Bit.svg?raw';
+import bitClosedEyes from '../assets/bit-closed-eyes.svg';
 
 // One page-level cursor source keeps every Bit instance in sync, including
 // avatars that mount after the visitor has already moved their cursor.
@@ -101,7 +102,12 @@ function makeInstanceSafe(svg, prefix) {
 
 // Memoised because React rewrites dangerouslySetInnerHTML on every re-render,
 // which would swap out the pupil elements the gaze effect is animating.
-export const BitMascot = memo(function BitMascot({ className = '', decorative = true, label = 'Bit, the BiteSites mascot' }) {
+export const BitMascot = memo(function BitMascot({
+  className = '',
+  decorative = true,
+  label = 'Bit, the BiteSites mascot',
+  eyesClosed = false
+}) {
   const rootRef = useRef(null);
   const instanceId = useId().replace(/[^a-zA-Z0-9_-]/g, '');
   const markup = useMemo(() => makeInstanceSafe(taggedMascotSvg, `bit-${instanceId}`), [instanceId]);
@@ -184,10 +190,12 @@ export const BitMascot = memo(function BitMascot({ className = '', decorative = 
 
   return <span
     ref={rootRef}
-    className={`bit-mascot ${className}`.trim()}
+    className={`bit-mascot ${eyesClosed ? 'bit-mascot-eyes-closed' : ''} ${className}`.trim()}
     role={decorative ? undefined : 'img'}
     aria-hidden={decorative ? 'true' : undefined}
     aria-label={decorative ? undefined : label}
-    dangerouslySetInnerHTML={{ __html: markup }}
-  />;
+  >
+    <span className="bit-mascot-art" dangerouslySetInnerHTML={{ __html: markup }} />
+    <img className="bit-mascot-closed-eyes" src={bitClosedEyes} alt="" aria-hidden="true" />
+  </span>;
 });

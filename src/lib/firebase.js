@@ -16,7 +16,8 @@ const env = import.meta.env;
 
 const firebaseConfig = {
   apiKey: env.VITE_FIREBASE_API_KEY || 'AIzaSyBK6c_9hF0gECJa-BL4kEmvDuq6ik3nqGU',
-  authDomain: env.VITE_FIREBASE_AUTH_DOMAIN || 'bitesites-org.firebaseapp.com',
+  // OAuth redirects are served from the verified Firebase Hosting custom domain.
+  authDomain: env.VITE_FIREBASE_AUTH_DOMAIN || 'bitesites.org',
   projectId: env.VITE_FIREBASE_PROJECT_ID || 'bitesites-org',
   storageBucket: env.VITE_FIREBASE_STORAGE_BUCKET || 'bitesites-org.firebasestorage.app',
   messagingSenderId: env.VITE_FIREBASE_MESSAGING_SENDER_ID || '334264806949',

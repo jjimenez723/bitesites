@@ -26,6 +26,13 @@ npm run deploy                     # build + deploy site and Firestore rules
 npm run deploy:functions           # deploy the GoHighLevel lead sync
 ```
 
+## Brand consistency
+
+Every user-facing screen and state—including sign-in, access-denied, empty,
+error, and loading states—must include the BiteSites logo and use the established
+brand styles. Do not expose implementation or administrator instructions to end
+users; present clear, branded guidance instead.
+
 ## Legal
 
 `/terms` and `/privacy` are generated from [`src/pages/legal-details.js`](src/pages/legal-details.js).

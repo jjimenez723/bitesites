@@ -28,8 +28,13 @@ body.bit-open { overflow: hidden; padding-right: var(--bit-scrollbar-width,0); }
 @media (prefers-reduced-motion:reduce) { .bit-window { clip-path: none; animation: none; will-change: auto; transform: none; }.bit-topbar,.bit-intro,.bit-conversation,.bit-composer,.bit-message.user,.bit-thinking { animation: none; }.thinking-orb i { animation: none; }.bit-stage { scroll-behavior: auto; } }
 
 /* Bit stays crisp against a pure black field wherever the receptionist appears. */
-.bit-mascot { display: block; aspect-ratio: 1; line-height: 0; }
-.bit-mascot > svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.bit-mascot { position: relative; display: block; aspect-ratio: 1; line-height: 0; }
+.bit-mascot-art,.bit-mascot-art > svg { display: block; width: 100%; height: 100%; overflow: visible; }
+/* Privacy mode uses a registered companion asset, rather than CSS shapes drawn
+   over Bit. This keeps the closed-eye expression part of the illustration. */
+.bit-mascot-closed-eyes { position: absolute; inset: 0; display: block; width: 100%; height: 100%; pointer-events: none; opacity: 0; transition: opacity .16s ease; will-change: opacity; }
+.bit-mascot-eyes-closed .bit-mascot-closed-eyes { opacity: 1; transition-duration: .22s; }
+@media (prefers-reduced-motion:reduce) { .bit-mascot-closed-eyes { transition: none; } }
 .bit-preview { position: relative; min-height: 430px; overflow: hidden; background: #000; }
 .bit-preview-mascot { position: absolute; right: -34px; top: -12px; width: min(56%, 280px); height: auto; opacity: .92; }
 .bit-preview .preview-head,.bit-preview .preview-bubble,.bit-preview .preview-choice,.bit-preview .preview-foot { position: relative; z-index: 1; }

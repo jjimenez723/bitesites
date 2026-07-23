@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 375 375" preserveAspectRatio="xMidYMid meet">
+  <!-- White eye patches remove the open eyes in the original Bit art. The arcs
+       are deliberately offset to follow the tilted face, rather than being
+       placed on a horizontal baseline. -->
+  <ellipse cx="154.5" cy="168.5" rx="24" ry="24" fill="#fff"/>
+  <ellipse cx="214" cy="151.5" rx="24" ry="24" fill="#fff"/>
+  <path d="M136 167.5 Q154.5 183 173 167.5" fill="none" stroke="#000" stroke-width="5.5" stroke-linecap="round"/>
+  <path d="M195.5 150.5 Q214 166 232.5 150.5" fill="none" stroke="#000" stroke-width="5.5" stroke-linecap="round"/>
+</svg>
