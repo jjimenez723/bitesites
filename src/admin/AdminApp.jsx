@@ -13,11 +13,12 @@ import {
   watchSession, signIn, signInWithGoogle, completeRedirectSignIn,
   signOutUser, resetPassword, friendlyAuthError
 } from '../lib/auth';
-import logoMark from '../assets/bitesites-logo-mark.webp';
 import Overview from './Overview';
 import Leads from './Leads';
 import Conversations from './Conversations';
 import Users from './Users';
+import EmailStudio from './EmailStudio';
+import adminLogo from '../assets/bitesites-admin-logo.svg';
 import './admin.css';
 
 const Icon = ({ d }) => (
@@ -27,10 +28,19 @@ const Icon = ({ d }) => (
   </svg>
 );
 
+// The supplied BiteSites logo stays on a solid surface for dependable contrast
+// throughout the dark console.
+const AdminLogo = () => (
+  <span className="admin-logo" aria-hidden="true">
+    <img src={adminLogo} alt="" />
+  </span>
+);
+
 const NAV = [
   { to: '/admin', end: true, label: 'Overview', icon: 'M3 13h4v8H3zM10 3h4v18h-4zM17 9h4v12h-4z' },
   { to: '/admin/leads', label: 'Leads', icon: 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z' },
   { to: '/admin/conversations', label: 'Conversations', icon: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z' },
+  { to: '/admin/email', label: 'Email', icon: 'M3 5h18v14H3zM3 6l9 7 9-7' },
   { to: '/admin/users', label: 'Users', icon: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75' }
 ];
 
@@ -87,7 +97,7 @@ function SignIn() {
     const email = event.currentTarget.form?.email?.value;
     if (!email) return setStatus({ text: 'Enter your email first, then choose reset.', kind: 'error' });
     resetPassword(email)
-      .then(() => setStatus({ text: 'Password reset sent. Check your inbox.', kind: 'success' }))
+      .then(result => setStatus({ text: result?.message || 'If that address has an account, a reset link is on its way.', kind: 'success' }))
       .catch(error => setStatus({ text: friendlyAuthError(error), kind: 'error' }));
   };
 
@@ -95,7 +105,7 @@ function SignIn() {
     <div className="bs-admin">
       <div className="admin-auth">
         <div className="admin-auth-card">
-          <img src={logoMark} alt="" />
+          <AdminLogo />
           <h1>Console</h1>
           <p>Sign in to see leads, conversations and site activity.</p>
 
@@ -171,7 +181,7 @@ export default function AdminApp() {
       <div className="admin-shell">
         <aside className="admin-sidebar">
           <div className="admin-brand">
-            <img src={logoMark} alt="" />
+            <AdminLogo />
             <div>
               <strong>BiteSites</strong>
               <span>Console</span>
@@ -207,6 +217,7 @@ export default function AdminApp() {
             <Route index element={<Overview />} />
             <Route path="leads" element={<Leads />} />
             <Route path="conversations" element={<Conversations />} />
+            <Route path="email" element={<EmailStudio />} />
             <Route path="users" element={<Users />} />
             <Route path="*" element={<Navigate to="/admin" replace />} />
           </Routes>

@@ -21,6 +21,14 @@ import { setGlobalOptions } from 'firebase-functions/v2';
 import { initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { FieldValue, Timestamp, getFirestore } from 'firebase-admin/firestore';
+import { createHash } from 'node:crypto';
+import {
+  DEFAULT_EMAIL_TEMPLATES,
+  buildMessage,
+  getEmailTemplate,
+  seedEmailTemplates,
+  sendPostmark
+} from './email.js';
 
 initializeApp();
 setGlobalOptions({ region: 'us-central1', maxInstances: 10 });
@@ -28,6 +36,7 @@ setGlobalOptions({ region: 'us-central1', maxInstances: 10 });
 const GHL_WEBHOOK_URL = defineSecret('GHL_WEBHOOK_URL');
 const VOICE_WEBHOOK_SECRET = defineSecret('VOICE_WEBHOOK_SECRET');
 const GHL_API_TOKEN = defineSecret('GHL_API_TOKEN');
+const POSTMARK_SERVER_TOKEN = defineSecret('POSTMARK_SERVER_TOKEN');
 
 // The sub-account the Voice AI agent lives in. Not a secret — it is visible in
 // the GoHighLevel URL bar — so a plain constant rather than a stored secret. A
@@ -956,6 +965,318 @@ export const importVoiceHistory = onRequest(
     } catch (error) {
       console.error('[voice-import] failed:', error);
       res.status(500).json({ error: String(error.message).slice(0, 300) });
+    }
+  }
+);
+
+// =================================================== Accounts, pricing, email
+
+// Pricing is deliberately server-side. A signed-out visitor receives no prices
+// in the HTML or JavaScript bundle; authenticated users fetch this object through
+// getServicePricing after Firebase has verified their ID token.
+const SERVICE_PRICING = {
+  web: [
+    ['Starter Site', 'A sharp single-page site for early-stage launches or service businesses that need credibility fast.', 'From $1,000', ['Single-page site', 'Responsive design', 'Basic SEO', 'One revision']],
+    ['Growth Site', 'A stronger marketing site built around your offer, content, and lead flow.', 'From $2,500', ['Up to 7 pages', 'Conversion-focused UX', 'Analytics setup', 'Two revisions'], true],
+    ['Custom Build', 'A flexible site for businesses with more complex content, integrations, or workflows.', 'Let’s talk', ['Custom architecture', 'Integrations', 'Advanced SEO', 'Ongoing support']]
+  ],
+  social: [
+    ['Visibility Starter', 'Stay active, polished, and top of mind with content that makes your brand worth following.', 'From $600/mo', ['8 on-brand posts each month', 'Strategic content calendar', 'Captions written to drive action', 'Scheduling and performance insights']],
+    ['Growth Engine', 'Turn social attention into trust, engagement, and a steady path toward your next customer.', 'From $1,200/mo', ['16 posts across 2 channels', 'Campaign-led content strategy', 'Audience and community engagement', 'Monthly growth recommendations'], true],
+    ['Market Leader', 'Build an always-on multi-channel presence designed for bigger campaigns, teams, and ambitions.', 'Let’s talk', ['Custom high-volume cadence', 'Launch and campaign support', 'Executive-ready reporting', 'Creative direction and approvals']]
+  ],
+  ai: [
+    ['Automation Opportunity Audit', 'Find the repetitive work costing your team time—and the fastest opportunities to eliminate it.', 'From $750', ['End-to-end process mapping', 'High-impact opportunity scorecard', 'ROI-focused automation roadmap', 'Clear implementation plan']],
+    ['Lead Flow Automation', 'Capture, qualify, and route every opportunity faster so your team can focus on closing.', 'From $2,000', ['Custom workflow architecture', 'CRM, form, and inbox integrations', 'AI-assisted lead handling', 'Testing, training, and handoff'], true],
+    ['AI Growth System', 'Build a custom AI-powered operating system around the way your business wins and grows.', 'Let’s talk', ['Purpose-built AI workflows', 'Reliable human review points', 'Team documentation and training', 'Ongoing performance optimization']]
+  ]
+};
+
+const emailEnvironment = () => ({
+  from: process.env.POSTMARK_FROM_EMAIL || 'BiteSites <hello@bitesites.org>',
+  admin: process.env.ADMIN_NOTIFICATION_EMAIL || 'hello@bitesites.org',
+  appUrl: (process.env.APP_URL || 'https://bitesites.org').replace(/\/$/, ''),
+  transactionalStream: process.env.POSTMARK_MESSAGE_STREAM || 'outbound',
+  broadcastStream: process.env.POSTMARK_BROADCAST_STREAM || 'broadcasts'
+});
+
+const firstName = user => {
+  const named = str(user?.displayName, 120).split(/\s+/)[0];
+  return named || str(user?.email, 200).split('@')[0] || 'there';
+};
+
+async function recordDelivery(db, data) {
+  await db.collection('emailDeliveries').add({
+    ...data,
+    createdAt: FieldValue.serverTimestamp()
+  }).catch(error => console.error('[email] could not write delivery log:', error.message));
+}
+
+async function loadStoredTemplate(db, id) {
+  if (DEFAULT_EMAIL_TEMPLATES[id]) return getEmailTemplate(db, id);
+  const snapshot = await db.doc(`emailTemplates/${id}`).get();
+  return snapshot.exists ? { id, ...snapshot.data() } : null;
+}
+
+async function requireAdmin(request) {
+  if (!request.auth?.uid) throw new HttpsError('unauthenticated', 'Sign in first.');
+  const db = getFirestore();
+  if ((await callerRole(db, request.auth)) !== 'admin') {
+    throw new HttpsError('permission-denied', 'Only an admin can manage email.');
+  }
+  return db;
+}
+
+export const getServicePricing = onCall(
+  { enforceAppCheck: true, maxInstances: 20 },
+  request => {
+    if (!request.auth?.uid) throw new HttpsError('unauthenticated', 'Create an account or sign in to see pricing.');
+    return { pricing: SERVICE_PRICING };
+  }
+);
+
+// A profile is the durable account-created event for both password and Google
+// sign-ups. Sending from here avoids a fragile client-side "welcome" request.
+export const sendAccountCreatedEmails = onDocumentCreated(
+  { document: 'users/{uid}', secrets: [POSTMARK_SERVER_TOKEN], maxInstances: 10 },
+  async event => {
+    const profile = event.data?.data();
+    if (!profile?.email) return;
+
+    const db = getFirestore();
+    const auth = getAuth();
+    const env = emailEnvironment();
+    const user = await auth.getUser(event.params.uid).catch(() => null);
+    if (!user) return;
+
+    let verifyUrl = `${env.appUrl}/#pricing`;
+    if (!user.emailVerified) {
+      try {
+        verifyUrl = await auth.generateEmailVerificationLink(user.email, {
+          url: `${env.appUrl}/#pricing`
+        });
+      } catch (error) {
+        console.error('[email] could not create verification link:', error.message);
+      }
+    }
+
+    const [welcome, adminNotice] = await Promise.all([
+      getEmailTemplate(db, 'welcome'),
+      getEmailTemplate(db, 'new_account_admin')
+    ]);
+    const messages = [
+      buildMessage({
+        from: env.from,
+        to: user.email,
+        template: welcome,
+        variables: {
+          first_name: firstName(user),
+          verify_url: verifyUrl,
+          pricing_url: `${env.appUrl}/#pricing`
+        },
+        stream: env.transactionalStream,
+        tag: 'account-created'
+      })
+    ];
+    if (env.admin) {
+      messages.push(buildMessage({
+        from: env.from,
+        to: env.admin,
+        template: adminNotice,
+        variables: {
+          first_name: profile.displayName || firstName(user),
+          email: user.email,
+          company: profile.company || '—',
+          admin_url: `${env.appUrl}/admin/users`
+        },
+        stream: env.transactionalStream,
+        tag: 'new-account-admin'
+      }));
+    }
+
+    try {
+      const result = await sendPostmark(POSTMARK_SERVER_TOKEN.value(), messages);
+      await recordDelivery(db, {
+        templateId: 'welcome',
+        kind: 'account-created',
+        recipientCount: messages.length,
+        uid: user.uid,
+        status: 'sent',
+        postmark: Array.isArray(result)
+          ? result.map(item => item.MessageID || '').filter(Boolean)
+          : [result.MessageID].filter(Boolean)
+      });
+    } catch (error) {
+      console.error('[email] account-created send failed:', error.message);
+      await recordDelivery(db, {
+        templateId: 'welcome', kind: 'account-created', recipientCount: messages.length,
+        uid: user.uid, status: 'failed', error: str(error.message, 500)
+      });
+    }
+  }
+);
+
+// Public by design, but response and timing do not reveal whether the email has
+// an account. App Check plus the per-address cooldown prevents it becoming a
+// free mail relay or an inbox flooding endpoint.
+export const requestPasswordReset = onCall(
+  { enforceAppCheck: true, secrets: [POSTMARK_SERVER_TOKEN], maxInstances: 10 },
+  async request => {
+    const email = str(request.data?.email, 200).toLowerCase();
+    const generic = { ok: true, message: 'If that address has an account, a reset link is on its way.' };
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return generic;
+
+    const db = getFirestore();
+    const key = createHash('sha256').update(email).digest('hex');
+    const rateRef = db.doc(`emailRateLimits/password-${key}`);
+    const now = Date.now();
+    const allowed = await db.runTransaction(async transaction => {
+      const snapshot = await transaction.get(rateRef);
+      const previous = snapshot.data()?.lastSentAt?.toMillis?.() || 0;
+      if (now - previous < 10 * 60 * 1000) return false;
+      transaction.set(rateRef, { lastSentAt: FieldValue.serverTimestamp() }, { merge: true });
+      return true;
+    });
+    if (!allowed) return generic;
+
+    const auth = getAuth();
+    const user = await auth.getUserByEmail(email).catch(() => null);
+    if (!user || user.disabled) return generic;
+
+    const env = emailEnvironment();
+    const resetUrl = await auth.generatePasswordResetLink(email, { url: `${env.appUrl}/#pricing` });
+    const template = await getEmailTemplate(db, 'password_reset');
+    try {
+      const result = await sendPostmark(POSTMARK_SERVER_TOKEN.value(), buildMessage({
+        from: env.from,
+        to: email,
+        template,
+        variables: { first_name: firstName(user), reset_url: resetUrl },
+        stream: env.transactionalStream,
+        tag: 'password-reset'
+      }));
+      await recordDelivery(db, {
+        templateId: 'password_reset', kind: 'password-reset', recipientCount: 1,
+        uid: user.uid, status: 'sent', postmark: [result.MessageID].filter(Boolean)
+      });
+    } catch (error) {
+      console.error('[email] password reset send failed:', error.message);
+      await recordDelivery(db, {
+        templateId: 'password_reset', kind: 'password-reset', recipientCount: 1,
+        uid: user.uid, status: 'failed', error: str(error.message, 500)
+      });
+      // Keep the public response generic even when delivery fails.
+    }
+    return generic;
+  }
+);
+
+export const resendAccountConfirmation = onCall(
+  { enforceAppCheck: true, secrets: [POSTMARK_SERVER_TOKEN], maxInstances: 10 },
+  async request => {
+    if (!request.auth?.uid) throw new HttpsError('unauthenticated', 'Sign in first.');
+    const db = getFirestore();
+    const auth = getAuth();
+    const user = await auth.getUser(request.auth.uid);
+    if (!user.email) throw new HttpsError('failed-precondition', 'This account has no email address.');
+    if (user.emailVerified) return { ok: true, alreadyVerified: true };
+    const env = emailEnvironment();
+    const verifyUrl = await auth.generateEmailVerificationLink(user.email, { url: `${env.appUrl}/#pricing` });
+    const template = await getEmailTemplate(db, 'welcome');
+    await sendPostmark(POSTMARK_SERVER_TOKEN.value(), buildMessage({
+      from: env.from, to: user.email, template,
+      variables: { first_name: firstName(user), verify_url: verifyUrl, pricing_url: `${env.appUrl}/#pricing` },
+      stream: env.transactionalStream, tag: 'account-confirmation'
+    }));
+    return { ok: true, alreadyVerified: false };
+  }
+);
+
+export const listEmailTemplates = onCall(
+  { enforceAppCheck: true, maxInstances: 5 },
+  async request => {
+    const db = await requireAdmin(request);
+    await seedEmailTemplates(db);
+    const snapshot = await db.collection('emailTemplates').orderBy('name').limit(100).get();
+    return { templates: snapshot.docs.map(doc => {
+      const { createdAt, updatedAt, updatedBy, ...template } = doc.data();
+      return { id: doc.id, ...template };
+    }) };
+  }
+);
+
+export const saveEmailTemplate = onCall(
+  { enforceAppCheck: true, maxInstances: 5 },
+  async request => {
+    const db = await requireAdmin(request);
+    const id = str(request.data?.id, 80).toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+    const name = str(request.data?.name, 120);
+    const description = str(request.data?.description, 300);
+    const subject = str(request.data?.subject, 2000);
+    const html = typeof request.data?.html === 'string' ? request.data.html.trim().slice(0, 200000) : '';
+    const text = typeof request.data?.text === 'string' ? request.data.text.trim().slice(0, 50000) : '';
+    const category = request.data?.category === 'broadcast' ? 'broadcast' : 'transactional';
+    if (!id || !name || !subject || !html || !text) {
+      throw new HttpsError('invalid-argument', 'Name, subject, HTML and plain text are required.');
+    }
+    await db.doc(`emailTemplates/${id}`).set({
+      name, description, subject, html, text, category,
+      system: Boolean(DEFAULT_EMAIL_TEMPLATES[id]),
+      updatedAt: FieldValue.serverTimestamp(),
+      updatedBy: request.auth.uid
+    }, { merge: true });
+    return { ok: true, id };
+  }
+);
+
+export const deleteEmailTemplate = onCall(
+  { enforceAppCheck: true, maxInstances: 5 },
+  async request => {
+    const db = await requireAdmin(request);
+    const id = str(request.data?.id, 80);
+    if (DEFAULT_EMAIL_TEMPLATES[id]) throw new HttpsError('failed-precondition', 'System templates cannot be deleted.');
+    await db.doc(`emailTemplates/${id}`).delete();
+    return { ok: true };
+  }
+);
+
+export const sendAdminEmail = onCall(
+  { enforceAppCheck: true, secrets: [POSTMARK_SERVER_TOKEN], timeoutSeconds: 60, maxInstances: 5 },
+  async request => {
+    const db = await requireAdmin(request);
+    const templateId = str(request.data?.templateId, 80);
+    const recipients = Array.from(new Set((Array.isArray(request.data?.recipients) ? request.data.recipients : [])
+      .map(value => str(value, 200).toLowerCase())
+      .filter(value => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value))));
+    if (!recipients.length || recipients.length > 50) {
+      throw new HttpsError('invalid-argument', 'Choose between 1 and 50 valid recipients.');
+    }
+    const template = await loadStoredTemplate(db, templateId);
+    if (!template) throw new HttpsError('not-found', 'That email template no longer exists.');
+    const variables = request.data?.variables && typeof request.data.variables === 'object'
+      ? Object.fromEntries(Object.entries(request.data.variables).slice(0, 30).map(([key, value]) => [str(key, 60), str(value, 5000)]))
+      : {};
+    const env = emailEnvironment();
+    const stream = template.category === 'broadcast' ? env.broadcastStream : env.transactionalStream;
+    const messages = recipients.map(email => buildMessage({
+      from: env.from, to: email, template,
+      variables: { first_name: email.split('@')[0], email, ...variables },
+      stream, tag: `admin-${templateId}`.slice(0, 1000)
+    }));
+    try {
+      const result = await sendPostmark(POSTMARK_SERVER_TOKEN.value(), messages);
+      await recordDelivery(db, {
+        templateId, kind: 'admin-send', recipientCount: recipients.length,
+        sentBy: request.auth.uid, status: 'sent',
+        postmark: (Array.isArray(result) ? result : [result]).map(item => item.MessageID || '').filter(Boolean)
+      });
+      return { ok: true, sent: recipients.length };
+    } catch (error) {
+      await recordDelivery(db, {
+        templateId, kind: 'admin-send', recipientCount: recipients.length,
+        sentBy: request.auth.uid, status: 'failed', error: str(error.message, 500)
+      });
+      throw new HttpsError('internal', str(error.message, 300));
     }
   }
 );

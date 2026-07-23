@@ -423,6 +423,48 @@ curl -X POST -H "x-webhook-secret: $SECRET" \
 only) writing into the emulator, so it catches drift in the real payload shape. It skips
 itself if `~/.ghl-token` is absent.
 
+## Protected pricing and Postmark email
+
+Pricing values now live in the `getServicePricing` callable instead of the public Vite
+bundle. Firebase verifies the caller's ID token; any signed-in BiteSites account can see
+prices, while admin data still requires the separate `admin` role.
+
+Account creation, confirmation links, admin sign-up notices, password resets and admin
+dashboard sends are delivered by Postmark. Set the server token as a Firebase secret:
+
+```bash
+firebase functions:secrets:set POSTMARK_SERVER_TOKEN
+```
+
+The Postmark server must have `hello@bitesites.org` (or the whole domain) as a verified
+sender. Non-secret runtime settings use these optional Functions environment variables:
+
+```dotenv
+POSTMARK_FROM_EMAIL="BiteSites <hello@bitesites.org>"
+ADMIN_NOTIFICATION_EMAIL="hello@bitesites.org"
+APP_URL="https://bitesites.org"
+POSTMARK_MESSAGE_STREAM="outbound"
+POSTMARK_BROADCAST_STREAM="broadcasts"
+```
+
+Put overrides in `functions/.env.bitesites-org` for deployment or export them in the
+deployment environment. Never put `POSTMARK_SERVER_TOKEN` in a `VITE_` variable.
+
+The first account email or visit to **Admin → Email** seeds four editable Firestore
+templates: account confirmation, password reset, new-account admin notice and client
+announcement. The dashboard edits `emailTemplates`, sends 1–50 individual messages per
+request, previews HTML in a sandboxed iframe and records outcomes in `emailDeliveries`.
+System templates can be edited but not deleted. Password-reset requests return the same
+response for existing and unknown addresses and are rate-limited per normalized email.
+
+Deploy Functions before deploying the gated frontend, otherwise signed-in users will see
+the gate but the pricing callable will not exist:
+
+```bash
+npm run deploy:functions
+npm run deploy:hosting
+```
+
 ## Commands
 
 ```bash
@@ -432,11 +474,12 @@ npm run test:rules     # security-rule assertions against the emulator
 npm run test:voice     # recordVoiceCall against the emulator
 npm run test:import    # the GHL call-log import, live API → emulator
 npm run test:role      # setUserRole — role document and auth claim stay in step
+npm run test:email     # template rendering, escaping, and Postmark payloads
 npm run role -- <email> <admin|client|none>   # grant or revoke portal access
 npm run deploy         # build + deploy hosting and Firestore rules/indexes
 npm run deploy:rules   # rules and indexes only
 npm run deploy:hosting # site only
-npm run deploy:functions # lead sync, Byte call webhook, and setUserRole
+npm run deploy:functions # pricing, Postmark, lead sync, voice functions, and roles
 npm run emulators      # local Firestore/Auth emulators
 ```
 

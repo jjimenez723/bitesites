@@ -57,7 +57,7 @@
   color-scheme: dark;
   background: var(--bg);
   color: var(--ink);
-  font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family: var(--font-sans, "Tomorrow"), -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   font-size: 14px;
   line-height: 1.5;
   min-height: 100vh;
@@ -65,10 +65,10 @@
 }
 
 .bs-admin h1, .bs-admin h2, .bs-admin h3, .bs-admin h4 {
-  font-family: 'Inter Tight', Inter, sans-serif;
-  letter-spacing: -.022em;
+  font-family: var(--font-display, "Natalie"), "Tomorrow", sans-serif;
+  letter-spacing: 0;
   margin: 0;
-  font-weight: 700;
+  font-weight: 400;
 }
 .bs-admin p { margin: 0; }
 .bs-admin a { color: inherit; text-decoration: none; }
@@ -81,7 +81,7 @@
   place-items: center;
   background: #0a0a0e;
   color: #74748a;
-  font-family: Inter, -apple-system, sans-serif;
+  font-family: var(--font-sans, "Tomorrow"), -apple-system, sans-serif;
   font-size: 14px;
 }
 
@@ -104,8 +104,20 @@
 }
 
 .admin-brand { display: flex; align-items: center; gap: 11px; padding: 0 8px; }
-.admin-brand img { width: 34px; height: 34px; border-radius: 9px; }
-.admin-brand strong { display: block; font-size: 15px; letter-spacing: -.02em; }
+.admin-logo {
+  width: 34px; height: 34px; flex: none; display: block; position: relative;
+  overflow: hidden; border: 1px solid rgba(255, 255, 255, .24); border-radius: 10px;
+  background: #000;
+  box-shadow: 0 7px 18px rgba(0, 0, 0, .3);
+}
+.admin-logo img {
+  display: block; width: 100%; height: 100%; padding: 5px;
+  pointer-events: none;
+}
+.admin-brand strong {
+  display: block; font-family: var(--font-sans, "Tomorrow"), sans-serif;
+  font-size: 15px; font-weight: 700; letter-spacing: .015em;
+}
 .admin-brand span { display: block; font-size: 11px; color: var(--ink-3); letter-spacing: .08em; text-transform: uppercase; }
 
 .admin-nav { display: flex; flex-direction: column; gap: 2px; }
@@ -229,8 +241,8 @@
 .stat-tile { display: flex; flex-direction: column; gap: 4px; }
 .stat-label { font-size: 11.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); }
 .stat-value {
-  font-family: 'Inter Tight', Inter, sans-serif;
-  font-size: 32px; font-weight: 700; letter-spacing: -.03em; line-height: 1.1;
+  font-family: var(--font-display, "Natalie"), "Tomorrow", sans-serif;
+  font-size: 32px; font-weight: 400; letter-spacing: 0; line-height: 1.1;
 }
 .stat-foot { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--ink-3); margin-top: 2px; }
 .stat-delta { font-weight: 600; font-variant-numeric: tabular-nums; }
@@ -396,6 +408,36 @@
 }
 .admin-note { font-size: 12px; color: var(--ink-3); line-height: 1.55; }
 
+/* ------------------------------------------------------------ email studio */
+
+.email-notice { padding: 13px 16px; border-radius: 12px; border: 1px solid var(--line); font-size: 13px; }
+.email-notice.success { color: #83db91; background: rgba(12,163,12,.09); border-color: rgba(12,163,12,.28); }
+.email-notice.error { color: #f0a3a3; background: rgba(208,59,59,.1); border-color: rgba(208,59,59,.38); }
+.email-studio-layout { display: grid; grid-template-columns: 230px minmax(0,1fr); gap: 18px; align-items: start; }
+.email-template-list { position: sticky; top: 90px; padding: 16px; }
+.email-template-list .card-head { padding: 2px 5px 10px; margin-bottom: 5px; }
+.email-template-list > button { display: flex; flex-direction: column; gap: 2px; width: 100%; padding: 10px 11px; border: 1px solid transparent; border-radius: 9px; color: var(--ink-2); background: transparent; text-align: left; cursor: pointer; }
+.email-template-list > button:hover { background: var(--surface-2); }
+.email-template-list > button.active { color: var(--ink); background: rgba(124,58,237,.14); border-color: rgba(124,58,237,.3); }
+.email-template-list > button span { font-size: 12.5px; font-weight: 650; }
+.email-template-list > button small { color: var(--ink-3); font-size: 10.5px; text-transform: capitalize; }
+.email-studio-main { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+.email-editor-card .card-head .btn-admin { margin-left: auto; }
+.email-form-grid { display: grid; grid-template-columns: minmax(0,1.4fr) minmax(150px,.6fr); gap: 14px; }
+.email-form-grid label,.email-send-card label,.email-variable-grid label { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.email-form-grid label > span,.email-send-card label > span,.email-variable-grid label > span { font-size: 11.5px; font-weight: 650; color: var(--ink-2); }
+.email-form-grid .full { grid-column: 1/-1; }
+.email-form-grid input,.email-form-grid select,.email-form-grid textarea,.email-send-card input,.email-send-card textarea { box-sizing: border-box; width: 100%; border: 1px solid var(--line); border-radius: 9px; padding: 10px 11px; color: var(--ink); background: var(--surface-2); outline: none; resize: vertical; }
+.email-form-grid input:focus,.email-form-grid select:focus,.email-form-grid textarea:focus,.email-send-card input:focus,.email-send-card textarea:focus { border-color: var(--brand-violet); box-shadow: 0 0 0 3px rgba(124,58,237,.12); }
+.email-form-grid textarea.code { font-family: ui-monospace,SFMono-Regular,Menlo,monospace; font-size: 11px; line-height: 1.55; tab-size: 2; }
+.email-preview-card iframe { display: block; width: 100%; height: 620px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
+.email-send-card { display: flex; flex-direction: column; gap: 14px; }
+.email-recipient-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.email-variable-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; padding-top: 4px; }
+.email-variable-grid input:disabled { opacity: .55; }
+.email-send-button { justify-content: center; padding: 11px 18px; align-self: flex-start; }
+.email-send-card small { color: var(--ink-3); font-weight: 500; }
+
 /* Hold the previous render at reduced opacity on refetch — no skeleton flash. */
 .is-refreshing { opacity: .55; transition: opacity .2s; }
 
@@ -424,7 +466,11 @@
   backdrop-filter: blur(18px);
   box-shadow: 0 30px 80px rgba(0, 0, 0, .55);
 }
-.admin-auth-card img { width: 46px; height: 46px; border-radius: 12px; margin-bottom: 18px; }
+.admin-auth-card .admin-logo {
+  width: 46px; height: 46px; border-radius: 14px; margin-bottom: 18px;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, .45);
+}
+.admin-auth-card .admin-logo img { padding: 6px; }
 .admin-auth-card h1 { font-size: 23px; margin-bottom: 6px; }
 .admin-auth-card > p { color: var(--ink-3); font-size: 13px; margin-bottom: 24px; }
 .admin-auth-card form { display: flex; flex-direction: column; gap: 13px; }
@@ -508,4 +554,15 @@
   .admin-topbar, .admin-body { padding-left: 16px; padding-right: 16px; }
   .admin-grid.cols-4, .admin-grid.cols-2 { grid-template-columns: minmax(0, 1fr); }
   .detail-row { grid-template-columns: minmax(0, 1fr); gap: 3px; }
+  .email-studio-layout { grid-template-columns: minmax(0,1fr); }
+  .email-template-list { position: static; display: flex; overflow-x: auto; gap: 5px; }
+  .email-template-list .card-head { display:none; }
+  .email-template-list > button { min-width: 160px; }
+  .email-variable-grid { grid-template-columns: minmax(0,1fr); }
+}
+
+@media (max-width: 560px) {
+  .email-form-grid { grid-template-columns: minmax(0,1fr); }
+  .email-form-grid .full { grid-column: auto; }
+  .email-preview-card iframe { height: 480px; }
 }
