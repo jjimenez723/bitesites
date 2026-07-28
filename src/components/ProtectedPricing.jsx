@@ -38,8 +38,8 @@ const CheckIcon = () => (
   <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m4 10.5 3.65 3.65L16 5.85" /></svg>
 );
 
-function AccountDialog({ onClose, onConfirmationResult }) {
-  const [view, setView] = useState('signup');
+function AccountDialog({ initialView = 'signup', onClose, onConfirmationResult }) {
+  const [view, setView] = useState(initialView);
   const [signupStep, setSignupStep] = useState(1);
   const [signupDirection, setSignupDirection] = useState('forward');
   const [busy, setBusy] = useState(false);
@@ -145,18 +145,18 @@ function AccountDialog({ onClose, onConfirmationResult }) {
   return (
     <div className="account-modal-backdrop" onMouseDown={event => event.target === event.currentTarget && onClose()}>
       <section className="account-modal" role="dialog" aria-modal="true" aria-labelledby="account-modal-title">
-        <button className="account-modal-close" type="button" onClick={onClose} aria-label="Close">×</button>
-        <aside className="account-welcome" aria-hidden="true">
+        <button className="account-modal-close" type="button" onClick={onClose} aria-label="Close account dialog">×</button>
+        <aside className="account-welcome">
           <div className="account-brand"><span>&lt;</span> BiteSites <span>/&gt;</span></div>
-          <div className={`account-mascot ${showPassword ? 'is-guarding' : ''}`}>
+          <div className={`account-mascot ${showPassword ? 'is-guarding' : ''}`} aria-hidden="true">
             <span className="account-orbit account-orbit-one" />
             <span className="account-orbit account-orbit-two" />
             <BitMascot eyesClosed={showPassword} />
           </div>
           <div className="account-welcome-copy">
-            <p className="account-welcome-kicker">{showPassword ? 'Privacy mode on' : 'Your BiteSites guide'}</p>
-            <h3>{showPassword ? 'Bit isn’t looking.' : isSignup ? 'A small step toward a better digital presence.' : 'Good to see you again.'}</h3>
-            <p>{showPassword ? 'Your password stays between you and the secure sign-in form.' : 'Create an account to explore current packages and keep your project planning in one place.'}</p>
+            <p className="account-welcome-kicker">{showPassword ? 'Privacy mode on' : 'Pricing access'}</p>
+            <h3>{showPassword ? 'Bit isn’t looking.' : isSignup ? 'See every package and price.' : 'Welcome back.'}</h3>
+            <p>{showPassword ? 'Your password stays between you and the secure sign-in form.' : 'One free account unlocks current pricing across every BiteSites service.'}</p>
           </div>
           {isSignup && <ol className="account-steps">
             {['Tell us about you', 'Secure your account'].map((label, index) => {
@@ -169,14 +169,14 @@ function AccountDialog({ onClose, onConfirmationResult }) {
 
         <div className="account-form-panel" ref={formPanelRef}>
           <div className={`account-panel-header account-panel-header--${signupDirection}`} key={`${view}-${signupStep}`}>
-            <p className="account-modal-kicker">BiteSites member access</p>
+            <p className="account-modal-kicker">Free BiteSites account</p>
             <h2 id="account-modal-title">
-              {isSignup ? (signupStep === 1 ? 'Let’s get acquainted.' : 'Make it secure.') : view === 'login' ? 'Welcome back.' : 'Reset your password.'}
+              {isSignup ? (signupStep === 1 ? 'Create your account.' : 'Secure your account.') : view === 'login' ? 'Sign in to see pricing.' : 'Reset your password.'}
             </h2>
             <p className="account-modal-intro">
               {isSignup
-                ? (signupStep === 1 ? 'A few details first — this takes less than a minute.' : 'Choose a password only you know. Bit will look away if you need to check it.')
-                : view === 'login' ? 'Sign in to pick up where you left off.' : 'We’ll send a secure reset link to your inbox.'}
+                ? (signupStep === 1 ? 'It’s free and takes less than a minute.' : 'Choose a password only you know. Bit will look away if you check it.')
+                : view === 'login' ? 'Use your BiteSites account to unlock every package.' : 'We’ll send a secure reset link to your inbox.'}
             </p>
           </div>
 
@@ -184,7 +184,7 @@ function AccountDialog({ onClose, onConfirmationResult }) {
             {['About you', 'Secure account'].map((label, index) => <li className={index + 1 <= signupStep ? 'active' : ''} key={label}><span>{index + 1}</span>{label}</li>)}
           </ol>}
 
-          {view !== 'reset' && (
+          {view !== 'reset' && (!isSignup || signupStep === 1) && (
             <>
               <button className="account-google" type="button" disabled={busy} onClick={google}>
                 <GoogleMark />
@@ -255,7 +255,7 @@ function PasswordField({ name = 'password', label = 'Password', value, onChange,
   </label>;
 }
 
-function LockedPricing({ onBegin }) {
+function LockedPricing({ onSignup, onLogin }) {
   return (
     <div className="pricing-locked">
       <div className="pricing-locked-ghost" aria-hidden="true">
@@ -265,11 +265,18 @@ function LockedPricing({ onBegin }) {
         <span className="pricing-lock-icon" aria-hidden="true">
           <svg viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="11" rx="3" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></svg>
         </span>
-        <p>Member pricing</p>
-        <h3>Unlock every service package.</h3>
-        <span>Create a free BiteSites account or sign in to see current project pricing, package details, and recommended starting points.</span>
-        <button type="button" className="btn btn-ai" onClick={onBegin}>Sign up or log in <b>→</b></button>
-        <small>Free account · Takes less than a minute</small>
+        <p>Pricing preview</p>
+        <h3>See exactly what fits your business.</h3>
+        <span>Create a free account to unlock current pricing, package details, and clear starting points for every service.</span>
+        <div className="pricing-locked-benefits" aria-label="Account benefits">
+          <span><CheckIcon /> All package prices</span>
+          <span><CheckIcon /> No commitment</span>
+          <span><CheckIcon /> Under one minute</span>
+        </div>
+        <div className="pricing-locked-actions">
+          <button type="button" className="btn btn-ai" onClick={onSignup}>Create free account <b>→</b></button>
+          <button type="button" className="pricing-locked-login" onClick={onLogin}>Already have an account? <strong>Sign in</strong></button>
+        </div>
       </div>
     </div>
   );
@@ -279,7 +286,7 @@ export default function ProtectedPricing({ tab, setTab }) {
   const [session, setSession] = useState({ loading: true, user: null });
   const [pricing, setPricing] = useState(null);
   const [error, setError] = useState('');
-  const [dialog, setDialog] = useState(false);
+  const [dialog, setDialog] = useState(null);
   const [confirmation, setConfirmation] = useState('');
   const [resendingConfirmation, setResendingConfirmation] = useState(false);
 
@@ -299,7 +306,7 @@ export default function ProtectedPricing({ tab, setTab }) {
   }, [session.user]);
 
   if (session.loading) return <div className="pricing-gate-loading" aria-label="Checking account access"><i /><i /><i /></div>;
-  if (!session.user) return <><LockedPricing onBegin={() => setDialog(true)} />{dialog && <AccountDialog onClose={() => setDialog(false)} onConfirmationResult={result => setConfirmation(
+  if (!session.user) return <><LockedPricing onSignup={() => setDialog('signup')} onLogin={() => setDialog('login')} />{dialog && <AccountDialog initialView={dialog} onClose={() => setDialog(null)} onConfirmationResult={result => setConfirmation(
     result?.sent
       ? 'Confirmation email sent — check your inbox or spam folder'
       : result?.error || 'Account created, but we could not send the confirmation email. Select here to try again.'

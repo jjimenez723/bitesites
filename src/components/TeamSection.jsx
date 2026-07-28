@@ -147,9 +147,34 @@ function matrixAngle(transform) {
   }
 }
 
+function nodePosition(angle, radius) {
+  const radians = angle * (Math.PI / 180);
+  return {
+    left: `${50 + Math.cos(radians) * radius}%`,
+    top: `${50 + Math.sin(radians) * radius}%`
+  };
+}
+
+function selectedNodeStyle(index, orbitRotation) {
+  const angle = -90 + index * 90 + orbitRotation;
+  const desktop = nodePosition(angle, 42.5);
+  const tablet = nodePosition(angle, 40.5);
+  const phone = nodePosition(angle, 39);
+
+  return {
+    '--node-left': desktop.left,
+    '--node-top': desktop.top,
+    '--node-left-tablet': tablet.left,
+    '--node-top-tablet': tablet.top,
+    '--node-left-phone': phone.left,
+    '--node-top-phone': phone.top
+  };
+}
+
 export function TeamSection() {
   const [activeIndex, setActiveIndex] = useState(null);
   const [orbitRotation, setOrbitRotation] = useState(0);
+  const [orbitPositioned, setOrbitPositioned] = useState(false);
   const orbitRef = useRef(null);
   const [experienceRef, experienceRevealed] = useReveal();
 
@@ -161,12 +186,19 @@ export function TeamSection() {
 
     setActiveIndex(index);
     setOrbitRotation(currentRotation);
+    if (activeIndex === null) setOrbitPositioned(false);
 
     window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
       const selectedAtTop = -index * 90;
       const nearestTurn = selectedAtTop + 360 * Math.round((currentRotation - selectedAtTop) / 360);
+      setOrbitPositioned(true);
       setOrbitRotation(nearestTurn);
     }));
+  };
+
+  const closeMember = () => {
+    setActiveIndex(null);
+    setOrbitPositioned(false);
   };
 
   const activeMember = activeIndex === null ? null : teamMembers[activeIndex];
@@ -183,7 +215,7 @@ export function TeamSection() {
       </div>
 
       <div
-        className={`team-experience reveal ${experienceRevealed ? 'in' : ''} ${activeMember ? 'has-selection' : ''}`}
+        className={`team-experience reveal ${experienceRevealed ? 'in' : ''} ${activeMember ? 'has-selection' : ''} ${orbitPositioned ? 'orbit-positioned' : ''}`}
         ref={experienceRef}
       >
         <div className="team-orbit-shell">
@@ -196,7 +228,11 @@ export function TeamSection() {
           >
             {teamMembers.map((member, index) => <div
               className={`team-node ${activeIndex === index ? 'active' : ''}`}
-              style={{ '--node-angle': `${-90 + index * 90}deg`, '--member-color': member.color }}
+              style={{
+                '--node-angle': `${-90 + index * 90}deg`,
+                '--member-color': member.color,
+                ...selectedNodeStyle(index, orbitRotation)
+              }}
               key={member.name}
             >
               <button
@@ -220,7 +256,7 @@ export function TeamSection() {
 
           {activeMember && <article className="team-member-card" id="team-member-detail" aria-live="polite" key={activeMember.name}>
             <div className="team-card-topline"><span>Team profile</span><span>0{activeIndex + 1} / 0{teamMembers.length}</span></div>
-            <button className="team-card-close" type="button" onClick={() => setActiveIndex(null)} aria-label={`Close ${activeMember.name}'s profile`}>×</button>
+            <button className="team-card-close" type="button" onClick={closeMember} aria-label={`Close ${activeMember.name}'s profile`}>×</button>
             <TeamVideo member={activeMember} />
             <div className="team-card-body">
               <p className="team-card-role">{activeMember.role}</p>

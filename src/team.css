@@ -53,8 +53,13 @@
 .team-node-button:hover .team-node-portrait, .team-node-button:focus-visible .team-node-portrait { border-color: var(--member-color); box-shadow: 0 0 0 7px color-mix(in srgb, var(--member-color) 12%, transparent), 0 12px 32px rgba(0, 0, 0, .5); }
 .team-node-button:focus-visible .team-node-portrait { outline: 2px solid #fff; outline-offset: 5px; }
 
-.team-experience.has-selection .team-orbit-nodes { animation: none; transform: rotate(var(--orbit-rotation)); transition: transform 1s cubic-bezier(.2, .78, .18, 1); }
-.team-experience.has-selection .team-node-button { animation: none; transform: translate(-50%, -50%) rotate(calc((var(--node-angle) + var(--orbit-rotation)) * -1)); transition: transform 1s cubic-bezier(.2, .78, .18, 1), color .35s, opacity .35s; }
+.team-experience.has-selection .team-orbit-nodes { animation: none; transform: none; }
+/* Once a profile is open, position nodes directly instead of rotating a parent
+   and counter-rotating its children. This keeps every portrait upright through
+   the transition in browsers that interpolate those two rotations differently. */
+.team-experience.has-selection .team-node { left: var(--node-left); top: var(--node-top); transform: none; }
+.team-experience.has-selection.orbit-positioned .team-node { transition: left 1s cubic-bezier(.2, .78, .18, 1), top 1s cubic-bezier(.2, .78, .18, 1); }
+.team-experience.has-selection .team-node-button { animation: none; transform: translate(-50%, -50%); transition: color .35s, opacity .35s; }
 .team-experience.has-selection .team-node.active .team-node-portrait { width: 82px; height: 82px; border-color: rgba(255, 255, 255, .82); background: #fff; box-shadow: 0 0 0 9px rgba(255, 255, 255, .06), 0 0 38px color-mix(in srgb, var(--member-color) 42%, transparent); }
 .team-experience.has-selection .team-node:not(.active) .team-node-button { opacity: .52; }
 
@@ -98,6 +103,7 @@
   .team-experience { margin-top: 58px; }
   .team-orbit-shell { --orbit-size: min(600px, 94vw); }
   .team-node { transform: rotate(var(--node-angle)) translateX(calc(var(--orbit-size) * .405)); }
+  .team-experience.has-selection .team-node { left: var(--node-left-tablet); top: var(--node-top-tablet); transform: none; }
   .team-node-button { width: 112px; gap: 7px; }
   .team-node-portrait { width: 54px; height: 54px; }
   .team-node-name { max-width: 112px; font-size: 9.5px; }
@@ -122,6 +128,7 @@
      rather than being clipped by the section on phones under 430px. */
   .team-orbit-shell { --orbit-size: min(430px, 100vw); left: 50%; transform: translateX(-50%); }
   .team-node { transform: rotate(var(--node-angle)) translateX(calc(var(--orbit-size) * .39)); }
+  .team-experience.has-selection .team-node { left: var(--node-left-phone); top: var(--node-top-phone); transform: none; }
   .team-node-name { max-width: 86px; }
   .team-member-card { width: 270px; }
   .team-card-media { height: 130px; }
@@ -133,6 +140,6 @@
 
 @media (prefers-reduced-motion: reduce) {
   .team-orbit-nodes, .team-node-button, .team-orbit-scan, .team-instructions i { animation: none; }
-  .team-experience.has-selection .team-orbit-nodes, .team-experience.has-selection .team-node-button { transition-duration: .01ms; }
+  .team-experience.has-selection .team-orbit-nodes, .team-experience.has-selection .team-node, .team-experience.has-selection .team-node-button { transition-duration: .01ms; }
   .team-member-card { animation-duration: .01ms; animation-delay: 0s; }
 }

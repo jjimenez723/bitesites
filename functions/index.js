@@ -44,6 +44,118 @@ const POSTMARK_SERVER_TOKEN = defineSecret('POSTMARK_SERVER_TOKEN');
 // deployed context, which silently breaks tests and local runs.
 const GHL_LOCATION_ID = process.env.GHL_LOCATION_ID || 'LDL5wuJlnVnqk9vn6taD';
 
+// ---------------------------------------------------------------- visit location
+
+// Coarse IP geolocation for the first-party analytics dashboard. The IP is
+// used only for the lookup and is never written to Firestore. Latitude and
+// longitude are rounded to a tenth of a degree (roughly city-scale), which is
+// plenty for the globe while avoiding a misleading sense of precision.
+const GEO_CACHE_TTL_MS = 20 * 60 * 1000;
+const geoCache = new Map();
+
+const analyticsText = (value, maxLen) =>
+  typeof value === 'string' ? value.trim().replace(/\s+/g, ' ').slice(0, maxLen) : '';
+
+function requestIp(req) {
+  const forwarded = analyticsText(req.get('x-forwarded-for'), 500)
+    .split(',')
+    .map(value => value.trim())
+    .find(Boolean);
+  return (forwarded || req.ip || '').replace(/^::ffff:/, '').replace(/^\[|\]$/g, '');
+}
+
+function isPublicIp(ip) {
+  if (!ip || ip === '::1' || ip === '127.0.0.1') return false;
+  if (/^(10\.|192\.168\.|169\.254\.|0\.)/.test(ip)) return false;
+  const match = ip.match(/^172\.(\d+)\./);
+  if (match && Number(match[1]) >= 16 && Number(match[1]) <= 31) return false;
+  if (/^(fc|fd|fe80):/i.test(ip)) return false;
+  return true;
+}
+
+async function lookupLocation(ip) {
+  const cached = geoCache.get(ip);
+  if (cached && Date.now() - cached.at < GEO_CACHE_TTL_MS) return cached.value;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 4500);
+  try {
+    const fields = 'success,country,country_code,region,city,latitude,longitude,timezone.id';
+    const response = await fetch(`https://ipwho.is/${encodeURIComponent(ip)}?fields=${fields}`, {
+      headers: { Accept: 'application/json' },
+      signal: controller.signal
+    });
+    if (!response.ok) throw new Error(`geolocation provider returned ${response.status}`);
+    const body = await response.json();
+    if (!body?.success || !Number.isFinite(body.latitude) || !Number.isFinite(body.longitude)) {
+      throw new Error('geolocation provider returned no usable location');
+    }
+
+    const value = {
+      country: analyticsText(body.country, 80),
+      countryCode: analyticsText(body.country_code, 2).toUpperCase(),
+      region: analyticsText(body.region, 80),
+      city: analyticsText(body.city, 80),
+      lat: Math.round(body.latitude * 10) / 10,
+      lon: Math.round(body.longitude * 10) / 10,
+      timezone: analyticsText(body.timezone?.id, 80)
+    };
+    geoCache.set(ip, { at: Date.now(), value });
+    if (geoCache.size > 500) geoCache.delete(geoCache.keys().next().value);
+    return value;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export const recordVisitLocation = onRequest(
+  { maxInstances: 3, timeoutSeconds: 10 },
+  async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    if (req.method !== 'POST') {
+      res.set('Allow', 'POST').status(405).json({ error: 'method-not-allowed' });
+      return;
+    }
+
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const sid = analyticsText(body.sid, 40);
+    const vid = analyticsText(body.vid, 40);
+    const path = analyticsText(body.path, 300) || '/';
+    const device = ['mobile', 'tablet', 'desktop'].includes(body.device) ? body.device : 'desktop';
+    if (!/^[A-Za-z0-9._-]{8,40}$/.test(sid) || !/^[A-Za-z0-9._-]{8,40}$/.test(vid)) {
+      res.status(400).json({ error: 'invalid-session' });
+      return;
+    }
+
+    const ip = requestIp(req);
+    if (!isPublicIp(ip)) {
+      // Local emulator traffic has no meaningful location. This is a normal
+      // no-op rather than an error so local development stays quiet.
+      res.status(204).end();
+      return;
+    }
+
+    try {
+      const location = await lookupLocation(ip);
+      const day = new Date().toISOString().slice(0, 10);
+      const id = `location_${day}_${createHash('sha256').update(sid).digest('hex').slice(0, 24)}`;
+      await getFirestore().collection('events').doc(id).create({
+        type: 'location', sid, vid, path, day, device,
+        ...location,
+        ts: FieldValue.serverTimestamp()
+      });
+      res.status(202).json({ recorded: true });
+    } catch (error) {
+      if (ALREADY_EXISTS(error)) {
+        res.status(200).json({ recorded: true, duplicate: true });
+        return;
+      }
+      console.warn('[analytics] visit location could not be recorded', error?.message || error);
+      res.status(503).json({ error: 'location-unavailable' });
+    }
+  }
+);
+
 const SERVICE_LABELS = {
   web_development: 'Web Development',
   ai_automation: 'AI Automation',

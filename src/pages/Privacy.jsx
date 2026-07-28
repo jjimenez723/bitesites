@@ -81,11 +81,32 @@ export default function Privacy() {
 
         <h3>Information collected automatically</h3>
         <p>
-          When you submit a form, we record limited technical context alongside your submission to
-          help us understand where enquiries come from and to investigate abuse:
+          We use first-party analytics to understand whether the site is useful and where its design
+          can be improved. When you use the site, we may record:
         </p>
         <ul>
-          <li>the page path on our site you submitted from;</li>
+          <li>
+            a randomly generated browser identifier and session identifier, which are specific to
+            this site and are not used to identify you by name or follow you across other websites;
+          </li>
+          <li>pages viewed, sections reached, scroll depth, and interactions with links and controls;</li>
+          <li>
+            click positions expressed as relative page coordinates, device category, viewport size,
+            referring URL, and campaign query parameters;
+          </li>
+          <li>
+            an approximate city, state or region, and country inferred from your IP address. We round
+            the resulting coordinates to city scale, do not request GPS access, and do not store your
+            IP address in our analytics database;
+          </li>
+          <li>a server-generated timestamp.</li>
+        </ul>
+        <p>
+          When you submit a form, we also record limited technical context alongside the submission
+          to help us understand where enquiries come from and investigate abuse:
+        </p>
+        <ul>
+          <li>the page path on our site where you submitted it;</li>
           <li>the referring URL, if your browser sent one;</li>
           <li>your browser&rsquo;s user-agent string;</li>
           <li>a server-generated timestamp.</li>
@@ -98,7 +119,7 @@ export default function Privacy() {
         <h3>What we do not collect</h3>
         <p>
           We do not ask for and do not want sensitive personal information — such as government
-          identifiers, financial account numbers, health information, precise geolocation, or
+          identifiers, financial account numbers, health information, precise GPS geolocation, or
           information revealing race, religion, or sexual orientation. Please do not include such
           details in free-text fields. We do not run advertising or cross-site tracking on this site.
         </p>
@@ -142,9 +163,17 @@ export default function Privacy() {
 
       <Section id="cookies" heading="4. Cookies and local storage">
         <p>
-          We do not use advertising, analytics-profiling, or cross-site tracking cookies on this site.
+          We do not use advertising or cross-site tracking cookies on this site. Our first-party
+          analytics uses browser storage only to keep visits from the same browser or tab grouped
+          together:
         </p>
         <ul>
+          <li>
+            <strong>First-party analytics.</strong> We store a random browser identifier in local
+            storage and a random visit identifier in session storage. These values contain no name,
+            email address, or advertising identifier and are used only for aggregate site analytics.
+            Clearing browser storage resets them.
+          </li>
           <li>
             <strong>Authentication.</strong> If you sign in, Firebase Authentication stores a session
             token in your browser&rsquo;s local storage so you stay signed in. Clearing your browser
@@ -206,9 +235,10 @@ export default function Privacy() {
             <strong>Service providers.</strong> Google (Firebase and Google Cloud) hosts our database
             and authentication and stores form submissions in United States data centres. GoHighLevel
             (LeadConnector), together with the speech and conversational AI services it uses, powers
-            the Voice AI demo and our customer relationship management. Other providers may handle
-            email delivery and business operations. Each is bound to process the information only on
-            our instructions.
+            the Voice AI demo and our customer relationship management. IPWHOIS.io receives an IP
+            address to return an approximate city-level location for our first-party analytics; we do
+            not store that IP address in our analytics database. Other providers may handle email
+            delivery and business operations. Each is used only to provide the relevant service.
           </li>
           <li>
             <strong>Professional advisers.</strong> Lawyers, accountants and insurers where reasonably
@@ -251,6 +281,11 @@ export default function Privacy() {
           Account records are kept for as long as the account is active, and for a reasonable period
           after closure to resolve disputes and meet legal obligations. You can ask us to delete your
           information sooner — see below.
+        </p>
+        <p>
+          First-party analytics events, including coarse location events, are ordinarily retained for
+          up to <strong>24 months</strong> so we can compare site performance over time, after which
+          they may be deleted or aggregated.
         </p>
       </Section>
 

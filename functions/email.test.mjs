@@ -55,3 +55,11 @@ test('system templates include the BiteSites logo and resolve branded defaults',
     assert.doesNotMatch(message.HtmlBody, /{{\s*(brand_url|logo_url)\s*}}/);
   }
 });
+
+test('system templates use the simple white email layout', () => {
+  for (const template of Object.values(DEFAULT_EMAIL_TEMPLATES)) {
+    assert.match(template.html, /background:#ffffff/);
+    assert.ok(template.html.indexOf('{{logo_url}}') < template.html.indexOf('<h1'));
+    assert.doesNotMatch(template.html, /#080b16|#111625|#161d2d|Beautiful sites, thoughtful systems/);
+  }
+});

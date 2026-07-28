@@ -10,6 +10,7 @@
 import React, { useMemo, useState } from 'react';
 import { useEvents, useLeads, cutoffDay, EVENT_CAP } from './data';
 import { StatTile, TrendChart, RankList, Funnel, HeatMap, ShareBar, compact, share } from './charts';
+import GeoOverview from './GeoGlobe';
 
 const RANGES = [[7, '7d'], [30, '30d'], [90, '90d']];
 const SCROLL_MARKS = [25, 50, 75, 100];
@@ -45,6 +46,8 @@ function summarise(events) {
   const devices = new Map([['desktop', 0], ['mobile', 0], ['tablet', 0]]);
   const depth = SCROLL_MARKS.map(() => new Set());
   const clicks = [];
+  const locationSessions = new Set();
+  const locationPoints = new Map();
   let pageViews = 0;
   let formStarts = 0;
   let chatOpens = 0;
@@ -80,6 +83,27 @@ function summarise(events) {
       case 'form_start': formStarts += 1; break;
       case 'chat_open': chatOpens += 1; break;
       case 'call_open': callOpens += 1; break;
+      case 'location': {
+        if (
+          !event.sid || locationSessions.has(event.sid)
+          || typeof event.lat !== 'number' || typeof event.lon !== 'number'
+        ) break;
+        locationSessions.add(event.sid);
+        const key = `${event.lat}|${event.lon}|${event.city || ''}|${event.countryCode || ''}`;
+        const point = locationPoints.get(key) || {
+          key,
+          lat: event.lat,
+          lon: event.lon,
+          city: event.city || '',
+          region: event.region || '',
+          country: event.country || '',
+          countryCode: event.countryCode || '',
+          value: 0
+        };
+        point.value += 1;
+        locationPoints.set(key, point);
+        break;
+      }
       default: break;
     }
   }
@@ -103,7 +127,8 @@ function summarise(events) {
       { label: 'Tablet', value: devices.get('tablet') }
     ],
     depth: SCROLL_MARKS.map((mark, index) => ({ label: `${mark}% of page`, count: depth[index].size })),
-    clicks
+    clicks,
+    locations: [...locationPoints.values()].sort((a, b) => b.value - a.value)
   };
 }
 
@@ -207,6 +232,8 @@ export default function Overview() {
           </div>
           <TrendChart data={current.trend} label="Views" />
         </div>
+
+        <GeoOverview locations={current.locations} sessions={current.sessions} />
 
         <div className="admin-grid cols-2">
           <div className="admin-card">

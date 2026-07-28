@@ -8,49 +8,32 @@ export const EMAIL_BRAND = {
   logoUrl: 'https://bitesites.org/apple-touch-icon.png'
 };
 
-const EMAIL_TEMPLATE_VERSION = 2;
+const EMAIL_TEMPLATE_VERSION = 3;
 const fontStack = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
 
-const shell = ({ preheader, eyebrow, title, body, cta, footer, accent = '#7c3aed', light = false }) => {
-  const background = light ? '#f4f6fb' : '#080b16';
-  const card = light ? '#ffffff' : '#111625';
-  const copy = light ? '#4c5568' : '#c5ccdb';
-  const muted = light ? '#717b8d' : '#99a4b8';
-  const line = light ? '#e5e9f1' : '#263047';
-  const buttonText = accent === '#e9edff' ? '#111625' : '#ffffff';
+const shell = ({ preheader, title, body, cta, footer }) => {
   return `<!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="x-apple-disable-message-reformatting">
-<style>@media only screen and (max-width:620px){.email-pad{padding-left:24px !important;padding-right:24px !important;}h1{font-size:28px !important;line-height:34px !important;}}</style>
-<!--[if mso]><style>table { border-collapse:collapse; } .email-button { padding:14px 22px !important; }</style><![endif]--></head>
-<body style="margin:0;padding:0;background:${background};color:${copy};font-family:${fontStack};">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="x-apple-disable-message-reformatting"><meta name="color-scheme" content="light"><meta name="supported-color-schemes" content="light">
+<style>:root{color-scheme:light;supported-color-schemes:light;}@media only screen and (max-width:620px){.email-wrap{padding:24px 20px !important;}.email-content{padding-top:32px !important;padding-bottom:32px !important;}h1{font-size:26px !important;line-height:32px !important;}}</style>
+<!--[if mso]><style>table { border-collapse:collapse; } .email-button { padding:13px 20px !important; }</style><![endif]--></head>
+<body style="margin:0;padding:0;background:#ffffff;color:#222222;font-family:${fontStack};">
   <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;line-height:1px;mso-hide:all;">${preheader}&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;</div>
-  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;background:${background};">
-    <tr><td align="center" style="padding:32px 16px 40px;">
-      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;max-width:620px;">
-        <tr><td align="center" style="padding:0 0 18px;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;background:#ffffff;">
+    <tr><td align="center" class="email-wrap" style="padding:40px 24px;">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;max-width:560px;">
+        <tr><td align="center" style="padding:0 0 28px;border-bottom:1px solid #e8e8e8;">
           <a href="{{brand_url}}" style="display:inline-block;text-decoration:none;">
-            <img src="{{logo_url}}" width="42" height="42" alt="BiteSites" style="display:block;width:42px;height:42px;border:0;border-radius:12px;" />
+            <img src="{{logo_url}}" width="74" height="74" alt="BiteSites" style="display:block;width:74px;height:74px;border:0;" />
           </a>
         </td></tr>
-        <tr><td style="height:4px;background:${accent};border-radius:18px 18px 0 0;font-size:0;line-height:4px;">&nbsp;</td></tr>
-        <tr><td style="background:${card};border:1px solid ${line};border-top:0;border-radius:0 0 18px 18px;overflow:hidden;">
-          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
-            <tr><td style="padding:38px 40px 12px;" class="email-pad">
-              <p style="margin:0 0 14px;color:${accent};font-size:11px;line-height:16px;font-weight:800;letter-spacing:1.4px;text-transform:uppercase;">${eyebrow}</p>
-              <h1 style="margin:0;color:${light ? '#151a29' : '#ffffff'};font-family:${fontStack};font-size:32px;line-height:38px;font-weight:750;letter-spacing:-.7px;">${title}</h1>
-            </td></tr>
-            <tr><td style="padding:14px 40px 30px;" class="email-pad">
-              <div style="color:${copy};font-size:16px;line-height:26px;">${body}</div>
-              ${cta ? `<table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin-top:28px;"><tr><td style="border-radius:10px;background:${accent};"><a class="email-button" href="${cta.href}" style="display:inline-block;padding:14px 22px;border:1px solid ${accent};border-radius:10px;color:${buttonText};font-family:${fontStack};font-size:15px;line-height:20px;font-weight:750;text-decoration:none;">${cta.label}&nbsp;&nbsp;→</a></td></tr></table>${cta.note ? `<p style="margin:18px 0 0;color:${muted};font-size:13px;line-height:20px;">${cta.note}</p>` : ''}` : ''}
-            </td></tr>
-            <tr><td style="padding:22px 40px 26px;border-top:1px solid ${line};" class="email-pad">
-              <p style="margin:0;color:${muted};font-size:12px;line-height:19px;">${footer}</p>
-            </td></tr>
-          </table>
+        <tr><td class="email-content" style="padding:40px 0 36px;">
+          <h1 style="margin:0 0 20px;color:#111111;font-family:${fontStack};font-size:30px;line-height:37px;font-weight:700;letter-spacing:-.5px;">${title}</h1>
+          <div style="color:#3f3f3f;font-size:16px;line-height:26px;">${body}</div>
+          ${cta ? `<table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin-top:28px;"><tr><td style="border-radius:8px;background:#111111;"><a class="email-button" href="${cta.href}" style="display:inline-block;padding:13px 20px;border:1px solid #111111;border-radius:8px;color:#ffffff;font-family:${fontStack};font-size:15px;line-height:20px;font-weight:700;text-decoration:none;">${cta.label}</a></td></tr></table>${cta.note ? `<p style="margin:16px 0 0;color:#6b6b6b;font-size:13px;line-height:20px;">${cta.note}</p>` : ''}` : ''}
         </td></tr>
-        <tr><td align="center" style="padding:18px 20px 0;color:${light ? '#7b8494' : '#7f8aa0'};font-size:11px;line-height:17px;">
-          <a href="{{brand_url}}" style="color:inherit;text-decoration:none;font-weight:700;">BiteSites</a>&nbsp;&nbsp;•&nbsp;&nbsp;Beautiful sites, thoughtful systems, practical AI.
+        <tr><td style="padding:22px 0 0;border-top:1px solid #e8e8e8;">
+          <p style="margin:0;color:#777777;font-size:12px;line-height:19px;">${footer}</p>
         </td></tr>
       </table>
     </td></tr>
@@ -65,15 +48,13 @@ export const DEFAULT_EMAIL_TEMPLATES = {
     category: 'transactional',
     subject: 'Confirm your BiteSites email, {{first_name}}',
     html: shell({
-      preheader: 'One quick step and your BiteSites account is ready.',
-      eyebrow: 'Account confirmation',
-      title: 'You’re almost in.',
-      body: '<p style="margin:0 0 16px;">Hi {{first_name}},</p><p style="margin:0;">Thanks for creating a BiteSites account. Confirm your email address to finish setting things up and view the service options built for your next stage of growth.</p>',
-      cta: { href: '{{verify_url}}', label: 'Confirm email', note: 'Already confirmed? <a href="{{pricing_url}}" style="color:#aebcff;text-decoration:underline;">Explore BiteSites pricing</a>.' },
-      footer: 'If you did not create a BiteSites account, you can safely ignore this email.',
-      accent: '#8c9cff'
+      preheader: 'Confirm your email to finish creating your BiteSites account.',
+      title: 'Confirm your email',
+      body: '<p style="margin:0 0 16px;">Hi {{first_name}},</p><p style="margin:0;">Thanks for creating a BiteSites account. Confirm your email address to finish setting it up.</p>',
+      cta: { href: '{{verify_url}}', label: 'Confirm email' },
+      footer: 'If you did not create this account, you can safely ignore this email.'
     }),
-    text: 'Hi {{first_name}},\n\nThanks for creating a BiteSites account. Confirm your email address here:\n{{verify_url}}\n\nThen explore BiteSites pricing at {{pricing_url}}.\n\nIf you did not create this account, you can safely ignore this email.'
+    text: 'Hi {{first_name}},\n\nThanks for creating a BiteSites account. Confirm your email address to finish setting it up:\n{{verify_url}}\n\nIf you did not create this account, you can safely ignore this email.'
   },
   password_reset: {
     name: 'Password reset',
@@ -82,12 +63,10 @@ export const DEFAULT_EMAIL_TEMPLATES = {
     subject: 'Reset your BiteSites password',
     html: shell({
       preheader: 'Use this secure link to choose a new password.',
-      eyebrow: 'Secure account link',
-      title: 'Reset your password.',
-      body: '<p style="margin:0 0 16px;">Hi {{first_name}},</p><p style="margin:0;">We received a request to reset the password for your BiteSites account. Use the secure link below to choose a new one.</p>',
+      title: 'Reset your password',
+      body: '<p style="margin:0 0 16px;">Hi {{first_name}},</p><p style="margin:0;">We received a request to reset your BiteSites password. Use the link below to choose a new one.</p>',
       cta: { href: '{{reset_url}}', label: 'Choose a new password', note: 'For your security, do not forward this email or share this link.' },
-      footer: 'If you did not request a password reset, no action is needed. Your current password will remain unchanged.',
-      accent: '#df79b5'
+      footer: 'If you did not request a password reset, no action is needed. Your current password will remain unchanged.'
     }),
     text: 'Hi {{first_name}},\n\nWe received a request to reset your BiteSites password. Choose a new password here:\n{{reset_url}}\n\nFor your security, do not forward this email or share this link. If you did not request this, no action is needed.'
   },
@@ -98,12 +77,10 @@ export const DEFAULT_EMAIL_TEMPLATES = {
     subject: 'New BiteSites account: {{email}}',
     html: shell({
       preheader: 'A new visitor has created a BiteSites account.',
-      eyebrow: 'New account',
-      title: 'A visitor joined BiteSites.',
-      body: `<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin:0;border:1px solid #2b3650;border-radius:12px;background:#161d2d;overflow:hidden;"><tr><td style="padding:13px 16px;border-bottom:1px solid #2b3650;color:#8f9ab0;font-size:12px;font-weight:700;width:30%;">Name</td><td style="padding:13px 16px;border-bottom:1px solid #2b3650;color:#ffffff;font-size:14px;">{{first_name}}</td></tr><tr><td style="padding:13px 16px;border-bottom:1px solid #2b3650;color:#8f9ab0;font-size:12px;font-weight:700;">Email</td><td style="padding:13px 16px;border-bottom:1px solid #2b3650;color:#ffffff;font-size:14px;word-break:break-word;">{{email}}</td></tr><tr><td style="padding:13px 16px;color:#8f9ab0;font-size:12px;font-weight:700;">Company</td><td style="padding:13px 16px;color:#ffffff;font-size:14px;">{{company}}</td></tr></table>`,
+      title: 'New account created',
+      body: `<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin:0;border-top:1px solid #e8e8e8;"><tr><td style="padding:14px 12px 14px 0;border-bottom:1px solid #e8e8e8;color:#777777;font-size:13px;font-weight:600;width:28%;">Name</td><td style="padding:14px 0;border-bottom:1px solid #e8e8e8;color:#222222;font-size:14px;">{{first_name}}</td></tr><tr><td style="padding:14px 12px 14px 0;border-bottom:1px solid #e8e8e8;color:#777777;font-size:13px;font-weight:600;">Email</td><td style="padding:14px 0;border-bottom:1px solid #e8e8e8;color:#222222;font-size:14px;word-break:break-word;">{{email}}</td></tr><tr><td style="padding:14px 12px 14px 0;border-bottom:1px solid #e8e8e8;color:#777777;font-size:13px;font-weight:600;">Company</td><td style="padding:14px 0;border-bottom:1px solid #e8e8e8;color:#222222;font-size:14px;">{{company}}</td></tr></table>`,
       cta: { href: '{{admin_url}}', label: 'Open users dashboard' },
-      footer: 'This is an internal BiteSites account notification.',
-      accent: '#70d7ef'
+      footer: 'Internal BiteSites account notification.'
     }),
     text: 'A new BiteSites account was created.\n\nName: {{first_name}}\nEmail: {{email}}\nCompany: {{company}}\n\nOpen the Users dashboard: {{admin_url}}'
   },
@@ -114,13 +91,10 @@ export const DEFAULT_EMAIL_TEMPLATES = {
     subject: '{{headline}}',
     html: shell({
       preheader: 'A note from the BiteSites studio.',
-      eyebrow: 'A note from our studio',
       title: '{{headline}}',
       body: '<p style="margin:0 0 16px;">Hi {{first_name}},</p><p style="margin:0;">{{message}}</p>',
       cta: { href: '{{cta_url}}', label: '{{cta_label}}' },
-      footer: 'You are receiving this because you have a BiteSites account. Questions? Reply to this email and our team will help.',
-      accent: '#6c7ff2',
-      light: true
+      footer: 'You are receiving this because you have a BiteSites account. Questions? Reply to this email.'
     }),
     text: 'Hi {{first_name}},\n\n{{headline}}\n\n{{message}}\n\n{{cta_label}}: {{cta_url}}'
   }

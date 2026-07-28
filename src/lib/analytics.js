@@ -20,6 +20,7 @@ import { firestore, warmFirestore } from './firestore';
 
 const SESSION_KEY = 'bs.sid';
 const VISITOR_KEY = 'bs.vid';
+const GEO_SESSION_KEY = 'bs.geo';
 
 const MAX_EVENTS_PER_SESSION = 300;
 const FLUSH_SIZE = 20;
@@ -74,6 +75,49 @@ function device() {
   if (width <= 620) return 'mobile';
   if (width <= 1024) return 'tablet';
   return 'desktop';
+}
+
+// Location is resolved by a same-origin function from the request IP. The
+// function writes the coarse result itself, so the browser never receives the
+// visitor's IP or a location payload that could be tampered with. A session
+// storage flag keeps reloads from spending another lookup; the server also
+// deduplicates by session as a second line of defence.
+async function recordLocation() {
+  if (!state) return;
+
+  const key = `${GEO_SESSION_KEY}.${state.sessionId}`;
+  try {
+    if (window.sessionStorage.getItem(key)) return;
+    window.sessionStorage.setItem(key, 'pending');
+  } catch {
+    // Storage can be unavailable in private browsing. Server-side
+    // deduplication still makes retrying harmless.
+  }
+
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 6500);
+  try {
+    const response = await fetch('/api/visit-location', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sid: state.sessionId,
+        vid: state.visitorId,
+        path: clean(window.location.pathname, 300) || '/',
+        device: device()
+      }),
+      signal: controller.signal,
+      keepalive: true
+    });
+    if (!response.ok) throw new Error(`location endpoint returned ${response.status}`);
+    try { window.sessionStorage.setItem(key, 'recorded'); } catch { /* optional */ }
+  } catch {
+    // Location is an enhancement, never a reason to interrupt the site. Clear
+    // the optimistic flag so another page load in this session may retry.
+    try { window.sessionStorage.removeItem(key); } catch { /* optional */ }
+  } finally {
+    window.clearTimeout(timeout);
+  }
 }
 
 // The day key lets the dashboard bucket by date without reading a timestamp
@@ -235,6 +279,8 @@ export function startAnalytics() {
     vw: window.innerWidth,
     vh: window.innerHeight
   });
+
+  recordLocation();
 
   const onClick = event => {
     const node = event.target;

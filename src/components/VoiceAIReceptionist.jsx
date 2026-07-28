@@ -36,9 +36,14 @@ function CloseIcon() {
 
 // Byte's face is drawn rather than illustrated so it can blink, bob, and pulse
 // its little headset waves next to Bit without shipping another asset.
-export function ByteAvatar({ className = '', decorative = true, label = 'Byte, the BiteSites voice receptionist' }) {
+export function ByteAvatar({
+  className = '',
+  decorative = true,
+  label = 'Byte, the BiteSites voice receptionist',
+  state = 'idle'
+}) {
   return <span
-    className={`byte-avatar ${className}`.trim()}
+    className={`byte-avatar is-${state} ${className}`.trim()}
     role={decorative ? undefined : 'img'}
     aria-hidden={decorative ? 'true' : undefined}
     aria-label={decorative ? undefined : label}
@@ -57,6 +62,10 @@ export function ByteAvatar({ className = '', decorative = true, label = 'Byte, t
       <g className="byte-eyes"><ellipse cx="26" cy="33" rx="3" ry="3.7" /><ellipse cx="38" cy="33" rx="3" ry="3.7" /></g>
       <g className="byte-blush"><ellipse cx="20.5" cy="39.5" rx="3.2" ry="2" /><ellipse cx="43.5" cy="39.5" rx="3.2" ry="2" /></g>
       <path className="byte-smile" d="M28.4 40.4c1.7 2.3 5.5 2.3 7.2 0" />
+      <g className="byte-mouth-open">
+        <ellipse cx="32" cy="42" rx="5" ry="4.2" />
+        <path d="M28.7 43.6c2.2 1.8 4.4 1.8 6.6 0" />
+      </g>
       <circle className="byte-spark" cx="49.5" cy="16.5" r="2.2" />
     </svg>
   </span>;
@@ -130,15 +139,19 @@ export function VoiceReceptionistPreview({ onOpen }) {
   // Warm the voice agent up on intent so the call starts as soon as it opens.
   const warm = () => { loadVoiceAgent().catch(() => { /* surfaced when opened */ }); };
 
-  return <button className="voice-preview" type="button" onClick={onOpen} onPointerEnter={warm} onFocus={warm} aria-label="Open Byte, BiteSites' Voice AI sales agent">
-    <span className="voice-preview-tools" aria-hidden="true"><ExpandIcon /><SettingsIcon /><RestartIcon /></span>
+  return <button className="voice-preview" type="button" onClick={onOpen} onPointerEnter={warm} onFocus={warm} aria-label="Start a live voice conversation with Byte">
+    <span className="voice-preview-live"><i /> Live voice demo</span>
     <span className="voice-preview-center">
-      <span className="voice-preview-mic"><MicIcon /></span>
-      <span className="voice-preview-time">00:00</span>
+      <span className="voice-preview-greeting">Hi, I’m Byte. Want to talk?</span>
+      <span className="voice-preview-portrait"><span className="voice-preview-ring" /><ByteAvatar /></span>
       <VoiceWaveform compact />
-      <span className="voice-preview-prompt">Click to speak with Byte</span>
+      <span className="voice-preview-action">
+        <span className="voice-preview-mic"><MicIcon /></span>
+        <span><strong>Talk to Byte</strong><small>Start a live conversation</small></span>
+        <span className="voice-preview-arrow" aria-hidden="true">→</span>
+      </span>
+      <span className="voice-preview-prompt">Tap to start · your browser will ask for microphone access</span>
     </span>
-    <span className="voice-preview-badge"><i /> Voice AI agent demo</span>
   </button>;
 }
 
@@ -298,9 +311,9 @@ export function VoiceAIReceptionist({ open, onClose }) {
   }, [open]);
 
   if (!open) return null;
-  const busy = starting || live;
   const statusText = error ? 'Call not connected' : STATUS_TEXT[starting && callState === 'idle' ? 'connecting' : callState] ?? STATUS_TEXT.idle;
   const intensity = callState === 'speaking' ? 1 : callState === 'listening' ? .45 : callState === 'connecting' || starting ? .2 : 0;
+  const actionText = live ? 'End conversation' : starting ? 'Connecting…' : 'Start talking to Byte';
 
   return <aside className="voice-agent-shell" ref={shellRef} role="dialog" aria-modal="true" aria-labelledby="voice-agent-title" tabIndex="-1">
     <h2 id="voice-agent-title" className="sr-only">Talk with Byte, BiteSites' Voice AI sales agent</h2>
@@ -318,14 +331,20 @@ export function VoiceAIReceptionist({ open, onClose }) {
       <small>Calls run on the BiteSites GoHighLevel voice agent.</small>
     </div>}
 
-    <div className={`voice-agent-center ${connected ? 'is-listening' : ''}`}>
-      <button className="voice-agent-core" type="button" onClick={startSession} aria-label={live ? 'End the call' : 'Start talking to Byte'} aria-pressed={live}>
+    <div className={`voice-agent-center is-${callState}`}>
+      <p className="voice-agent-kicker"><i /> Byte · Voice AI receptionist</p>
+      <span className="voice-agent-portrait">
         <span className="voice-agent-halo" />
-        {busy ? <span className="voice-agent-cube" /> : <span className="voice-agent-mic"><MicIcon muted={Boolean(error)} /></span>}
-      </button>
+        <ByteAvatar state={callState === 'speaking' ? 'speaking' : connected ? 'listening' : 'idle'} decorative={false} />
+      </span>
+      <p className="voice-agent-turn" aria-hidden="true">{callState === 'speaking' ? 'Byte is talking' : connected ? 'Byte is listening' : 'Byte is ready'}</p>
       <time className="voice-agent-time" dateTime={`PT${elapsed}S`}>{formatTime(elapsed)}</time>
       <VoiceWaveform intensity={intensity} />
       <p className="voice-agent-status" aria-live="polite">{statusText}</p>
+      <button className="voice-agent-call" type="button" onClick={startSession} aria-label={live ? 'End the call with Byte' : 'Start talking to Byte'} aria-pressed={live} disabled={starting}>
+        <span className="voice-agent-mic"><MicIcon muted={Boolean(error)} /></span>
+        <strong>{actionText}</strong>
+      </button>
       {error && <p className="voice-agent-error">{error}</p>}
     </div>
 
