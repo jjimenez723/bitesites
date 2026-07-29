@@ -1,4 +1,4 @@
-import React, { Suspense, lazy, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { Suspense, lazy, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
 import { submitLead } from './lib/leads';
@@ -18,7 +18,6 @@ import ConversationRating from './components/ConversationRating';
 import ProtectedPricing from './components/ProtectedPricing';
 import logoFull from './assets/bitesites-logo-full.webp';
 import logoWordmark from './assets/bitesites-logo-wordmark.webp';
-import logoMark from './assets/bitesites-logo-mark.webp';
 // Imported rather than referenced out of public/, so Vite emits them under
 // /assets/ with a content hash in the name. That is what retired the manual
 // ?v= cache-buster: a re-encoded clip gets a new filename, so no cache
@@ -259,8 +258,61 @@ function Button({ children, variant = 'primary', href, ...props }) { return href
 function Eyebrow({ children, gradient = false }) { return <div className={`eyebrow ${gradient ? 'gradient' : ''}`}>{children}</div>; }
 function SectionHead({ label, title, children, gradient = false }) { return <div className="section-head reveal"><Eyebrow gradient={gradient}>{label}</Eyebrow><h2>{title}</h2>{children && <p>{children}</p>}</div>; }
 
+// The chevrons as vector, lifted from the same source art as bitesites-admin-logo.svg
+// and normalised so each arm's bounding box sits at 0,0 with size CHEV_W x CHEV_H.
+// Placing them by transform is what makes the morph a morph: all three lockups use
+// this identical shape at a uniform scale (measured aspect .776/.781/.779), so the
+// arms genuinely travel between states instead of two stills cross-dissolving.
+const CHEV_W = 146.109375;
+const CHEV_H = 188.328125;
+const CHEV_LEFT = 'M146.109 0L146.109 20.781L60.625 92.641L146.109 166.875L146.109 188.328L0 91.953Z';
+const CHEV_RIGHT = 'M0 188.328L0 167.547L85.484 95.688L0 21.453L0 0L146.109 96.375Z';
+// The two bites out of the left arm's leading edge, in that same local space.
+const CHEV_BITES = [[57.465, 43.233], [91.602, 18.862]];
+const CHEV_BITE_R = 24.369;
+
+// Keyframes measured off the three WebP lockups, in the shared 500x500 canvas the
+// artwork is drawn in: [full lockup, wordmark, bare mark]. x/y are the arm's top-left,
+// s scales CHEV_W/CHEV_H to that state's size. The source art has the wordmark state
+// 4px out of vertical alignment and both the wordmark and mark states a few px off
+// centre — harmless under a dissolve, but a vector morph shows it, so these are
+// squared up about x=250.
+const CHEV_STATES = {
+  left: { x: [22.5, 5.5, 14], y: [38.5, 172.5, 136], s: [1.273, .77, 1.321] },
+  right: { x: [291.5, 382, 293], y: [38.5, 172.5, 136], s: [1.273, .77, 1.321] }
+};
+// The type block ("BITE || SITES" plus the tagline) rides one transform, expressed as
+// an offset from its own resting centre at 252.5,338.5. Glyphs scale uniformly between
+// states — only tracking differs — so one sprite covers every state and nothing has to
+// cross-dissolve. Past the wordmark state it keeps shrinking while it fades out.
+const TYPE_STATES = { x: [0, -2.5, -2.5], y: [0, -97.5, -78.5], s: [1, .604, .42] };
+
+// Catmull-Rom through three keyframes pinned at p = 0, .5 and 1. It passes exactly
+// through each lockup while keeping velocity continuous across the midpoint, so the
+// arms never stall halfway the way easing each half separately would make them.
+const tween3 = ([a, b, c], p) => {
+  const first = p < .5;
+  const u = first ? p * 2 : p * 2 - 1;
+  const pa = first ? a : b;
+  const pb = first ? b : c;
+  const ma = first ? b - a : (c - a) / 2;
+  const mb = first ? (c - a) / 2 : c - b;
+  const u2 = u * u;
+  const u3 = u2 * u;
+  return (2 * u3 - 3 * u2 + 1) * pa + (u3 - 2 * u2 + u) * ma + (3 * u2 - 2 * u3) * pb + (u3 - u2) * mb;
+};
+
 function MorphingLogo({ location = 'header', onClick }) {
   const logoRef = useRef(null);
+  const leftArmRef = useRef(null);
+  const rightArmRef = useRef(null);
+  const maskId = `logo-bite-${useId().replace(/:/g, '')}`;
+  // Resting pose for the first paint, before a scroll frame has written anything.
+  // The footer's updater stays parked until the footer is within a viewport of the
+  // fold, so it can sit here for the whole page — and it rests at the compact mark,
+  // since its morph plays in reverse as it scrolls in.
+  const rest = location === 'header' ? 0 : 2;
+  const armPose = (state) => `translate(${state.x[rest]} ${state.y[rest]}) scale(${state.s[rest]})`;
 
   useEffect(() => {
     const node = logoRef.current;
@@ -322,16 +374,24 @@ function MorphingLogo({ location = 'header', onClick }) {
       lastCompact = compact;
 
       const size = startSize + (endSize - startSize) * progress;
-      const firstMorph = smoothStep(.04, .5, progress);
-      const secondMorph = smoothStep(.5, .96, progress);
 
       node.style.setProperty('--logo-size', `${size}px`);
-      node.style.setProperty('--logo-full-opacity', String(1 - firstMorph));
-      node.style.setProperty('--logo-wordmark-opacity', String(firstMorph * (1 - secondMorph)));
-      node.style.setProperty('--logo-mark-opacity', String(secondMorph));
-      node.style.setProperty('--logo-full-scale', String(1 - .04 * firstMorph));
-      node.style.setProperty('--logo-wordmark-scale', String(.96 + .04 * firstMorph - .04 * secondMorph));
-      node.style.setProperty('--logo-mark-scale', String(.96 + .04 * secondMorph));
+      // Arms are SVG transform attributes rather than CSS: they animate in the
+      // viewBox's own units, and unlike --logo-size they cost nothing to reflow.
+      for (const [ref, state] of [[leftArmRef, CHEV_STATES.left], [rightArmRef, CHEV_STATES.right]]) {
+        const s = tween3(state.s, progress);
+        ref.current?.setAttribute('transform',
+          `translate(${tween3(state.x, progress).toFixed(2)} ${tween3(state.y, progress).toFixed(2)}) scale(${s.toFixed(4)})`);
+      }
+      // Percentages resolve against the stage, which is the 500-unit canvas scaled to
+      // --logo-size, so the same numbers work at every logo size.
+      node.style.setProperty('--logo-type-x', `${(tween3(TYPE_STATES.x, progress) / 5).toFixed(3)}%`);
+      node.style.setProperty('--logo-type-y', `${(tween3(TYPE_STATES.y, progress) / 5).toFixed(3)}%`);
+      node.style.setProperty('--logo-type-scale', tween3(TYPE_STATES.s, progress).toFixed(4));
+      node.style.setProperty('--logo-type-opacity', String(1 - smoothStep(.58, .9, progress)));
+      // The tagline is 8px tall by the time the mark is compact, so it leaves while
+      // it is still legible rather than dissolving into a grey smear.
+      node.style.setProperty('--logo-tag-opacity', String(1 - smoothStep(.03, .24, progress)));
       if (isHeader) {
         container?.style.setProperty('--logo-content-opacity', String(smoothStep(.2, .56, progress)));
         container?.style.setProperty('--nav-height', `${64 + (startSize + 18 - 64) * (1 - progress)}px`);
@@ -371,9 +431,22 @@ function MorphingLogo({ location = 'header', onClick }) {
 
   return <a href="#top" className={`brand morph-logo morph-logo-${location}`} onClick={onClick} ref={logoRef} aria-label="BiteSites — back to top">
     <span className="morph-logo-stage" aria-hidden="true">
-      <img className="morph-logo-full" src={logoFull} alt="" width="500" height="500" />
-      <img className="morph-logo-wordmark" src={logoWordmark} alt="" width="500" height="500" />
-      <img className="morph-logo-mark" src={logoMark} alt="" width="500" height="500" />
+      <svg className="morph-logo-svg" viewBox="0 0 500 500" fill="currentColor" focusable="false">
+        <defs>
+          <mask id={maskId} maskUnits="userSpaceOnUse" x="-2" y="-2" width={CHEV_W + 4} height={CHEV_H + 4}>
+            <rect x="-2" y="-2" width={CHEV_W + 4} height={CHEV_H + 4} fill="#fff" />
+            {CHEV_BITES.map(([cx, cy]) => <circle key={cx} cx={cx} cy={cy} r={CHEV_BITE_R} fill="#000" />)}
+          </mask>
+        </defs>
+        <g ref={leftArmRef} transform={armPose(CHEV_STATES.left)}><path d={CHEV_LEFT} mask={`url(#${maskId})`} /></g>
+        <g ref={rightArmRef} transform={armPose(CHEV_STATES.right)}><path d={CHEV_RIGHT} /></g>
+      </svg>
+      {/* Both layers are the same full lockup, each clipped to one band of it, so the
+          type keeps its designed letterforms without shipping extra crops. */}
+      <span className="morph-logo-type">
+        <img className="morph-logo-wordline" src={logoFull} alt="" width="500" height="500" />
+        <img className="morph-logo-tagline" src={logoFull} alt="" width="500" height="500" />
+      </span>
     </span>
   </a>;
 }
