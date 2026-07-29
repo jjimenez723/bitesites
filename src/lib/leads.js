@@ -69,7 +69,8 @@ export function buildLead(input, source) {
     businessName: clean(input.businessName, 160),
     roleInCompany: clean(input.roleInCompany, 160),
     projectDetails: clean(input.projectDetails, 5000),
-    urgencyTag: urgency.value
+    urgencyTag: urgency.value,
+    conversationId: clean(input.conversationId, 60)
   };
   for (const [key, value] of Object.entries(optional)) {
     if (value) lead[key] = value;

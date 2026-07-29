@@ -19,6 +19,20 @@
         }
       },
       {
+        "source": "/api/email-preferences",
+        "function": {
+          "functionId": "unsubscribeEmail",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/postmark-events",
+        "function": {
+          "functionId": "recordPostmarkEvent",
+          "region": "us-central1"
+        }
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }

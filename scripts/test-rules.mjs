@@ -123,7 +123,8 @@ await it('accepts a full submission with every optional field', () =>
     customAnswers: { businessSize: 'about a dozen of us' },
     pagePath: '/',
     referrer: 'https://google.com',
-    userAgent: 'Mozilla/5.0'
+    userAgent: 'Mozilla/5.0',
+    conversationId: 'chat_abc123'
   })));
 
 describe('leads — rejected submissions');
@@ -150,6 +151,9 @@ await it('rejects an empty services list', () =>
 
 await it('rejects an oversized projectDetails', () =>
   assertFails(addDoc(collection(anon, 'leads'), { ...validLead(), projectDetails: 'x'.repeat(5001) })));
+
+await it('rejects an oversized conversation id', () =>
+  assertFails(addDoc(collection(anon, 'leads'), { ...validLead(), conversationId: 'x'.repeat(61) })));
 
 await it('rejects an oversized name', () =>
   assertFails(addDoc(collection(anon, 'leads'), { ...validLead(), name: 'x'.repeat(121) })));

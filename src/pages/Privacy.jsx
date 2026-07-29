@@ -72,6 +72,12 @@ export default function Privacy() {
           </li>
         </ul>
 
+        <p>
+          If you rate a conversation with Bit or Byte, we collect the score, any optional comment,
+          the conversation or call it relates to, and whether you responded on the site or from an
+          emailed feedback request. We also store your announcement and feedback-email preferences.
+        </p>
+
         <h3>Information from the Voice AI demo</h3>
         <p>
           If you start a call with our Voice AI receptionist demo, we and our voice platform provider
@@ -204,6 +210,7 @@ export default function Privacy() {
           <li>prepare proposals, quotes and statements of work;</li>
           <li>create and administer accounts, and verify who is authorised to access what;</li>
           <li>provide, maintain, secure and improve the site and our services;</li>
+          <li>send requested account, inquiry and conversation messages and honour email preferences;</li>
           <li>
             detect, investigate and prevent fraud, spam, abuse and security incidents, and enforce our{' '}
             <Link to="/terms">Terms</Link>;
@@ -235,7 +242,9 @@ export default function Privacy() {
             <strong>Service providers.</strong> Google (Firebase and Google Cloud) hosts our database
             and authentication and stores form submissions in United States data centres. GoHighLevel
             (LeadConnector), together with the speech and conversational AI services it uses, powers
-            the Voice AI demo and our customer relationship management. IPWHOIS.io receives an IP
+            the Voice AI demo and our customer relationship management. Postmark delivers our
+            account, inquiry, feedback and announcement emails and reports delivery, bounce,
+            complaint and unsubscribe events. IPWHOIS.io receives an IP
             address to return an approximate city-level location for our first-party analytics; we do
             not store that IP address in our analytics database. Other providers may handle email
             delivery and business operations. Each is used only to provide the relevant service.
@@ -286,6 +295,10 @@ export default function Privacy() {
           First-party analytics events, including coarse location events, are ordinarily retained for
           up to <strong>24 months</strong> so we can compare site performance over time, after which
           they may be deleted or aggregated.
+        </p>
+        <p>
+          Conversation ratings, delivery events and email preferences are retained as needed to
+          improve the agents, document delivery outcomes and continue honouring opt-out choices.
         </p>
       </Section>
 

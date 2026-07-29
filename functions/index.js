@@ -21,8 +21,9 @@ import { setGlobalOptions } from 'firebase-functions/v2';
 import { initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { FieldValue, Timestamp, getFirestore } from 'firebase-admin/firestore';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import {
+  addBroadcastUnsubscribe,
   DEFAULT_EMAIL_TEMPLATES,
   buildMessage,
   getEmailTemplate,
@@ -37,6 +38,7 @@ const GHL_WEBHOOK_URL = defineSecret('GHL_WEBHOOK_URL');
 const VOICE_WEBHOOK_SECRET = defineSecret('VOICE_WEBHOOK_SECRET');
 const GHL_API_TOKEN = defineSecret('GHL_API_TOKEN');
 const POSTMARK_SERVER_TOKEN = defineSecret('POSTMARK_SERVER_TOKEN');
+const POSTMARK_WEBHOOK_SECRET = defineSecret('POSTMARK_WEBHOOK_SECRET');
 
 // The sub-account the Voice AI agent lives in. Not a secret — it is visible in
 // the GoHighLevel URL bar — so a plain constant rather than a stored secret. A
@@ -265,7 +267,7 @@ async function postJson(url, body, headers = {}) {
 export const syncLeadToGoHighLevel = onDocumentCreated(
   {
     document: 'leads/{leadId}',
-    secrets: [GHL_WEBHOOK_URL]
+    secrets: [GHL_WEBHOOK_URL, POSTMARK_SERVER_TOKEN]
   },
   async event => {
     const snapshot = event.data;
@@ -319,6 +321,10 @@ export const syncLeadToGoHighLevel = onDocumentCreated(
         },
         { merge: true }
       );
+      await createOperationalAlert(getFirestore(), {
+        key: `crm-sync:${leadId}`, title: 'Lead failed to sync to GoHighLevel',
+        message: error.message, component: 'GoHighLevel lead sync', reference: leadId
+      });
     }
   }
 );
@@ -538,7 +544,10 @@ export const recordVoiceCall = onRequest(
       return;
     }
 
-    const expected = VOICE_WEBHOOK_SECRET.value() || '';
+    // Secret Manager values set from stdin can carry a trailing newline. Treat
+    // surrounding whitespace as transport formatting, just as we do for the
+    // incoming header, so a correctly configured secret does not fail auth.
+    const expected = str(VOICE_WEBHOOK_SECRET.value(), 200);
     // Fail closed. The placeholder every secret starts life as must never be a
     // working credential on an endpoint that creates leads.
     if (expected.length < 16 || expected === 'unset') {
@@ -964,6 +973,12 @@ async function importVoiceCalls({ token, locationId, since, until, includeDemo }
     if (!result) { stats.skipped += 1; continue; }
 
     await stored.ref.set({ leadId: result.leadId }, { merge: true });
+    if (call.email) {
+      await queueFeedbackEmail(db, {
+        sourceId: stored.id, sourceType: 'call', leadId: result.leadId,
+        email: call.email, name: call.name, agent: 'byte'
+      });
+    }
     if (result.created) stats.leadsCreated += 1;
     else stats.leadsUpdated += 1;
   }
@@ -993,8 +1008,14 @@ export const pollVoiceCalls = onSchedule(
       // has silently stopped working — which is exactly the state this function
       // was in when its date window was broken and nothing looked wrong.
       console.log('[voice-poll]', JSON.stringify(stats));
+      await getFirestore().doc('systemHealth/voice-poll').set({
+        status: 'healthy', lastRunAt: FieldValue.serverTimestamp(), stats
+      }, { merge: true });
     } catch (error) {
       console.error('[voice-poll] failed:', error.message);
+      await getFirestore().doc('systemHealth/voice-poll').set({
+        status: 'failed', lastRunAt: FieldValue.serverTimestamp(), error: str(error.message, 500)
+      }, { merge: true });
       throw error;   // let the schedule retry
     }
   }
@@ -1015,7 +1036,7 @@ export const importVoiceHistory = onRequest(
       return;
     }
 
-    const expected = VOICE_WEBHOOK_SECRET.value() || '';
+    const expected = str(VOICE_WEBHOOK_SECRET.value(), 200);
     if (expected.length < 16) {
       res.status(503).json({ error: 'not-configured' });
       return;
@@ -1109,13 +1130,159 @@ const emailEnvironment = () => ({
   admin: process.env.ADMIN_NOTIFICATION_EMAIL || 'jensy@bitesites.org',
   appUrl: (process.env.APP_URL || 'https://bitesites.org').replace(/\/$/, ''),
   transactionalStream: process.env.POSTMARK_MESSAGE_STREAM || 'outbound',
-  broadcastStream: process.env.POSTMARK_BROADCAST_STREAM || 'broadcasts'
+  broadcastStream: process.env.POSTMARK_BROADCAST_STREAM || 'broadcast'
 });
 
 const firstName = user => {
   const named = str(user?.displayName, 120).split(/\s+/)[0];
   return named || str(user?.email, 200).split('@')[0] || 'there';
 };
+
+const normalizedEmail = value => str(value, 200).toLowerCase();
+const emailKey = email => createHash('sha256').update(normalizedEmail(email)).digest('hex');
+const tokenKey = token => createHash('sha256').update(str(token, 200)).digest('hex');
+const EMAIL_PATTERN = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+const FEEDBACK_DELAY_MS = 30 * 60 * 1000;
+const FEEDBACK_EXPIRY_MS = 30 * 24 * 60 * 60 * 1000;
+
+const EMAIL_SOURCE_LABELS = {
+  intake_form: 'the project intake form',
+  bit_chat: 'Bit',
+  byte_voice: 'Byte'
+};
+
+const emailServiceNames = services => {
+  const labels = {
+    web_development: 'Web Development',
+    ai_automation: 'AI Automation',
+    social_media_management: 'Social Media Management',
+    other: 'Other'
+  };
+  return (Array.isArray(services) ? services : []).map(value => labels[value] || value).filter(Boolean).join(', ') || 'A BiteSites consultation';
+};
+
+async function emailPreference(db, email) {
+  const address = normalizedEmail(email);
+  if (!EMAIL_PATTERN.test(address)) return { broadcasts: false, feedback: false, transactionalBlocked: true };
+  const snapshot = await db.doc(`emailPreferences/${emailKey(address)}`).get();
+  return { broadcasts: true, feedback: true, transactionalBlocked: false, ...(snapshot.data() || {}) };
+}
+
+async function createPreferenceLinks(db, email, env = emailEnvironment()) {
+  const address = normalizedEmail(email);
+  const token = randomBytes(32).toString('base64url');
+  await db.doc(`emailPreferenceTokens/${tokenKey(token)}`).set({
+    email: address,
+    emailKey: emailKey(address),
+    createdAt: FieldValue.serverTimestamp(),
+    expiresAt: Timestamp.fromMillis(Date.now() + 365 * 24 * 60 * 60 * 1000)
+  });
+  return {
+    preferenceUrl: `${env.appUrl}/email-preferences?token=${encodeURIComponent(token)}`,
+    oneClickUrl: `${env.appUrl}/api/email-preferences?token=${encodeURIComponent(token)}`
+  };
+}
+
+async function sendLifecycleEmail({ db, templateId, to, variables, tag, kind = templateId }) {
+  const address = normalizedEmail(to);
+  if (!EMAIL_PATTERN.test(address)) return { status: 'skipped', reason: 'no-email' };
+  const preference = await emailPreference(db, address);
+  if (preference.transactionalBlocked) {
+    await recordDelivery(db, { templateId, kind, recipientCount: 0, status: 'suppressed', reason: 'transactional-blocked' });
+    return { status: 'suppressed' };
+  }
+  const env = emailEnvironment();
+  const template = await getEmailTemplate(db, templateId);
+  try {
+    const result = await sendPostmark(POSTMARK_SERVER_TOKEN.value(), buildMessage({
+      from: env.from, to: address, template, variables,
+      stream: env.transactionalStream, tag
+    }));
+    await recordDelivery(db, {
+      templateId, kind, recipientCount: 1, recipientKey: emailKey(address),
+      status: 'sent', postmark: [result.MessageID].filter(Boolean)
+    });
+    return { status: 'sent', result };
+  } catch (error) {
+    await recordDelivery(db, {
+      templateId, kind, recipientCount: 1, recipientKey: emailKey(address),
+      status: 'failed', error: str(error.message, 500)
+    });
+    throw error;
+  }
+}
+
+async function createOperationalAlert(db, { key, title, message, component, reference = '', notify = true }) {
+  const id = createHash('sha256').update(str(key, 500)).digest('hex').slice(0, 40);
+  const ref = db.doc(`operationalAlerts/${id}`);
+  const now = Date.now();
+  let shouldNotify = false;
+  await db.runTransaction(async tx => {
+    const snapshot = await tx.get(ref);
+    const previous = snapshot.data() || {};
+    const last = previous.lastNotifiedAt?.toMillis?.() || 0;
+    shouldNotify = notify && now - last >= 60 * 60 * 1000;
+    tx.set(ref, {
+      key: str(key, 500), title: str(title, 200), message: str(message, 2000),
+      component: str(component, 100), reference: str(reference, 500),
+      status: 'open', count: (previous.count || 0) + 1,
+      firstSeenAt: previous.firstSeenAt || FieldValue.serverTimestamp(),
+      lastSeenAt: FieldValue.serverTimestamp(),
+      ...(shouldNotify ? { lastNotifiedAt: FieldValue.serverTimestamp() } : {})
+    }, { merge: true });
+  });
+  if (!shouldNotify) return;
+  const env = emailEnvironment();
+  if ((await emailPreference(db, env.admin)).transactionalBlocked) return;
+  const template = await getEmailTemplate(db, 'operational_alert');
+  try {
+    const result = await sendPostmark(POSTMARK_SERVER_TOKEN.value(), buildMessage({
+      from: env.from, to: env.admin, template,
+      variables: {
+        alert_title: title, alert_message: message, component, reference: reference || '—',
+        admin_url: `${env.appUrl}/admin`
+      },
+      stream: env.transactionalStream, tag: 'operational-alert'
+    }));
+    await recordDelivery(db, {
+      templateId: 'operational_alert', kind: 'operational-alert', recipientCount: 1,
+      status: 'sent', postmark: [result.MessageID].filter(Boolean)
+    });
+  } catch (error) {
+    console.error('[email] operational alert could not be delivered:', error.message);
+  }
+}
+
+async function queueFeedbackEmail(db, { sourceId, sourceType, leadId = '', email, name, agent }) {
+  const address = normalizedEmail(email);
+  if (!sourceId || !EMAIL_PATTERN.test(address)) return false;
+  const jobId = `${sourceType}_${sourceId}`.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 400);
+  const jobRef = db.doc(`feedbackEmailJobs/${jobId}`);
+  const existing = await jobRef.get();
+  if (existing.exists) return false;
+  const token = randomBytes(32).toString('base64url');
+  const requestId = tokenKey(token);
+  const expiresAt = Timestamp.fromMillis(Date.now() + FEEDBACK_EXPIRY_MS);
+  const batch = db.batch();
+  batch.create(db.doc(`feedbackRequests/${requestId}`), {
+    tokenHash: requestId, sourceId: str(sourceId, 200), sourceType: str(sourceType, 30),
+    leadId: str(leadId, 200), email: address, agent: agent === 'byte' ? 'byte' : 'bit',
+    status: 'open', createdAt: FieldValue.serverTimestamp(), expiresAt
+  });
+  batch.create(jobRef, {
+    requestId, token, sourceId: str(sourceId, 200), sourceType: str(sourceType, 30),
+    leadId: str(leadId, 200), recipient: address, firstName: str(name, 120).split(/\s+/)[0] || address.split('@')[0],
+    agent: agent === 'byte' ? 'byte' : 'bit', status: 'pending', attempts: 0,
+    sendAt: Timestamp.fromMillis(Date.now() + FEEDBACK_DELAY_MS), createdAt: FieldValue.serverTimestamp()
+  });
+  try {
+    await batch.commit();
+    return true;
+  } catch (error) {
+    if (ALREADY_EXISTS(error)) return false;
+    throw error;
+  }
+}
 
 async function recordDelivery(db, data) {
   await db.collection('emailDeliveries').add({
@@ -1139,6 +1306,71 @@ async function requireAdmin(request) {
   return db;
 }
 
+// One durable lead event owns both sides of the handoff: the visitor gets a
+// receipt and the team gets a native alert even if the CRM workflow is missing.
+export const sendLeadLifecycleEmails = onDocumentCreated(
+  { document: 'leads/{leadId}', secrets: [POSTMARK_SERVER_TOKEN], maxInstances: 10 },
+  async event => {
+    const lead = event.data?.data();
+    if (!lead) return;
+    const db = getFirestore();
+    const env = emailEnvironment();
+    const leadId = event.params.leadId;
+    const sourceLabel = EMAIL_SOURCE_LABELS[lead.source] || lead.source || 'BiteSites';
+    const services = emailServiceNames(lead.services);
+    const tasks = [];
+
+    if (lead.email) {
+      tasks.push(sendLifecycleEmail({
+        db, templateId: 'lead_received', to: lead.email,
+        variables: {
+          first_name: str(lead.name, 120).split(/\s+/)[0] || 'there',
+          source_label: sourceLabel,
+          service_names: services,
+          consultation_url: 'https://calendar.app.google/bKKKvGWBSgvV8rodA'
+        },
+        tag: 'lead-received', kind: 'lead-received'
+      }));
+    }
+
+    if (env.admin) {
+      tasks.push(sendLifecycleEmail({
+        db, templateId: 'new_lead_admin', to: env.admin,
+        variables: {
+          lead_name: lead.name || 'Unknown visitor', source_label: sourceLabel,
+          contact: lead.email || lead.phone || 'No contact captured',
+          service_names: services, lead_url: `${env.appUrl}/admin/leads`
+        },
+        tag: 'new-lead-admin', kind: 'new-lead-admin'
+      }));
+    }
+
+    const results = await Promise.allSettled(tasks);
+    const failed = results.filter(result => result.status === 'rejected');
+    if (failed.length) {
+      await createOperationalAlert(db, {
+        key: `lead-email:${leadId}`, title: 'Lead email delivery failed',
+        message: failed[0].reason?.message || 'One or more lead lifecycle emails failed.',
+        component: 'Postmark', reference: leadId, notify: false
+      });
+    }
+
+    if (lead.email && lead.source === 'bit_chat') {
+      await queueFeedbackEmail(db, {
+        sourceId: lead.conversationId || leadId,
+        sourceType: lead.conversationId ? 'chat' : 'lead',
+        leadId, email: lead.email, name: lead.name, agent: 'bit'
+      });
+    }
+    if (lead.email && lead.source === 'byte_voice' && lead.voice?.callId) {
+      await queueFeedbackEmail(db, {
+        sourceId: lead.voice.callId, sourceType: 'call', leadId,
+        email: lead.email, name: lead.name, agent: 'byte'
+      });
+    }
+  }
+);
+
 export const getServicePricing = onCall(
   { enforceAppCheck: true, maxInstances: 20 },
   request => {
@@ -1159,32 +1391,22 @@ export const sendAccountCreatedEmails = onDocumentCreated(
     const db = getFirestore();
     const env = emailEnvironment();
     if (!env.admin) return;
-    const adminNotice = await getEmailTemplate(db, 'new_account_admin');
-    const message = buildMessage({
-      from: env.from,
-      to: env.admin,
-      template: adminNotice,
-      variables: {
-        first_name: profile.displayName || str(profile.email, 200).split('@')[0] || 'there',
-        email: profile.email,
-        company: profile.company || '—',
-        admin_url: `${env.appUrl}/admin/users`
-      },
-      stream: env.transactionalStream,
-      tag: 'new-account-admin'
-    });
-
     try {
-      const result = await sendPostmark(POSTMARK_SERVER_TOKEN.value(), message);
-      await recordDelivery(db, {
-        templateId: 'new_account_admin', kind: 'new-account-admin', recipientCount: 1,
-        uid: event.params.uid, status: 'sent', postmark: [result.MessageID].filter(Boolean)
+      await sendLifecycleEmail({
+        db, templateId: 'new_account_admin', to: env.admin,
+        variables: {
+          first_name: profile.displayName || str(profile.email, 200).split('@')[0] || 'there',
+          email: profile.email,
+          company: profile.company || '—',
+          admin_url: `${env.appUrl}/admin/users`
+        },
+        tag: 'new-account-admin', kind: 'new-account-admin'
       });
     } catch (error) {
       console.error('[email] account-created send failed:', error.message);
-      await recordDelivery(db, {
-        templateId: 'new_account_admin', kind: 'new-account-admin', recipientCount: 1,
-        uid: event.params.uid, status: 'failed', error: str(error.message, 500)
+      await createOperationalAlert(db, {
+        key: `new-account-email:${event.params.uid}`, title: 'New-account notice failed',
+        message: error.message, component: 'Postmark', reference: event.params.uid, notify: false
       });
     }
   }
@@ -1216,6 +1438,14 @@ export const requestPasswordReset = onCall(
     const auth = getAuth();
     const user = await auth.getUserByEmail(email).catch(() => null);
     if (!user || user.disabled) return generic;
+
+    if ((await emailPreference(db, email)).transactionalBlocked) {
+      await recordDelivery(db, {
+        templateId: 'password_reset', kind: 'password-reset', recipientCount: 0,
+        uid: user.uid, status: 'suppressed', reason: 'transactional-blocked'
+      });
+      return generic;
+    }
 
     const env = emailEnvironment();
     const resetUrl = await auth.generatePasswordResetLink(email, { url: `${env.appUrl}/#pricing` });
@@ -1254,6 +1484,9 @@ export const resendAccountConfirmation = onCall(
     const user = await auth.getUser(request.auth.uid);
     if (!user.email) throw new HttpsError('failed-precondition', 'This account has no email address.');
     if (user.emailVerified) return { ok: true, alreadyVerified: true };
+    if ((await emailPreference(db, user.email)).transactionalBlocked) {
+      throw new HttpsError('failed-precondition', 'Email delivery to this address is blocked. Please contact BiteSites support.');
+    }
     try {
       const env = emailEnvironment();
       const verifyUrl = await auth.generateEmailVerificationLink(user.email, { url: `${env.appUrl}/#pricing` });
@@ -1352,25 +1585,353 @@ export const sendAdminEmail = onCall(
       : {};
     const env = emailEnvironment();
     const stream = template.category === 'broadcast' ? env.broadcastStream : env.transactionalStream;
-    const messages = recipients.map(email => buildMessage({
-      from: env.from, to: email, template,
-      variables: { first_name: email.split('@')[0], email, ...variables },
-      stream, tag: `admin-${templateId}`.slice(0, 1000)
+    const prepared = await Promise.all(recipients.map(async email => {
+      const preference = await emailPreference(db, email);
+      if (preference.transactionalBlocked || (template.category === 'broadcast' && !preference.broadcasts)) {
+        return null;
+      }
+      const links = template.category === 'broadcast' ? await createPreferenceLinks(db, email, env) : null;
+      let message = buildMessage({
+        from: env.from, to: email, template,
+        variables: {
+          first_name: email.split('@')[0], email,
+          ...(links ? { preference_url: links.preferenceUrl } : {}),
+          ...variables
+        },
+        stream, tag: `admin-${templateId}`.slice(0, 1000)
+      });
+      if (links) message = addBroadcastUnsubscribe(message, links.preferenceUrl, links.oneClickUrl);
+      return message;
     }));
+    const messages = prepared.filter(Boolean);
+    const skipped = recipients.length - messages.length;
+    if (!messages.length) {
+      return { ok: true, sent: 0, skipped, message: 'Every selected recipient is suppressed or opted out.' };
+    }
     try {
       const result = await sendPostmark(POSTMARK_SERVER_TOKEN.value(), messages);
       await recordDelivery(db, {
-        templateId, kind: 'admin-send', recipientCount: recipients.length,
+        templateId, kind: 'admin-send', recipientCount: messages.length, skipped,
         sentBy: request.auth.uid, status: 'sent',
         postmark: (Array.isArray(result) ? result : [result]).map(item => item.MessageID || '').filter(Boolean)
       });
-      return { ok: true, sent: recipients.length };
+      return { ok: true, sent: messages.length, skipped };
     } catch (error) {
       await recordDelivery(db, {
-        templateId, kind: 'admin-send', recipientCount: recipients.length,
+        templateId, kind: 'admin-send', recipientCount: messages.length, skipped,
         sentBy: request.auth.uid, status: 'failed', error: str(error.message, 500)
       });
       throw new HttpsError('internal', str(error.message, 300));
+    }
+  }
+);
+
+export const sendQueuedFeedbackEmails = onSchedule(
+  { schedule: 'every 15 minutes', secrets: [POSTMARK_SERVER_TOKEN], timeoutSeconds: 120, maxInstances: 1 },
+  async () => {
+    const db = getFirestore();
+    const now = Date.now();
+    const snapshot = await db.collection('feedbackEmailJobs').where('status', '==', 'pending').limit(100).get();
+    for (const jobDoc of snapshot.docs) {
+      const job = jobDoc.data();
+      if ((job.sendAt?.toMillis?.() || Infinity) > now) continue;
+      const parent = feedbackParent(db, job.sourceType, job.sourceId);
+      const parentSnapshot = parent ? await parent.get() : null;
+      if (parentSnapshot?.get('feedback.rating')) {
+        await jobDoc.ref.set({ status: 'already-rated', completedAt: FieldValue.serverTimestamp() }, { merge: true });
+        await db.doc(`feedbackRequests/${job.requestId}`).set({
+          status: 'cancelled', cancelledAt: FieldValue.serverTimestamp(), reason: 'inline-feedback-received'
+        }, { merge: true });
+        continue;
+      }
+      const preference = await emailPreference(db, job.recipient);
+      if (!preference.feedback || preference.transactionalBlocked) {
+        await jobDoc.ref.set({ status: 'suppressed', completedAt: FieldValue.serverTimestamp() }, { merge: true });
+        continue;
+      }
+      const env = emailEnvironment();
+      const links = await createPreferenceLinks(db, job.recipient, env);
+      const feedbackUrl = `${env.appUrl}/feedback?token=${encodeURIComponent(job.token)}`;
+      try {
+        const template = await getEmailTemplate(db, 'conversation_feedback');
+        const result = await sendPostmark(POSTMARK_SERVER_TOKEN.value(), buildMessage({
+          from: env.from, to: job.recipient, template,
+          variables: {
+            first_name: job.firstName || 'there', agent_name: job.agent === 'byte' ? 'Byte' : 'Bit',
+            feedback_url: feedbackUrl, preference_url: links.preferenceUrl,
+            rating_1_url: `${feedbackUrl}&rating=1`, rating_2_url: `${feedbackUrl}&rating=2`,
+            rating_3_url: `${feedbackUrl}&rating=3`, rating_4_url: `${feedbackUrl}&rating=4`,
+            rating_5_url: `${feedbackUrl}&rating=5`
+          },
+          stream: env.transactionalStream, tag: 'conversation-feedback'
+        }));
+        await jobDoc.ref.set({
+          status: 'sent', completedAt: FieldValue.serverTimestamp(),
+          postmarkMessageId: result.MessageID || '', token: FieldValue.delete()
+        }, { merge: true });
+        await recordDelivery(db, {
+          templateId: 'conversation_feedback', kind: 'conversation-feedback', recipientCount: 1,
+          recipientKey: emailKey(job.recipient), status: 'sent',
+          postmark: [result.MessageID].filter(Boolean), sourceId: job.sourceId
+        });
+      } catch (error) {
+        const attempts = (job.attempts || 0) + 1;
+        await jobDoc.ref.set({
+          attempts, status: attempts >= 5 ? 'failed' : 'pending',
+          sendAt: Timestamp.fromMillis(now + Math.min(24, 2 ** attempts) * 60 * 60 * 1000),
+          error: str(error.message, 500), updatedAt: FieldValue.serverTimestamp()
+        }, { merge: true });
+        await recordDelivery(db, {
+          templateId: 'conversation_feedback', kind: 'conversation-feedback', recipientCount: 1,
+          recipientKey: emailKey(job.recipient), status: 'failed', error: str(error.message, 500)
+        });
+        await createOperationalAlert(db, {
+          key: `feedback-email:${jobDoc.id}`, title: 'Feedback email delivery failed',
+          message: error.message, component: 'Postmark', reference: jobDoc.id, notify: false
+        });
+      }
+    }
+  }
+);
+
+const feedbackParent = (db, sourceType, sourceId) => {
+  if (sourceType === 'chat') return db.doc(`chats/${sourceId}`);
+  if (sourceType === 'call') return db.doc(`calls/${sourceId}`);
+  if (sourceType === 'lead') return db.doc(`leads/${sourceId}`);
+  return null;
+};
+
+export const getConversationFeedback = onCall(
+  { enforceAppCheck: true, maxInstances: 10 },
+  async request => {
+    const token = str(request.data?.token, 200);
+    if (!token) throw new HttpsError('invalid-argument', 'That feedback link is incomplete.');
+    const snapshot = await getFirestore().doc(`feedbackRequests/${tokenKey(token)}`).get();
+    if (!snapshot.exists) throw new HttpsError('not-found', 'That feedback link is invalid or has expired.');
+    const data = snapshot.data();
+    return {
+      agent: data.agent === 'byte' ? 'Byte' : 'Bit',
+      submitted: data.status === 'submitted',
+      expired: (data.expiresAt?.toMillis?.() || 0) < Date.now()
+    };
+  }
+);
+
+export const submitConversationFeedback = onCall(
+  { enforceAppCheck: true, secrets: [POSTMARK_SERVER_TOKEN], maxInstances: 10 },
+  async request => {
+    const rating = Number(request.data?.rating);
+    const comment = str(request.data?.comment, 2000);
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+      throw new HttpsError('invalid-argument', 'Choose a rating from 1 to 5.');
+    }
+    const db = getFirestore();
+    const token = str(request.data?.token, 200);
+    let sourceType = str(request.data?.sourceType, 30);
+    let sourceId = str(request.data?.sourceId, 200);
+    let agent = request.data?.agent === 'byte' ? 'byte' : 'bit';
+    let feedbackId = '';
+    let requestRef = null;
+
+    if (token) {
+      feedbackId = tokenKey(token);
+      requestRef = db.doc(`feedbackRequests/${feedbackId}`);
+      const tokenSnapshot = await requestRef.get();
+      if (!tokenSnapshot.exists) throw new HttpsError('not-found', 'That feedback link is invalid or has expired.');
+      const tokenData = tokenSnapshot.data();
+      if ((tokenData.expiresAt?.toMillis?.() || 0) < Date.now()) throw new HttpsError('deadline-exceeded', 'That feedback link has expired.');
+      sourceType = tokenData.sourceType;
+      sourceId = tokenData.sourceId;
+      agent = tokenData.agent;
+    } else {
+      if (!sourceId || !['chat', 'call', 'lead'].includes(sourceType)) {
+        throw new HttpsError('invalid-argument', 'The conversation reference is missing.');
+      }
+      const parent = feedbackParent(db, sourceType, sourceId);
+      const parentSnapshot = await parent.get();
+      if (!parentSnapshot.exists) throw new HttpsError('not-found', 'That conversation is no longer available.');
+      agent = sourceType === 'call' || parentSnapshot.get('source') === 'byte_voice' ? 'byte' : 'bit';
+      feedbackId = `inline_${sourceType}_${sourceId}`.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 500);
+    }
+
+    const feedbackRef = db.doc(`conversationFeedback/${feedbackId}`);
+    const parentRef = feedbackParent(db, sourceType, sourceId);
+    let alreadySubmitted = false;
+    await db.runTransaction(async tx => {
+      const previous = await tx.get(feedbackRef);
+      const parentSnapshot = parentRef ? await tx.get(parentRef) : null;
+      if (previous.exists || parentSnapshot?.get('feedback.rating')) {
+        alreadySubmitted = true;
+        if (requestRef) tx.set(requestRef, { status: 'submitted', submittedAt: FieldValue.serverTimestamp() }, { merge: true });
+        return;
+      }
+      tx.create(feedbackRef, {
+        rating, comment, agent: agent === 'byte' ? 'byte' : 'bit', sourceType, sourceId,
+        channel: token ? 'email' : 'inline', createdAt: FieldValue.serverTimestamp()
+      });
+      if (requestRef) tx.set(requestRef, { status: 'submitted', submittedAt: FieldValue.serverTimestamp() }, { merge: true });
+      if (parentRef) tx.set(parentRef, {
+        feedback: { rating, comment, channel: token ? 'email' : 'inline', at: FieldValue.serverTimestamp() }
+      }, { merge: true });
+    });
+
+    if (!alreadySubmitted && rating <= 2) {
+      await createOperationalAlert(db, {
+        key: `low-feedback:${feedbackId}`, title: `Low ${agent === 'byte' ? 'Byte' : 'Bit'} rating received`,
+        message: comment || `A visitor rated the conversation ${rating} out of 5 without a comment.`,
+        component: 'Conversation feedback', reference: `${sourceType}/${sourceId}`
+      });
+    }
+    return { ok: true, alreadySubmitted };
+  }
+);
+
+async function preferenceTokenData(db, token) {
+  const snapshot = await db.doc(`emailPreferenceTokens/${tokenKey(token)}`).get();
+  if (!snapshot.exists) return null;
+  const data = snapshot.data();
+  if ((data.expiresAt?.toMillis?.() || 0) < Date.now()) return null;
+  return data;
+}
+
+const maskedEmail = email => {
+  const [local, domain] = normalizedEmail(email).split('@');
+  return local && domain ? `${local.slice(0, 2)}${local.length > 2 ? '…' : ''}@${domain}` : '';
+};
+
+export const getEmailPreferences = onCall(
+  { enforceAppCheck: true, maxInstances: 10 },
+  async request => {
+    const db = getFirestore();
+    const token = str(request.data?.token, 200);
+    const tokenData = await preferenceTokenData(db, token);
+    if (!tokenData) throw new HttpsError('not-found', 'That preference link is invalid or has expired.');
+    const preference = await emailPreference(db, tokenData.email);
+    return { email: maskedEmail(tokenData.email), broadcasts: preference.broadcasts, feedback: preference.feedback };
+  }
+);
+
+export const updateEmailPreferences = onCall(
+  { enforceAppCheck: true, maxInstances: 10 },
+  async request => {
+    const db = getFirestore();
+    const token = str(request.data?.token, 200);
+    const tokenData = await preferenceTokenData(db, token);
+    if (!tokenData) throw new HttpsError('not-found', 'That preference link is invalid or has expired.');
+    const broadcasts = request.data?.broadcasts !== false;
+    const feedback = request.data?.feedback !== false;
+    await db.doc(`emailPreferences/${tokenData.emailKey}`).set({
+      email: tokenData.email, broadcasts, feedback, updatedAt: FieldValue.serverTimestamp(), source: 'preference-page'
+    }, { merge: true });
+    return { ok: true, broadcasts, feedback };
+  }
+);
+
+// RFC 8058 one-click unsubscribe endpoint used by mailbox providers. A GET is
+// deliberately a no-op because security scanners commonly visit links.
+export const unsubscribeEmail = onRequest(
+  { maxInstances: 10 },
+  async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    if (req.method !== 'POST') {
+      res.set('Allow', 'POST').status(405).send('POST required');
+      return;
+    }
+    const db = getFirestore();
+    const tokenData = await preferenceTokenData(db, str(req.query?.token, 200));
+    if (!tokenData) { res.status(404).send('Invalid or expired token'); return; }
+    await db.doc(`emailPreferences/${tokenData.emailKey}`).set({
+      email: tokenData.email, broadcasts: false,
+      updatedAt: FieldValue.serverTimestamp(), source: 'one-click-unsubscribe'
+    }, { merge: true });
+    res.status(200).send('Unsubscribed');
+  }
+);
+
+export const recordPostmarkEvent = onRequest(
+  { secrets: [POSTMARK_WEBHOOK_SECRET], maxInstances: 10 },
+  async (req, res) => {
+    if (req.method !== 'POST') { res.set('Allow', 'POST').status(405).json({ error: 'method-not-allowed' }); return; }
+    const expected = str(POSTMARK_WEBHOOK_SECRET.value(), 200);
+    const authorization = str(req.get('authorization'), 500);
+    let basicPassword = '';
+    if (authorization.startsWith('Basic ')) {
+      try {
+        const decoded = Buffer.from(authorization.slice(6), 'base64').toString('utf8');
+        basicPassword = decoded.slice(decoded.indexOf(':') + 1);
+      } catch { /* malformed credentials are rejected below */ }
+    }
+    const provided = str(req.get('x-webhook-secret'), 200) || str(basicPassword, 200);
+    if (expected.length < 16 || expected === 'unset') { res.status(503).json({ error: 'not-configured' }); return; }
+    if (provided !== expected) { res.status(401).json({ error: 'unauthorised' }); return; }
+    const event = req.body && typeof req.body === 'object' ? req.body : {};
+    const recordType = str(event.RecordType, 80).toLowerCase();
+    const messageId = str(event.MessageID, 200);
+    const recipient = normalizedEmail(event.Recipient || event.Email);
+    const eventId = createHash('sha256').update(JSON.stringify({
+      recordType, messageId, recipient, at: event.DeliveredAt || event.BouncedAt || event.ReceivedAt || event.Date || '',
+      type: event.Type || event.TypeCode || ''
+    })).digest('hex');
+    const db = getFirestore();
+    await db.doc(`emailDeliveryEvents/${eventId}`).set({
+      recordType, messageId, recipientKey: recipient ? emailKey(recipient) : '',
+      type: str(event.Type || event.TypeCode, 100), description: str(event.Description || event.Details, 1000),
+      inactive: Boolean(event.Inactive), receivedAt: FieldValue.serverTimestamp()
+    }, { merge: true });
+    if (messageId) {
+      await db.doc(`emailMessageStatus/${messageId.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 300)}`).set({
+        messageId, status: recordType, recipientKey: recipient ? emailKey(recipient) : '',
+        updatedAt: FieldValue.serverTimestamp()
+      }, { merge: true });
+    }
+    if (recipient) {
+      const preferenceUpdate = { email: recipient, updatedAt: FieldValue.serverTimestamp(), source: `postmark-${recordType}` };
+      if (recordType === 'spamcomplaint') preferenceUpdate.broadcasts = false;
+      if (recordType === 'subscriptionchange') {
+        preferenceUpdate.broadcasts = typeof event.SuppressSending === 'boolean' ? !event.SuppressSending : false;
+      }
+      if (recordType === 'spamcomplaint' || (recordType === 'bounce' && event.Inactive)) preferenceUpdate.transactionalBlocked = true;
+      if ('broadcasts' in preferenceUpdate || 'transactionalBlocked' in preferenceUpdate) {
+        await db.doc(`emailPreferences/${emailKey(recipient)}`).set(preferenceUpdate, { merge: true });
+      }
+    }
+    res.status(200).json({ ok: true });
+  }
+);
+
+export const monitorOperations = onSchedule(
+  { schedule: 'every 15 minutes', secrets: [POSTMARK_SERVER_TOKEN], timeoutSeconds: 60, maxInstances: 1 },
+  async () => {
+    const db = getFirestore();
+    const health = await db.doc('systemHealth/voice-poll').get();
+    const lastRun = health.get('lastRunAt')?.toMillis?.() || 0;
+    if (!lastRun || Date.now() - lastRun > 20 * 60 * 1000) {
+      await createOperationalAlert(db, {
+        key: 'voice-poll-stale', title: 'Byte call import has stopped reporting',
+        message: lastRun
+          ? 'The voice-call poll heartbeat is more than 20 minutes old.'
+          : 'No voice-call poll heartbeat has been recorded.',
+        component: 'GoHighLevel voice import', reference: lastRun ? new Date(lastRun).toISOString() : 'missing heartbeat'
+      });
+    }
+    const recent = await db.collection('emailDeliveries').orderBy('createdAt', 'desc').limit(100).get();
+    const cutoff = Date.now() - 60 * 60 * 1000;
+    const failures = recent.docs.filter(doc => doc.get('status') === 'failed' && (doc.get('createdAt')?.toMillis?.() || 0) >= cutoff);
+    if (failures.length >= 3) {
+      await createOperationalAlert(db, {
+        key: 'postmark-repeated-failures', title: 'Repeated Postmark failures',
+        message: `${failures.length} email sends failed during the last hour.`,
+        component: 'Postmark', reference: failures[0].id
+      });
+    }
+    for (const collectionName of ['feedbackRequests', 'emailPreferenceTokens']) {
+      const expired = await db.collection(collectionName)
+        .where('expiresAt', '<=', Timestamp.now()).limit(200).get();
+      if (!expired.empty) {
+        const batch = db.batch();
+        expired.docs.forEach(doc => batch.delete(doc.ref));
+        await batch.commit();
+      }
     }
   }
 );
@@ -1405,7 +1966,7 @@ async function callerRole(db, auth) {
 }
 
 export const setUserRole = onCall(
-  { enforceAppCheck: true, maxInstances: 5 },
+  { enforceAppCheck: true, secrets: [POSTMARK_SERVER_TOKEN], maxInstances: 5 },
   async request => {
     const db = getFirestore();
     const auth = getAuth();
@@ -1448,6 +2009,16 @@ export const setUserRole = onCall(
         { status: 'pending', updatedAt: FieldValue.serverTimestamp() },
         { merge: true }
       );
+      if (target.email) {
+        await sendLifecycleEmail({
+          db, templateId: 'access_revoked', to: target.email,
+          variables: { first_name: firstName(target), support_email: emailEnvironment().admin },
+          tag: 'access-revoked', kind: 'access-revoked'
+        }).catch(error => createOperationalAlert(db, {
+          key: `access-revoked-email:${uid}`, title: 'Access removal email failed',
+          message: error.message, component: 'Postmark', reference: uid, notify: false
+        }));
+      }
       console.log(`[roles] ${request.auth.token?.email || request.auth.uid} revoked ${target.email}`);
       return { uid, role: '', email: target.email || '' };
     }
@@ -1466,6 +2037,19 @@ export const setUserRole = onCall(
       { status: 'approved', updatedAt: FieldValue.serverTimestamp() },
       { merge: true }
     );
+    if (target.email) {
+      await sendLifecycleEmail({
+        db, templateId: 'access_granted', to: target.email,
+        variables: {
+          first_name: firstName(target), role_label: role === 'admin' ? 'administrator' : 'client',
+          sign_in_url: role === 'admin' ? `${emailEnvironment().appUrl}/admin` : `${emailEnvironment().appUrl}/#pricing`
+        },
+        tag: 'access-granted', kind: 'access-granted'
+      }).catch(error => createOperationalAlert(db, {
+        key: `access-granted-email:${uid}`, title: 'Access approval email failed',
+        message: error.message, component: 'Postmark', reference: uid, notify: false
+      }));
+    }
     console.log(`[roles] ${request.auth.token?.email || request.auth.uid} granted ${role} to ${target.email}`);
     return { uid, role, email: target.email || '' };
   }

@@ -22,7 +22,24 @@ const VARIABLE_LIBRARY = {
   pricing_url: { label: 'Pricing URL', hint: 'A link to the pricing page.' },
   reset_url: { label: 'Password reset URL', hint: 'A secure password-reset link.' },
   company: { label: 'Company', hint: 'The recipient’s company name.' },
-  admin_url: { label: 'Admin URL', hint: 'A link back to the admin dashboard.' }
+  admin_url: { label: 'Admin URL', hint: 'A link back to the admin dashboard.' },
+  preference_url: { label: 'Email preferences URL', hint: 'A unique recipient link added automatically to broadcasts and feedback requests.', automatic: true },
+  agent_name: { label: 'Agent name', hint: 'Bit or Byte, based on the completed conversation.', automatic: true },
+  source_label: { label: 'Inquiry source', hint: 'The form or agent that created the inquiry.', automatic: true },
+  service_names: { label: 'Services', hint: 'A readable list of services from the inquiry.', automatic: true },
+  consultation_url: { label: 'Consultation URL', hint: 'The BiteSites consultation booking link.', automatic: true },
+  lead_name: { label: 'Lead name', hint: 'The name captured with a new lead.', automatic: true },
+  contact: { label: 'Lead contact', hint: 'The best email or phone captured for a lead.', automatic: true },
+  lead_url: { label: 'Lead URL', hint: 'A link to the admin Leads view.', automatic: true },
+  role_label: { label: 'Access role', hint: 'The access level granted to an account.', automatic: true },
+  sign_in_url: { label: 'Sign-in URL', hint: 'The correct sign-in destination for the granted role.', automatic: true },
+  support_email: { label: 'Support email', hint: 'The BiteSites support address.', automatic: true },
+  feedback_url: { label: 'Feedback URL', hint: 'A secure link for the conversation feedback request.', automatic: true },
+  rating_1_url: { label: 'Rating 1 URL', hint: 'Secure rating link generated for the recipient.', automatic: true },
+  rating_2_url: { label: 'Rating 2 URL', hint: 'Secure rating link generated for the recipient.', automatic: true },
+  rating_3_url: { label: 'Rating 3 URL', hint: 'Secure rating link generated for the recipient.', automatic: true },
+  rating_4_url: { label: 'Rating 4 URL', hint: 'Secure rating link generated for the recipient.', automatic: true },
+  rating_5_url: { label: 'Rating 5 URL', hint: 'Secure rating link generated for the recipient.', automatic: true }
 };
 
 const templateVariables = template => Array.from(new Set(
@@ -161,7 +178,11 @@ const preview = (template, variables) => {
     first_name: 'Alex', email: 'alex@example.com', headline: 'A brighter digital experience',
     message: 'Here is a preview of your BiteSites email. Every part of this message can be edited in the studio.',
     cta_label: 'Explore what’s new', cta_url: 'https://bitesites.org', verify_url: '#', pricing_url: '#',
-    reset_url: '#', company: 'Example Company', admin_url: '#', ...variables
+    reset_url: '#', company: 'Example Company', admin_url: '#', preference_url: '#', feedback_url: '#',
+    rating_1_url: '#', rating_2_url: '#', rating_3_url: '#', rating_4_url: '#', rating_5_url: '#',
+    agent_name: 'Bit', source_label: 'Bit', service_names: 'Web Development', consultation_url: '#',
+    lead_name: 'Alex Morgan', contact: 'alex@example.com', lead_url: '#', role_label: 'client',
+    sign_in_url: '#', support_email: 'jensy@bitesites.org', ...variables
   };
   return String(template?.html || '').replace(/{{\s*([a-zA-Z0-9_]+)\s*}}/g, (_, key) => values[key] || `[${variableLabel(key)}]`);
 };
@@ -336,7 +357,8 @@ export default function EmailStudio() {
     setBusy('send'); setNotice({ kind: '', text: '' });
     try {
       const result = await sendTemplateEmail({ templateId: draft.id, recipients: recipientList, variables });
-      setNotice({ kind: 'success', text: `${result.sent} email${result.sent === 1 ? '' : 's'} accepted by Postmark.` });
+      const skipped = result.skipped ? ` ${result.skipped} opted-out or suppressed recipient${result.skipped === 1 ? ' was' : 's were'} skipped.` : '';
+      setNotice({ kind: 'success', text: `${result.sent} email${result.sent === 1 ? '' : 's'} accepted by Postmark.${skipped}` });
     } catch (error) {
       setNotice({ kind: 'error', text: error?.message || 'Postmark could not send this email.' });
     } finally { setBusy(''); }

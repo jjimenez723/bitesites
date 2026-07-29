@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULT_EMAIL_TEMPLATES, buildMessage, renderTemplate } from './email.js';
+import { addBroadcastUnsubscribe, DEFAULT_EMAIL_TEMPLATES, buildMessage, renderTemplate } from './email.js';
 
 test('renders known variables in all message parts', () => {
   const result = renderTemplate({
@@ -62,4 +62,26 @@ test('system templates use the simple white email layout', () => {
     assert.ok(template.html.indexOf('{{logo_url}}') < template.html.indexOf('<h1'));
     assert.doesNotMatch(template.html, /#080b16|#111625|#161d2d|Beautiful sites, thoughtful systems/);
   }
+});
+
+test('covers the account, lead, feedback, access, broadcast, and operations lifecycle', () => {
+  const expected = [
+    'welcome', 'password_reset', 'new_account_admin', 'lead_received',
+    'conversation_feedback', 'new_lead_admin', 'access_granted',
+    'access_revoked', 'operational_alert', 'announcement'
+  ];
+  assert.deepEqual(Object.keys(DEFAULT_EMAIL_TEMPLATES).sort(), expected.sort());
+});
+
+test('adds visible and one-click unsubscribe controls to broadcasts', () => {
+  const message = addBroadcastUnsubscribe({
+    HtmlBody: '<html><body><p>Hello</p></body></html>',
+    TextBody: 'Hello'
+  }, 'https://bitesites.org/email-preferences?token=abc', 'https://bitesites.org/api/email-preferences?token=abc');
+  assert.match(message.HtmlBody, /Manage email preferences/);
+  assert.match(message.TextBody, /email-preferences\?token=abc/);
+  assert.deepEqual(message.Headers, [
+    { Name: 'List-Unsubscribe', Value: '<https://bitesites.org/api/email-preferences?token=abc>' },
+    { Name: 'List-Unsubscribe-Post', Value: 'List-Unsubscribe=One-Click' }
+  ]);
 });

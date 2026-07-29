@@ -430,10 +430,13 @@ bundle. Firebase verifies the caller's ID token; any signed-in BiteSites account
 prices, while admin data still requires the separate `admin` role.
 
 Account creation, confirmation links, admin sign-up notices, password resets and admin
-dashboard sends are delivered by Postmark. Set the server token as a Firebase secret:
+dashboard sends are delivered by Postmark. Lead receipts, team lead alerts, account-access
+notices and delayed Bit/Byte feedback requests use the same delivery layer. Set the server
+token and a separate webhook secret:
 
 ```bash
 firebase functions:secrets:set POSTMARK_SERVER_TOKEN
+firebase functions:secrets:set POSTMARK_WEBHOOK_SECRET
 ```
 
 The Postmark server must have `jensy@bitesites.org` (or the whole domain) as a verified
@@ -444,18 +447,45 @@ POSTMARK_FROM_EMAIL="BiteSites <jensy@bitesites.org>"
 ADMIN_NOTIFICATION_EMAIL="jensy@bitesites.org"
 APP_URL="https://bitesites.org"
 POSTMARK_MESSAGE_STREAM="outbound"
-POSTMARK_BROADCAST_STREAM="broadcasts"
+POSTMARK_BROADCAST_STREAM="broadcast"
 ```
 
 Put overrides in `functions/.env.bitesites-org` for deployment or export them in the
 deployment environment. Never put `POSTMARK_SERVER_TOKEN` in a `VITE_` variable.
 
-The first account email or visit to **Admin → Email** seeds four editable Firestore
-templates: account confirmation, password reset, new-account admin notice and client
-announcement. The dashboard edits `emailTemplates`, sends 1–50 individual messages per
+The first account email or visit to **Admin → Email** seeds ten editable Firestore
+templates: account confirmation, password reset, new-account admin notice, inquiry receipt,
+conversation feedback, new-lead admin notice, access granted, access removed, operational
+alert and client announcement. The dashboard edits `emailTemplates`, sends 1–50 individual messages per
 request, previews HTML in a sandboxed iframe and records outcomes in `emailDeliveries`.
 System templates can be edited but not deleted. Password-reset requests return the same
 response for existing and unknown addresses and are rate-limited per normalized email.
+
+Feedback requests are queued once per Bit chat or Byte call, sent after roughly 30 minutes,
+and expire after 30 days. A rating link opens `/feedback` and never records a score from the
+initial GET, so mailbox security scanners cannot submit feedback. Ratings of 1 or 2 create a
+throttled internal operational alert. The on-page rating uses the same callable and stores the
+summary on the related chat, call or lead. If someone rates on the page, the queued email is
+cancelled instead of asking them a second time.
+
+Broadcasts always receive a visible preferences link plus `List-Unsubscribe` and
+`List-Unsubscribe-Post` headers. The preference page controls announcements and conversation
+feedback separately; account security and requested service messages remain transactional.
+
+In Postmark, configure Delivery, Bounce, Spam Complaint and Subscription Change webhooks to:
+
+```text
+https://postmark:<POSTMARK_WEBHOOK_SECRET>@bitesites.org/api/postmark-events
+```
+
+The webhook stores delivery events and suppresses announcements after an unsubscribe or
+complaint. Inactive bounces and complaints also block automated transactional sends to the
+address. This uses Postmark's supported Basic HTTP authentication. Choose a URL-safe webhook
+secret and do not reuse `POSTMARK_SERVER_TOKEN` in the webhook URL.
+
+`pollVoiceCalls` writes a heartbeat to `systemHealth/voice-poll`; `monitorOperations` checks it
+every 15 minutes and alerts after 20 minutes without a healthy run. Repeated Postmark failures
+and GoHighLevel lead-sync failures also create deduplicated `operationalAlerts` records.
 
 Deploy Functions before deploying the gated frontend, otherwise signed-in users will see
 the gate but the pricing callable will not exist:

@@ -89,6 +89,7 @@ export default function Conversations() {
                     <th className="num">{tab.key === 'chats' ? 'Messages' : 'Duration'}</th>
                     <th>Outcome</th>
                     <th>Lead</th>
+                    <th className="num">Rating</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -105,6 +106,7 @@ export default function Conversations() {
                       </td>
                       <td><Pill kind={row.status}>{row.status}</Pill></td>
                       <td className="cell-dim">{row.leadId ? 'Converted' : '—'}</td>
+                      <td className="num">{row.feedback?.rating ? `${row.feedback.rating}/5` : '—'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -128,6 +130,7 @@ export default function Conversations() {
               ['Duration', duration(open)],
               ['Messages', typeof open.messageCount === 'number' && open.messageCount ? open.messageCount : ''],
               ['Lead', open.leadId],
+              ['Rating', open.feedback?.rating ? `${open.feedback.rating}/5` : ''],
               ['Error', open.error]
             ]}
           />
@@ -140,6 +143,13 @@ export default function Conversations() {
                   <span className="chip" key={key}><b>{key}</b> {value}</span>
                 ))}
               </div>
+            </div>
+          )}
+
+          {open.feedback?.comment && (
+            <div>
+              <div className="panel-section-label">Feedback comment</div>
+              <p style={{ marginTop: 8, whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{open.feedback.comment}</p>
             </div>
           )}
 

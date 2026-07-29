@@ -5,6 +5,7 @@ import {
 } from '../lib/ghl-voice';
 import { finishCall, logCallState, logCallTranscript, startCall } from '../lib/conversations';
 import { trackEvent } from '../lib/analytics';
+import ConversationRating from './ConversationRating';
 
 function MicIcon({ muted = false }) {
   return <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -172,6 +173,7 @@ export function VoiceAIReceptionist({ open, onClose }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [error, setError] = useState('');
+  const [completedCallId, setCompletedCallId] = useState('');
   const shellRef = useRef(null);
   const sawConnectingRef = useRef(false);
   // Call logging state. Refs rather than state: nothing here renders, and the
@@ -189,11 +191,13 @@ export function VoiceAIReceptionist({ open, onClose }) {
     if (!callId) return;
     callIdRef.current = '';
     const durationSec = callStartRef.current ? (Date.now() - callStartRef.current) / 1000 : 0;
+    const resolvedOutcome = outcome === 'auto' ? (callConnectedRef.current ? 'completed' : 'abandoned') : outcome;
     finishCall(callId, {
-      outcome: outcome === 'auto' ? (callConnectedRef.current ? 'completed' : 'abandoned') : outcome,
+      outcome: resolvedOutcome,
       durationSec,
       error: message
     });
+    if (resolvedOutcome === 'completed' && durationSec >= 10) setCompletedCallId(callId);
     callStartRef.current = 0;
     callConnectedRef.current = false;
   };
@@ -202,6 +206,7 @@ export function VoiceAIReceptionist({ open, onClose }) {
     setStarting(false);
     setElapsed(0);
     setError('');
+    setCompletedCallId('');
     closeCallRecord('auto');
     endVoiceCall();
   };
@@ -327,8 +332,7 @@ export function VoiceAIReceptionist({ open, onClose }) {
 
     {settingsOpen && <div className="voice-agent-settings" id="voice-agent-settings">
       <p>Conversation settings</p>
-      <dl><div><dt>Agent</dt><dd>Byte</dd></div><div><dt>Specialty</dt><dd>Voice AI solutions</dd></div><div><dt>Connection</dt><dd>{callState === 'unavailable' ? 'Offline' : callState === 'loading' ? 'Connecting' : 'GoHighLevel live'}</dd></div></dl>
-      <small>Calls run on the BiteSites GoHighLevel voice agent.</small>
+      <dl><div><dt>Agent</dt><dd>Byte</dd></div><div><dt>Specialty</dt><dd>Voice AI solutions</dd></div><div><dt>Connection</dt><dd>{callState === 'unavailable' ? 'Offline' : callState === 'loading' ? 'Connecting' : 'Live'}</dd></div></dl>
     </div>}
 
     <div className={`voice-agent-center is-${callState}`}>
@@ -346,6 +350,7 @@ export function VoiceAIReceptionist({ open, onClose }) {
         <strong>{actionText}</strong>
       </button>
       {error && <p className="voice-agent-error">{error}</p>}
+      {completedCallId && !live && <ConversationRating agent="byte" sourceType="call" sourceId={completedCallId} compact />}
     </div>
 
     <div className="voice-agent-signoff"><span><i /> Byte by BiteSites</span><small>Your browser will ask before the microphone turns on.</small></div>

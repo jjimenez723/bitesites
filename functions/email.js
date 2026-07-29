@@ -8,7 +8,7 @@ export const EMAIL_BRAND = {
   logoUrl: 'https://bitesites.org/apple-touch-icon.png'
 };
 
-const EMAIL_TEMPLATE_VERSION = 3;
+const EMAIL_TEMPLATE_VERSION = 4;
 const fontStack = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
 
 const shell = ({ preheader, title, body, cta, footer }) => {
@@ -84,6 +84,90 @@ export const DEFAULT_EMAIL_TEMPLATES = {
     }),
     text: 'A new BiteSites account was created.\n\nName: {{first_name}}\nEmail: {{email}}\nCompany: {{company}}\n\nOpen the Users dashboard: {{admin_url}}'
   },
+  lead_received: {
+    name: 'Inquiry received',
+    description: 'Confirms that BiteSites received a project inquiry from a form, Bit, or Byte.',
+    category: 'transactional',
+    subject: 'We received your BiteSites inquiry, {{first_name}}',
+    html: shell({
+      preheader: 'Your notes are safely with the BiteSites team.',
+      title: 'Your inquiry is in',
+      body: '<p style="margin:0 0 16px;">Hi {{first_name}},</p><p style="margin:0 0 16px;">Thanks for speaking with {{source_label}}. We received your inquiry and the BiteSites team will review it shortly.</p><p style="margin:0;"><strong>Interested in:</strong> {{service_names}}</p>',
+      cta: { href: '{{consultation_url}}', label: 'Schedule a consultation', note: 'Need to correct or add something? Reply to this email and your note will reach our team.' },
+      footer: 'This is a confirmation of an inquiry you submitted to BiteSites.'
+    }),
+    text: 'Hi {{first_name}},\n\nThanks for speaking with {{source_label}}. We received your BiteSites inquiry and will review it shortly.\n\nInterested in: {{service_names}}\n\nSchedule a consultation: {{consultation_url}}\n\nNeed to correct or add something? Reply to this email.'
+  },
+  conversation_feedback: {
+    name: 'Conversation feedback',
+    description: 'Asks a visitor to rate a completed conversation with Bit or Byte.',
+    category: 'transactional',
+    subject: 'How was your conversation with {{agent_name}}?',
+    html: shell({
+      preheader: 'A quick rating helps us make every BiteSites conversation better.',
+      title: 'How did {{agent_name}} do?',
+      body: '<p style="margin:0 0 18px;">Hi {{first_name}},</p><p style="margin:0 0 20px;">Thanks for talking with {{agent_name}}. How useful was the conversation?</p><table role="presentation" cellspacing="0" cellpadding="0" border="0"><tr><td style="padding-right:7px;"><a href="{{rating_1_url}}" style="display:block;padding:10px 12px;border:1px solid #dddddd;border-radius:8px;color:#222222;text-decoration:none;font-weight:700;">1</a></td><td style="padding-right:7px;"><a href="{{rating_2_url}}" style="display:block;padding:10px 12px;border:1px solid #dddddd;border-radius:8px;color:#222222;text-decoration:none;font-weight:700;">2</a></td><td style="padding-right:7px;"><a href="{{rating_3_url}}" style="display:block;padding:10px 12px;border:1px solid #dddddd;border-radius:8px;color:#222222;text-decoration:none;font-weight:700;">3</a></td><td style="padding-right:7px;"><a href="{{rating_4_url}}" style="display:block;padding:10px 12px;border:1px solid #dddddd;border-radius:8px;color:#222222;text-decoration:none;font-weight:700;">4</a></td><td><a href="{{rating_5_url}}" style="display:block;padding:10px 12px;border:1px solid #111111;border-radius:8px;color:#ffffff;background:#111111;text-decoration:none;font-weight:700;">5</a></td></tr></table><p style="margin:18px 0 0;color:#6b6b6b;font-size:13px;line-height:20px;">1 means not useful; 5 means very useful. Your choice opens a confirmation page where you can add an optional comment.</p>',
+      cta: { href: '{{feedback_url}}', label: 'Leave detailed feedback' },
+      footer: 'This feedback request relates to your recent BiteSites conversation. <a href="{{preference_url}}" style="color:#555555;">Manage feedback email preferences</a>.'
+    }),
+    text: 'Hi {{first_name}},\n\nThanks for talking with {{agent_name}}. How useful was the conversation?\n\nRate it or leave a comment: {{feedback_url}}\n\nManage feedback email preferences: {{preference_url}}'
+  },
+  new_lead_admin: {
+    name: 'New lead — admin notice',
+    description: 'Notifies the BiteSites team when an intake form, Bit, or Byte creates a lead.',
+    category: 'transactional',
+    subject: 'New {{source_label}} lead: {{lead_name}}',
+    html: shell({
+      preheader: 'A new BiteSites inquiry is ready for review.',
+      title: 'New lead received',
+      body: '<p style="margin:0 0 8px;"><strong>{{lead_name}}</strong> came through {{source_label}}.</p><p style="margin:0 0 8px;"><strong>Contact:</strong> {{contact}}</p><p style="margin:0;"><strong>Interested in:</strong> {{service_names}}</p>',
+      cta: { href: '{{lead_url}}', label: 'Open lead' },
+      footer: 'Internal BiteSites lead notification.'
+    }),
+    text: 'New BiteSites lead\n\nName: {{lead_name}}\nSource: {{source_label}}\nContact: {{contact}}\nInterested in: {{service_names}}\n\nOpen lead: {{lead_url}}'
+  },
+  access_granted: {
+    name: 'Account access granted',
+    description: 'Tells an account holder that an admin approved their BiteSites access.',
+    category: 'transactional',
+    subject: 'Your BiteSites access is ready',
+    html: shell({
+      preheader: 'Your BiteSites account has been approved.',
+      title: 'You’re approved',
+      body: '<p style="margin:0 0 16px;">Hi {{first_name}},</p><p style="margin:0;">Your BiteSites account now has {{role_label}} access. Sign in again to refresh your secure session and open the tools available to you.</p>',
+      cta: { href: '{{sign_in_url}}', label: 'Sign in to BiteSites' },
+      footer: 'You are receiving this account notice because an administrator approved your BiteSites access.'
+    }),
+    text: 'Hi {{first_name}},\n\nYour BiteSites account now has {{role_label}} access. Sign in again to refresh your secure session:\n{{sign_in_url}}'
+  },
+  access_revoked: {
+    name: 'Account access removed',
+    description: 'Security notice sent when an administrator removes BiteSites access.',
+    category: 'transactional',
+    subject: 'Your BiteSites access has changed',
+    html: shell({
+      preheader: 'An administrator removed access from your BiteSites account.',
+      title: 'Account access removed',
+      body: '<p style="margin:0 0 16px;">Hi {{first_name}},</p><p style="margin:0;">An administrator removed portal access from your BiteSites account. Your account remains pending, but protected dashboard data is no longer available.</p>',
+      cta: { href: 'mailto:{{support_email}}', label: 'Contact support', note: 'If you expected this change, no action is needed.' },
+      footer: 'This is a security notice about your BiteSites account.'
+    }),
+    text: 'Hi {{first_name}},\n\nAn administrator removed portal access from your BiteSites account. If you did not expect this, contact {{support_email}}.'
+  },
+  operational_alert: {
+    name: 'Operational alert — admin',
+    description: 'Internal alert for email, CRM, and voice-import failures that need attention.',
+    category: 'transactional',
+    subject: 'BiteSites alert: {{alert_title}}',
+    html: shell({
+      preheader: 'A BiteSites integration needs attention.',
+      title: '{{alert_title}}',
+      body: '<p style="margin:0 0 16px;">{{alert_message}}</p><p style="margin:0;color:#6b6b6b;font-size:13px;line-height:20px;"><strong>Component:</strong> {{component}}<br><strong>Reference:</strong> {{reference}}</p>',
+      cta: { href: '{{admin_url}}', label: 'Open BiteSites admin' },
+      footer: 'Internal BiteSites operational notification. Duplicate alerts are automatically throttled.'
+    }),
+    text: 'BiteSites operational alert\n\n{{alert_title}}\n{{alert_message}}\n\nComponent: {{component}}\nReference: {{reference}}\n\nOpen admin: {{admin_url}}'
+  },
   announcement: {
     name: 'Client announcement',
     description: 'A polished general-purpose template admins can send from the dashboard.',
@@ -94,9 +178,9 @@ export const DEFAULT_EMAIL_TEMPLATES = {
       title: '{{headline}}',
       body: '<p style="margin:0 0 16px;">Hi {{first_name}},</p><p style="margin:0;">{{message}}</p>',
       cta: { href: '{{cta_url}}', label: '{{cta_label}}' },
-      footer: 'You are receiving this because you have a BiteSites account. Questions? Reply to this email.'
+      footer: 'You are receiving this because you have a BiteSites account. Questions? Reply to this email. <a href="{{preference_url}}" style="color:#555555;">Manage email preferences</a>.'
     }),
-    text: 'Hi {{first_name}},\n\n{{headline}}\n\n{{message}}\n\n{{cta_label}}: {{cta_url}}'
+    text: 'Hi {{first_name}},\n\n{{headline}}\n\n{{message}}\n\n{{cta_label}}: {{cta_url}}\n\nManage email preferences: {{preference_url}}'
   }
 };
 
@@ -172,5 +256,30 @@ export function buildMessage({ from, to, template, variables, stream = 'outbound
   return {
     From: from, To: to, Subject: rendered.subject, HtmlBody: rendered.html, TextBody: rendered.text,
     MessageStream: stream, Tag: tag, TrackOpens: true, TrackLinks: 'HtmlOnly'
+  };
+}
+
+// Broadcasts always get a visible preferences link and RFC 8058 headers, even
+// when an admin-created template forgot to include {{preference_url}} itself.
+export function addBroadcastUnsubscribe(message, preferenceUrl, oneClickUrl = preferenceUrl) {
+  if (!preferenceUrl) return message;
+  const footer = `<p style="margin:24px 0 0;color:#777777;font-size:12px;line-height:19px;">Don’t want BiteSites announcements? <a href="${escapeHtml(preferenceUrl)}" style="color:#555555;">Manage email preferences</a>.</p>`;
+  const html = message.HtmlBody.includes(preferenceUrl)
+    ? message.HtmlBody
+    : message.HtmlBody.includes('</body>')
+      ? message.HtmlBody.replace('</body>', `${footer}</body>`)
+      : `${message.HtmlBody}${footer}`;
+  const text = message.TextBody.includes(preferenceUrl)
+    ? message.TextBody
+    : `${message.TextBody}\n\nManage email preferences: ${preferenceUrl}`;
+  return {
+    ...message,
+    HtmlBody: html,
+    TextBody: text,
+    Headers: [
+      ...(Array.isArray(message.Headers) ? message.Headers : []),
+      { Name: 'List-Unsubscribe', Value: `<${oneClickUrl}>` },
+      { Name: 'List-Unsubscribe-Post', Value: 'List-Unsubscribe=One-Click' }
+    ]
   };
 }

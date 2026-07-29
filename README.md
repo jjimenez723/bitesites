@@ -13,7 +13,8 @@ Form submissions and authentication run on Firebase (project `bitesites-org`). B
 intake form and the Bit chat write directly to Firestore from the browser; there is no
 API server to run. Access is enforced by `firestore.rules` and gated by App Check, and
 a Cloud Function syncs each new lead into GoHighLevel. Current service pricing is served
-only to authenticated accounts, and Postmark handles branded account and admin email.
+only to authenticated accounts, and Postmark handles branded account, lead, feedback,
+preference-managed broadcast and admin operational email.
 
 See **[FIREBASE_SETUP.md](FIREBASE_SETUP.md)** for the data model, the security model,
 and the remaining setup steps.

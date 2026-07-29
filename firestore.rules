@@ -67,7 +67,7 @@ service cloud.firestore {
         'name', 'email', 'phone', 'businessName', 'roleInCompany',
         'businessSize', 'urgencyTag', 'services', 'preferredContactMethod',
         'projectDetails', 'customAnswers', 'source', 'status', 'createdAt',
-        'pagePath', 'referrer', 'userAgent'
+        'pagePath', 'referrer', 'userAgent', 'conversationId'
       ];
     }
 
@@ -101,6 +101,7 @@ service cloud.firestore {
         && optStr(data, 'businessName', 160)
         && optStr(data, 'roleInCompany', 160)
         && optStr(data, 'projectDetails', 5000)
+        && optStr(data, 'conversationId', 60)
 
         // Controlled vocabularies. The client normalises anything unrecognised
         // (e.g. free-text answers typed into the Bit chat) to 'other'.

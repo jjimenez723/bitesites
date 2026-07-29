@@ -8,7 +8,7 @@
 // number without a direction is hard to act on.
 
 import React, { useMemo, useState } from 'react';
-import { useEvents, useLeads, cutoffDay, EVENT_CAP } from './data';
+import { useEvents, useLeads, cutoffDay, EVENT_CAP, toDate } from './data';
 import { StatTile, TrendChart, RankList, Funnel, HeatMap, ShareBar, compact, share } from './charts';
 import GeoOverview from './GeoGlobe';
 
@@ -36,6 +36,13 @@ const delta = (now, before) => {
   return Math.round(((now - before) / before) * 100);
 };
 
+const eventTime = event => {
+  const timestamp = toDate(event.ts);
+  if (timestamp) return timestamp.getTime();
+  const fallback = event.day ? new Date(`${event.day}T12:00:00Z`) : null;
+  return fallback && !Number.isNaN(fallback.getTime()) ? fallback.getTime() : null;
+};
+
 function summarise(events) {
   const sessions = new Set();
   const visitors = new Set();
@@ -46,7 +53,8 @@ function summarise(events) {
   const devices = new Map([['desktop', 0], ['mobile', 0], ['tablet', 0]]);
   const depth = SCROLL_MARKS.map(() => new Set());
   const clicks = [];
-  const locationSessions = new Set();
+  const sessionTimes = new Map();
+  const locationSessions = new Map();
   const locationPoints = new Map();
   let pageViews = 0;
   let formStarts = 0;
@@ -54,7 +62,16 @@ function summarise(events) {
   let callOpens = 0;
 
   for (const event of events) {
-    if (event.sid) sessions.add(event.sid);
+    if (event.sid) {
+      sessions.add(event.sid);
+      const at = eventTime(event);
+      if (at) {
+        const span = sessionTimes.get(event.sid) || { firstAt: at, lastAt: at };
+        span.firstAt = Math.min(span.firstAt, at);
+        span.lastAt = Math.max(span.lastAt, at);
+        sessionTimes.set(event.sid, span);
+      }
+    }
     if (event.vid) visitors.add(event.vid);
 
     switch (event.type) {
@@ -85,27 +102,45 @@ function summarise(events) {
       case 'call_open': callOpens += 1; break;
       case 'location': {
         if (
-          !event.sid || locationSessions.has(event.sid)
+          !event.sid
           || typeof event.lat !== 'number' || typeof event.lon !== 'number'
         ) break;
-        locationSessions.add(event.sid);
-        const key = `${event.lat}|${event.lon}|${event.city || ''}|${event.countryCode || ''}`;
-        const point = locationPoints.get(key) || {
-          key,
+        const at = eventTime(event);
+        const previous = locationSessions.get(event.sid);
+        if (previous && (!at || previous.at >= at)) break;
+        locationSessions.set(event.sid, {
+          key: event.id || event.sid,
+          sid: event.sid,
           lat: event.lat,
           lon: event.lon,
           city: event.city || '',
           region: event.region || '',
           country: event.country || '',
           countryCode: event.countryCode || '',
-          value: 0
-        };
-        point.value += 1;
-        locationPoints.set(key, point);
+          timezone: event.timezone || '',
+          at
+        });
         break;
       }
       default: break;
     }
+  }
+
+  for (const sample of locationSessions.values()) {
+    const key = `${sample.lat}|${sample.lon}|${sample.city}|${sample.countryCode}`;
+    const point = locationPoints.get(key) || {
+      ...sample,
+      key,
+      value: 0,
+      firstAt: sample.at,
+      latestAt: sample.at
+    };
+    point.value += 1;
+    if (sample.at) {
+      point.firstAt = Math.min(point.firstAt || sample.at, sample.at);
+      point.latestAt = Math.max(point.latestAt || sample.at, sample.at);
+    }
+    locationPoints.set(key, point);
   }
 
   return {
@@ -128,7 +163,11 @@ function summarise(events) {
     ],
     depth: SCROLL_MARKS.map((mark, index) => ({ label: `${mark}% of page`, count: depth[index].size })),
     clicks,
-    locations: [...locationPoints.values()].sort((a, b) => b.value - a.value)
+    locations: [...locationPoints.values()].sort((a, b) => b.value - a.value),
+    locationHistory: [...locationSessions.values()]
+      .filter(sample => sample.at)
+      .sort((a, b) => a.at - b.at),
+    sessionHistory: [...sessionTimes.values()].sort((a, b) => a.firstAt - b.firstAt)
   };
 }
 
@@ -233,7 +272,13 @@ export default function Overview() {
           <TrendChart data={current.trend} label="Views" />
         </div>
 
-        <GeoOverview locations={current.locations} sessions={current.sessions} />
+        <GeoOverview
+          locations={current.locations}
+          history={current.locationHistory}
+          sessionHistory={current.sessionHistory}
+          sessions={current.sessions}
+          rangeDays={days}
+        />
 
         <div className="admin-grid cols-2">
           <div className="admin-card">

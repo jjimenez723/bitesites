@@ -6,12 +6,15 @@ import { analyticsDuration, startAnalytics, trackEvent } from './lib/analytics';
 import { finishChat, logChatMessage, startChat } from './lib/conversations';
 import Terms from './pages/Terms';
 import Privacy from './pages/Privacy';
+import Feedback from './pages/Feedback';
+import EmailPreferences from './pages/EmailPreferences';
 import { BitMascot } from './components/BitMascot';
 import { InteractiveNebulaShader } from './components/InteractiveNebulaShader';
 import { MeshFieldBackdrop } from './components/MeshFieldBackdrop';
 import { TeamSection } from './components/TeamSection';
 import { ByteAvatar, VoiceAIReceptionist, VoiceReceptionistPreview } from './components/VoiceAIReceptionist';
 import { BitChatPreview } from './components/BitChatPreview';
+import ConversationRating from './components/ConversationRating';
 import ProtectedPricing from './components/ProtectedPricing';
 import logoFull from './assets/bitesites-logo-full.webp';
 import logoWordmark from './assets/bitesites-logo-wordmark.webp';
@@ -518,7 +521,10 @@ function AiReceptionist({ onClose, origin, initialAnswer }) {
   const submitReceptionistLead = async event => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    const payload = { ...answers, ...Object.fromEntries(data.entries()), services: [answers.services], preferredContactMethod: 'email' };
+    const payload = {
+      ...answers, ...Object.fromEntries(data.entries()), services: [answers.services],
+      preferredContactMethod: 'email', conversationId: chatIdRef.current
+    };
     setStatus({ text: 'Sending your project notes…', kind: '' });
     record('visitor', [payload.name, payload.email, payload.phone, payload.projectDetails].filter(Boolean).join(' · '), 'text', 'contact');
     try {
@@ -550,7 +556,7 @@ function AiReceptionist({ onClose, origin, initialAnswer }) {
         {messages.map((message, index) => <div className="bit-message user" key={`${message.text}-${index}`}>{message.text}</div>)}
         {question && <><div className="chat-bubble bit-bubble">{question.prompt}</div><div className="chat-options bit-options">{question.options.map(([value, label]) => <button type="button" key={value} disabled={isThinking} onClick={() => choose(value, label)}>{label}<span>→</span></button>)}</div><p className="chat-progress">Question {step + 1} of {receptionistQuestions.length}</p></>}
         {isThinking && <div className="bit-thinking" aria-live="polite"><span className="thinking-orb"><i /><i /><i /></span><span>{thinkingLines[thinkingLine]}</span></div>}
-        {step === receptionistQuestions.length && <><div className="chat-bubble bit-bubble">Thanks — I have the essentials. Where should we send your tailored next step?</div><form className="chat-form bit-contact" onSubmit={submitReceptionistLead}><label>Name<input name="name" required autoComplete="name" /></label><label>Email<input name="email" type="email" required autoComplete="email" /></label><label>Phone <small>(optional)</small><input name="phone" type="tel" autoComplete="tel" /></label><label>Anything else we should know? <small>(optional)</small><textarea name="projectDetails" placeholder="A goal, challenge, or useful detail" /></label><button className="chat-submit" type="submit" disabled={status.kind === 'success'}>{status.kind === 'success' ? 'Request sent' : 'Send my project notes'}</button><p className={`form-status ${status.kind}`} aria-live="polite">{status.text}</p></form></>}
+        {step === receptionistQuestions.length && <><div className="chat-bubble bit-bubble">Thanks — I have the essentials. Where should we send your tailored next step?</div><form className="chat-form bit-contact" onSubmit={submitReceptionistLead}><label>Name<input name="name" required autoComplete="name" /></label><label>Email<input name="email" type="email" required autoComplete="email" /></label><label>Phone <small>(optional)</small><input name="phone" type="tel" autoComplete="tel" /></label><label>Anything else we should know? <small>(optional)</small><textarea name="projectDetails" placeholder="A goal, challenge, or useful detail" /></label><button className="chat-submit" type="submit" disabled={status.kind === 'success'}>{status.kind === 'success' ? 'Request sent' : 'Send my project notes'}</button><p className={`form-status ${status.kind}`} aria-live="polite">{status.text}</p></form>{status.kind === 'success' && <ConversationRating agent="bit" sourceType={chatIdRef.current ? 'chat' : 'lead'} sourceId={chatIdRef.current || leadIdRef.current} />}</>}
       </div>
     </div>
     {step === -1 ? <div className="bit-composer bit-start-row"><button className="chat-start bit-start" type="button" onClick={() => setStep(0)}>Start a quick project check-in <span>→</span></button><p className="chat-note">Takes about a minute. No pressure.</p></div> : question && <form className="bit-composer" onSubmit={sendTypedAnswer}><textarea value={draft} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); sendTypedAnswer(event); } }} placeholder="Or type your own answer…" aria-label="Type your response to Bit" disabled={isThinking} rows="1" /><button className="bit-send" type="submit" disabled={!draft.trim() || isThinking} aria-label="Send message">↑</button><p>Press Enter to send <span>·</span> Shift + Enter for a new line</p></form>}
@@ -1802,6 +1808,8 @@ createRoot(document.getElementById('root')).render(
     <Routes>
       <Route path="/terms" element={<Terms />} />
       <Route path="/privacy" element={<Privacy />} />
+      <Route path="/feedback" element={<Feedback />} />
+      <Route path="/email-preferences" element={<EmailPreferences />} />
       <Route
         path="/admin/*"
         element={<Suspense fallback={<div className="admin-boot">Loading dashboard…</div>}><AdminApp /></Suspense>}
