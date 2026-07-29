@@ -25,6 +25,8 @@ redirect configuration, verification, and rollback steps.
 ```bash
 npm run test:rules                 # security-rule test suite (45 assertions)
 npm run test:email                 # HTML template rendering and escaping
+npm run test:lifecycle             # CRM/calendar stage + economics webhook
+npm run test:analytics             # durable, session-deduplicated funnel totals
 npm run role -- you@example.com admin   # grant portal access
 npm run deploy                     # build + deploy site and Firestore rules
 npm run deploy:functions           # deploy the GoHighLevel lead sync

@@ -426,6 +426,77 @@ curl -X POST -H "x-webhook-secret: $SECRET" \
 only) writing into the emulator, so it catches drift in the real payload shape. It skips
 itself if `~/.ghl-token` is absent.
 
+## Commercial analytics and CRM return path
+
+Every new website lead now carries its random browser/session ids, first- and last-touch
+source/medium/campaign, landing page, converting CTA, selected pricing plan, and site
+release id. The same attribution object is sent to GoHighLevel in the inbound webhook
+payload. The admin **Performance** view joins this to qualification, appointments, wins,
+contract value, cash collected, direct delivery costs, gross profit, and client outcomes.
+High-value funnel events are also rolled into `analyticsDaily/{day}` with hashed per-day
+session and visitor deduplication. This keeps conversion totals accurate after the raw-event
+heat-map query reaches its deliberate 5,000-document cap.
+
+Stage changes made in Admin → Leads preserve timestamps and append immutable activity
+records. GoHighLevel or a calendar workflow can update the same fields automatically via:
+
+```text
+POST https://bitesites.org/api/lead-lifecycle
+x-webhook-secret: <LEAD_LIFECYCLE_WEBHOOK_SECRET>
+```
+
+Set the secret before deployment:
+
+```bash
+firebase functions:secrets:set LEAD_LIFECYCLE_WEBHOOK_SECRET
+```
+
+Use the `leadId` sent in the original GHL payload whenever possible. A canonical update is:
+
+```json
+{
+  "eventId": "{{opportunity.id}}-{{opportunity.status}}",
+  "leadId": "{{contact.leadId}}",
+  "status": "won",
+  "appointmentStatus": "attended",
+  "scheduledFor": "2026-08-01T14:00:00Z",
+  "contractValue": 12000,
+  "cashCollected": 6000,
+  "loadedLaborCost": 3200,
+  "contractorCost": 800,
+  "softwareCost": 200
+}
+```
+
+Supported stages are `new`, `contacted`, `qualified`, `booked`, `proposal`, `won`, and
+`lost`. Appointment outcomes are `none`, `booked`, `rescheduled`, `cancelled`, `attended`,
+and `no_show`. Reusing `eventId` makes webhook redelivery idempotent. Exact email or phone
+matching is available only as a fallback when a workflow cannot preserve `leadId`.
+
+`npm run test:lifecycle` drives the endpoint against the Firestore emulator and verifies
+authentication, stage timestamps, appointment outcomes, profit calculation, and redelivery.
+
+### Daily Search Console sync
+
+`syncSearchConsole` reads the final seven-day rolling window every morning, grouped by
+date, query, landing page, and device. It stores deterministic rows in `searchMetrics` so
+late Search Console adjustments overwrite previous values. The Performance view ranks
+high-impression queries with available clicks and the landing pages generating organic
+traffic.
+
+The function uses Application Default Credentials with the read-only Search Console scope;
+there is no browser token or downloadable service-account key. Setup is:
+
+1. Enable the Search Console API for `bitesites-org`.
+2. In Search Console, add the deployed Functions runtime service account as a user of the
+   `sc-domain:bitesites.org` property.
+3. If the property name differs, set `SEARCH_CONSOLE_SITE_URL` in
+   `functions/.env.bitesites-org` before deployment. The default is already
+   `sc-domain:bitesites.org`.
+
+Search Console returns its top rows rather than guaranteeing an exhaustive export; the UI
+treats these as content opportunities, not a financial ledger.
+
 ## Protected pricing and Postmark email
 
 Pricing values now live in the `getServicePricing` callable instead of the public Vite
@@ -505,6 +576,8 @@ npm run dev            # Vite dev server
 npm run build          # production build to dist/
 npm run test:rules     # security-rule assertions against the emulator
 npm run test:voice     # recordVoiceCall against the emulator
+npm run test:lifecycle # CRM/calendar stage, appointment and economics updates
+npm run test:analytics # durable daily funnel aggregation and deduplication
 npm run test:import    # the GHL call-log import, live API → emulator
 npm run test:role      # setUserRole — role document and auth claim stay in step
 npm run test:email     # template rendering, escaping, and Postmark payloads

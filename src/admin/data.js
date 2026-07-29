@@ -11,12 +11,13 @@
 import { useEffect, useState, useCallback } from 'react';
 import {
   collection, query, where, orderBy, limit, getDocs,
-  doc, updateDoc, deleteDoc
+  doc, deleteDoc, writeBatch, serverTimestamp
 } from 'firebase/firestore';
 import { app, db } from '../lib/firebase';
 
 export const EVENT_CAP = 5000;
 export const LIST_CAP = 200;
+export const LEAD_CAP = 1000;
 
 export const dayKey = date => date.toISOString().slice(0, 10);
 
@@ -82,8 +83,8 @@ export const useEvents = days =>
 
 export const useLeads = () =>
   useQuery(() => ({
-    cap: LIST_CAP,
-    q: query(collection(db, 'leads'), orderBy('createdAt', 'desc'), limit(LIST_CAP))
+    cap: LEAD_CAP,
+    q: query(collection(db, 'leads'), orderBy('createdAt', 'desc'), limit(LEAD_CAP))
   }), []);
 
 export const useConversations = (name, orderField) =>
@@ -98,6 +99,42 @@ export const useUsers = () =>
     q: query(collection(db, 'users'), orderBy('createdAt', 'desc'), limit(LIST_CAP))
   }), []);
 
+export const useClientOutcomes = () =>
+  useQuery(() => ({
+    cap: 500,
+    q: query(collection(db, 'clientOutcomes'), orderBy('periodStart', 'desc'), limit(500))
+  }), []);
+
+export const useSearchMetrics = days =>
+  useQuery(() => ({
+    cap: EVENT_CAP,
+    q: query(
+      collection(db, 'searchMetrics'),
+      where('day', '>=', cutoffDay(days)),
+      orderBy('day', 'desc'),
+      limit(EVENT_CAP)
+    )
+  }), [days]);
+
+export const useAnalyticsDaily = days =>
+  useQuery(() => ({
+    cap: 400,
+    q: query(
+      collection(db, 'analyticsDaily'),
+      where('day', '>=', cutoffDay(days)),
+      orderBy('day', 'desc'),
+      limit(400)
+    )
+  }), [days]);
+
+export async function addClientOutcome(data) {
+  const reference = doc(collection(db, 'clientOutcomes'));
+  const batch = writeBatch(db);
+  batch.set(reference, { ...data, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
+  await batch.commit();
+  return reference.id;
+}
+
 /** Loads a conversation's turns on demand — transcripts are only read when opened. */
 export async function loadTurns(parent, id, sub) {
   const snapshot = await getDocs(
@@ -109,7 +146,48 @@ export async function loadTurns(parent, id, sub) {
 export const useRoles = () =>
   useQuery(() => ({ q: query(collection(db, 'roles'), limit(LIST_CAP)) }), []);
 
-export const setLeadStatus = (id, status) => updateDoc(doc(db, 'leads', id), { status });
+export async function setLeadStatus(id, status, previous = {}) {
+  const leadRef = doc(db, 'leads', id);
+  const activityRef = doc(collection(db, 'leads', id, 'activities'));
+  const batch = writeBatch(db);
+  const update = {
+    status,
+    statusChangedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+    [`stageTimestamps.${status}`]: serverTimestamp()
+  };
+  if (status !== 'new' && !previous.firstResponseAt) update.firstResponseAt = serverTimestamp();
+  batch.update(leadRef, update);
+  batch.set(activityRef, {
+    type: 'stage_change',
+    fromStatus: previous.status || 'new',
+    toStatus: status,
+    at: serverTimestamp()
+  });
+  await batch.commit();
+}
+
+export async function saveLeadCommercial(id, fields) {
+  const leadRef = doc(db, 'leads', id);
+  const activityRef = doc(collection(db, 'leads', id, 'activities'));
+  const batch = writeBatch(db);
+  batch.update(leadRef, { ...fields, updatedAt: serverTimestamp() });
+  batch.set(activityRef, {
+    type: 'details_updated',
+    changed: Object.keys(fields).slice(0, 30),
+    at: serverTimestamp()
+  });
+  await batch.commit();
+}
+
+export async function loadLeadActivities(id) {
+  const snapshot = await getDocs(query(
+    collection(db, 'leads', id, 'activities'),
+    orderBy('at', 'desc'),
+    limit(100)
+  ));
+  return snapshotRows(snapshot);
+}
 export const removeLead = id => deleteDoc(doc(db, 'leads', id));
 
 // There is deliberately no setUserStatus here. Approval status and role are two

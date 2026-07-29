@@ -11,9 +11,9 @@
   color: var(--text);
   font: inherit;
   text-align: left;
-  cursor: pointer;
   isolation: isolate;
-  box-shadow: 0 24px 58px rgba(0, 4, 20, .45);
+  cursor: pointer;
+  box-shadow: none;
 }
 
 .services-grid .service-card > * {
@@ -35,33 +35,11 @@
   font-weight: 700;
 }
 
-/* The selected service uses the same violet edge and soft tint as a pricing
-   card marked "Most Popular". AI Automation starts selected; subsequent tile
-   clicks move this treatment to the visitor's latest choice. */
-.services-grid .service-card.featured {
-  background: linear-gradient(160deg, rgba(124, 58, 237, .04), #fff);
-  box-shadow: 0 0 0 1.5px #7c3aed, 0 24px 58px rgba(0, 4, 20, .45);
-}
-
-.services-grid .service-card.featured:hover {
-  box-shadow: 0 0 0 1.5px #7c3aed, 0 32px 70px rgba(0, 4, 20, .55);
+.services-grid .service-card:hover {
+  box-shadow: none;
 }
 
 .services-grid .service-card:focus-visible {
   outline: 3px solid #91c6ff;
   outline-offset: 4px;
-}
-
-.services-grid .service-card-title,
-.services-grid .service-card .desc {
-  display: block;
-  position: relative;
-}
-
-.services-grid .service-card-title {
-  margin-bottom: 10px;
-  font-family: "Inter Tight", sans-serif;
-  font-size: 21px;
-  font-weight: 700;
-  letter-spacing: -.025em;
 }

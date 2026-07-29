@@ -21,6 +21,13 @@ import { firestore, warmFirestore } from './firestore';
 const SESSION_KEY = 'bs.sid';
 const VISITOR_KEY = 'bs.vid';
 const GEO_SESSION_KEY = 'bs.geo';
+const ATTRIBUTION_KEY = 'bs.attribution';
+const INTENT_SESSION_KEY = 'bs.intent';
+
+// A deployment can provide its commit or release id. Keeping it on every event
+// makes before/after comparisons honest when the page changes mid-campaign.
+const SITE_VERSION = String(import.meta.env.VITE_SITE_VERSION || import.meta.env.VITE_GIT_SHA || 'development')
+  .trim().slice(0, 80);
 
 const MAX_EVENTS_PER_SESSION = 300;
 const FLUSH_SIZE = 20;
@@ -36,7 +43,11 @@ const SCROLL_MARKS = [25, 50, 75, 100];
 const EVENT_TYPES = [
   'page_view', 'click', 'section_view', 'scroll_depth',
   'form_start', 'form_submit', 'chat_open', 'call_open', 'outbound',
-  'portfolio_project_view', 'portfolio_progress', 'portfolio_video_health'
+  'portfolio_project_view', 'portfolio_progress', 'portfolio_video_health',
+  'form_step', 'form_error', 'lead_created',
+  'pricing_view', 'pricing_unlock', 'plan_select',
+  'signup_start', 'signup_step', 'signup_complete', 'signup_error',
+  'booking_click', 'chat_progress', 'call_state'
 ];
 
 // `value` is capped at 100000 by the rules, and a dwell or load time is the one
@@ -66,6 +77,71 @@ function storedId(storage, key) {
     // in-memory id so the session still reports as one session.
     return randomId();
   }
+}
+
+function storedJson(storage, key, fallback = null) {
+  try {
+    const raw = storage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function saveJson(storage, key, value) {
+  try { storage.setItem(key, JSON.stringify(value)); } catch { /* storage is optional */ }
+}
+
+const SEARCH_HOSTS = /(^|\.)(google|bing|duckduckgo|yahoo|ecosia)\./i;
+
+function currentTouch() {
+  const params = new URLSearchParams(window.location.search);
+  const referrer = clean(document.referrer, 400);
+  let referrerHost = '';
+  try { referrerHost = referrer ? new URL(referrer).hostname.replace(/^www\./, '') : ''; } catch { /* malformed */ }
+
+  const explicitSource = clean(params.get('utm_source'), 100);
+  const source = explicitSource || referrerHost || 'direct';
+  const medium = clean(params.get('utm_medium'), 100)
+    || (referrerHost ? (SEARCH_HOSTS.test(referrerHost) ? 'organic' : 'referral') : 'direct');
+
+  const touch = {
+    source,
+    medium,
+    landingPage: clean(window.location.pathname, 300) || '/',
+    capturedAt: new Date().toISOString()
+  };
+  const optional = {
+    campaign: clean(params.get('utm_campaign'), 160),
+    content: clean(params.get('utm_content'), 160),
+    term: clean(params.get('utm_term'), 160),
+    referrer
+  };
+  for (const [key, value] of Object.entries(optional)) if (value) touch[key] = value;
+  return touch;
+}
+
+function resolveAttribution() {
+  const current = currentTouch();
+  const previous = storedJson(window.localStorage, ATTRIBUTION_KEY, null);
+  const first = previous?.first?.source ? previous.first : current;
+  // Conventional last-non-direct attribution: a later direct visit should not
+  // erase the channel that actually introduced the visitor.
+  const last = current.source === 'direct' && previous?.last?.source ? previous.last : current;
+  const attribution = { first, last };
+  saveJson(window.localStorage, ATTRIBUTION_KEY, attribution);
+  return attribution;
+}
+
+function campaignQuery() {
+  const input = new URLSearchParams(window.location.search);
+  const output = new URLSearchParams();
+  for (const key of ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term']) {
+    const value = clean(input.get(key), 160);
+    if (value) output.set(key, value);
+  }
+  const serialized = output.toString();
+  return serialized ? `?${serialized}` : '';
 }
 
 let state = null;
@@ -142,12 +218,14 @@ function enqueue(type, payload = {}) {
   // Firestore sentinel, and this runs long before the SDK is loaded. It still
   // resolves to request.time either way, which is what the rules check.
   const event = {
+    _id: randomId(),
     type,
     sid: state.sessionId,
     vid: state.visitorId,
     path: clean(window.location.pathname, 300) || '/',
     day: dayKey(),
-    device: device()
+    device: device(),
+    version: SITE_VERSION
   };
 
   for (const [key, value] of Object.entries(payload)) {
@@ -168,9 +246,16 @@ async function flush() {
     const { sdk, db } = await firestore();
     const batch = sdk.writeBatch(db);
     const events = sdk.collection(db, 'events');
-    for (const event of pending) batch.set(sdk.doc(events), { ...event, ts: sdk.serverTimestamp() });
+    for (const event of pending) {
+      const { _id, ...data } = event;
+      batch.set(sdk.doc(events, _id), { ...data, ts: sdk.serverTimestamp() });
+    }
     await batch.commit();
   } catch (error) {
+    // A failed batch is atomic. Put the exact same event ids back at the front so
+    // a transient network/App Check failure does not quietly turn the dashboard
+    // into fiction; stable ids make a retry idempotent if the response was lost.
+    if (state) state.queue.unshift(...pending);
     // Analytics must never break the site or spam the console on every flush.
     // One warning per session is enough to notice a misconfigured rule.
     if (!state.warned) {
@@ -247,6 +332,43 @@ export function sessionId() {
   return state?.sessionId || '';
 }
 
+export function visitorId() {
+  return state?.visitorId || '';
+}
+
+/**
+ * Records the commercial context behind a later lead. Pricing and CTA controls
+ * set this without putting it in React state, so every conversion path shares it.
+ */
+export function setConversionIntent(input = {}) {
+  const intent = {};
+  for (const [key, max] of [['cta', 120], ['plan', 120], ['service', 80]]) {
+    const value = clean(input[key], max);
+    if (value) intent[key] = value;
+  }
+  if (state) state.intent = { ...(state.intent || {}), ...intent };
+  saveJson(window.sessionStorage, INTENT_SESSION_KEY, state?.intent || intent);
+}
+
+/** A privacy-limited snapshot safe to attach to a lead or CRM payload. */
+export function analyticsContext() {
+  const attribution = state?.attribution || resolveAttribution();
+  const intent = state?.intent || storedJson(window.sessionStorage, INTENT_SESSION_KEY, {});
+  return {
+    sid: state?.sessionId || storedId(window.sessionStorage, SESSION_KEY),
+    vid: state?.visitorId || storedId(window.localStorage, VISITOR_KEY),
+    siteVersion: SITE_VERSION,
+    attribution: {
+      first: attribution.first,
+      last: attribution.last,
+      conversion: {
+        path: clean(window.location.pathname, 300) || '/',
+        ...intent
+      }
+    }
+  };
+}
+
 /**
  * Wires up capture for the life of the page.
  * @returns {() => void} cleanup
@@ -257,6 +379,8 @@ export function startAnalytics() {
   state = {
     sessionId: storedId(window.sessionStorage, SESSION_KEY),
     visitorId: storedId(window.localStorage, VISITOR_KEY),
+    attribution: resolveAttribution(),
+    intent: storedJson(window.sessionStorage, INTENT_SESSION_KEY, {}),
     queue: [],
     count: 0,
     flushing: false,
@@ -264,7 +388,8 @@ export function startAnalytics() {
     cappedReported: false,
     scrollMark: 0,
     seenSections: new Set(),
-    startedForms: new Set()
+    startedForms: new Set(),
+    seenFormSteps: new Set()
   };
 
   // Fetch the SDK during the first idle gap — early enough that a visitor who
@@ -274,8 +399,14 @@ export function startAnalytics() {
 
   enqueue('page_view', {
     referrer: clean(document.referrer, 400),
-    // The landing query string is where campaign attribution lives.
-    query: clean(window.location.search, 300),
+    // Keep only known campaign labels. Arbitrary query parameters sometimes
+    // contain emails, tokens, or search text and do not belong in analytics.
+    query: clean(campaignQuery(), 300),
+    source: state.attribution.last.source,
+    medium: state.attribution.last.medium,
+    campaign: state.attribution.last.campaign,
+    content: state.attribution.last.content,
+    term: state.attribution.last.term,
     vw: window.innerWidth,
     vh: window.innerHeight
   });
@@ -301,6 +432,10 @@ export function startAnalytics() {
       vh: window.innerHeight
     });
 
+    if (href === '#start' || href?.endsWith?.('/#start')) {
+      setConversionIntent({ cta: label });
+    }
+
     // An outbound link is a conversion of sorts — the booking calendar, a live
     // portfolio site — so it is worth separating from ordinary clicks.
     // The section comes along so a click through to a live client site can be
@@ -309,6 +444,10 @@ export function startAnalytics() {
     // of these links reads "Visit the live project" and tells you nothing.
     if (href && /^https?:\/\//i.test(href) && !href.includes(window.location.host)) {
       enqueue('outbound', { label, href, section: sectionOf(node) });
+      if (/calendar\.app\.google|calendly\.com|\/book(?:ing)?\b/i.test(href)) {
+        setConversionIntent({ cta: label });
+        enqueue('booking_click', { label, href, cta: label, step: 'calendar_opened' });
+      }
     }
   };
 
@@ -360,9 +499,15 @@ export function startAnalytics() {
     const form = field?.closest?.('form');
     if (!form) return;
     const name = clean(form.className || form.id || 'form', 60);
-    if (state.startedForms.has(name)) return;
-    state.startedForms.add(name);
-    enqueue('form_start', { label: name });
+    if (!state.startedForms.has(name)) {
+      state.startedForms.add(name);
+      enqueue('form_start', { label: name });
+    }
+    const step = clean(field.name || field.id || field.type || field.tagName.toLowerCase(), 80);
+    const key = `${name}:${step}`;
+    if (!step || state.seenFormSteps.has(key)) return;
+    state.seenFormSteps.add(key);
+    enqueue('form_step', { label: name, step });
   };
 
   const onVisibility = () => { if (document.visibilityState === 'hidden') flush(); };

@@ -33,6 +33,13 @@
         }
       },
       {
+        "source": "/api/lead-lifecycle",
+        "function": {
+          "functionId": "recordLeadLifecycle",
+          "region": "us-central1"
+        }
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }

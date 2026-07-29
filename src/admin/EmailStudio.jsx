@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { useUsers } from './data';
-import { deleteTemplate, listTemplates, saveTemplate, sendTemplateEmail } from './email-api';
+import { useSearchParams } from 'react-router-dom';
+import { useLeads, useUsers } from './data';
+import { deleteTemplate, listTemplates, saveTemplate, sendLeadEmail, sendTemplateEmail } from './email-api';
 
 const blankTemplate = () => ({
   id: '', name: 'New email', description: '', category: 'broadcast',
@@ -214,7 +215,211 @@ function DeliveryType({ value, onChange }) {
   );
 }
 
-export default function EmailStudio() {
+const BOOKING_URL = 'https://calendar.app.google/bKKKvGWBSgvV8rodA';
+
+const firstWord = value => String(value || '').trim().split(/\s+/)[0] || '';
+
+const starterCopy = (type, firstName, businessName) => {
+  const name = firstName || 'there';
+  const business = businessName ? ` for ${businessName}` : '';
+  if (type === 'confirmation') return {
+    subject: `${name}, you’re all set with BiteSites`,
+    message: `It was great speaking with you${business}. I’ve added your information to the BiteSites system so our team has the context from our call.\n\nIf anything changes or you want to add a detail, just reply to this email.`
+  };
+  if (type === 'follow_up') return {
+    subject: `Following up on our conversation${businessName ? ` about ${businessName}` : ''}`,
+    message: `Thanks again for taking the time to speak with me${business}. I’m looking forward to continuing the conversation and talking through the next steps.`
+  };
+  return { subject: '', message: '' };
+};
+
+const displayMeetingTime = value => {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleString(undefined, {
+    weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
+    hour: 'numeric', minute: '2-digit', timeZoneName: 'short'
+  });
+};
+
+const googleCalendarUrl = (meetingLocal, subject) => {
+  if (!meetingLocal) return 'https://calendar.google.com/calendar/u/0/r/eventedit';
+  const start = new Date(meetingLocal);
+  if (Number.isNaN(start.getTime())) return 'https://calendar.google.com/calendar/u/0/r/eventedit';
+  const end = new Date(start.getTime() + 30 * 60 * 1000);
+  const stamp = date => date.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+  const params = new URLSearchParams({
+    action: 'TEMPLATE', text: subject || 'BiteSites meeting',
+    dates: `${stamp(start)}/${stamp(end)}`,
+    details: 'BiteSites consultation. Add Google Meet conferencing, save the event, then paste the Meet link into the dashboard email.'
+  });
+  return `https://calendar.google.com/calendar/render?${params}`;
+};
+
+function LeadEmailComposer({ initialLeadId, onOpenAutomations }) {
+  const { rows: leads, loading, refresh } = useLeads();
+  const [selectedLeadId, setSelectedLeadId] = useState(initialLeadId || '');
+  const [firstName, setFirstName] = useState('');
+  const [email, setEmail] = useState('');
+  const [businessName, setBusinessName] = useState('');
+  const [starter, setStarter] = useState('confirmation');
+  const initialCopy = starterCopy('confirmation', '', '');
+  const [subject, setSubject] = useState(initialCopy.subject);
+  const [message, setMessage] = useState(initialCopy.message);
+  const [actionType, setActionType] = useState('none');
+  const [meetingLocal, setMeetingLocal] = useState('');
+  const [meetUrl, setMeetUrl] = useState('');
+  const [bookingUrl, setBookingUrl] = useState(BOOKING_URL);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState({ kind: '', text: '' });
+  const initializedLead = useRef(false);
+
+  const chooseLead = id => {
+    setSelectedLeadId(id);
+    const lead = leads.find(item => item.id === id);
+    if (!lead) return;
+    const nextFirstName = firstWord(lead.name);
+    setFirstName(nextFirstName);
+    setEmail(lead.email || '');
+    setBusinessName(lead.businessName || '');
+    const copy = starterCopy(starter, nextFirstName, lead.businessName || '');
+    setSubject(copy.subject);
+    setMessage(copy.message);
+    setNotice({ kind: '', text: '' });
+  };
+
+  useEffect(() => {
+    if (!initializedLead.current && initialLeadId && leads.some(lead => lead.id === initialLeadId)) {
+      initializedLead.current = true;
+      chooseLead(initialLeadId);
+    }
+  }, [initialLeadId, leads]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const chooseStarter = value => {
+    setStarter(value);
+    const copy = starterCopy(value, firstName, businessName);
+    setSubject(copy.subject);
+    setMessage(copy.message);
+    setNotice({ kind: '', text: '' });
+  };
+
+  const updateRecipientDetail = (key, value) => {
+    const previous = starterCopy(starter, firstName, businessName);
+    const nextFirstName = key === 'firstName' ? value : firstName;
+    const nextBusinessName = key === 'businessName' ? value : businessName;
+    const next = starterCopy(starter, nextFirstName, nextBusinessName);
+    // Keep untouched starter copy personalized as the contact is entered, but
+    // stop auto-writing as soon as the admin edits either field themselves.
+    if (subject === previous.subject) setSubject(next.subject);
+    if (message === previous.message) setMessage(next.message);
+    if (key === 'firstName') setFirstName(value);
+    else setBusinessName(value);
+  };
+
+  const meetingTime = displayMeetingTime(meetingLocal);
+  const actionUrl = actionType === 'confirmed' ? meetUrl : actionType === 'self_schedule' ? bookingUrl : '';
+  const canSend = email && subject.trim() && message.trim()
+    && (actionType === 'none' || actionUrl.startsWith('https://'))
+    && (actionType !== 'confirmed' || meetingTime);
+
+  const send = async () => {
+    if (!canSend) return;
+    setBusy(true);
+    setNotice({ kind: '', text: '' });
+    try {
+      await sendLeadEmail({
+        leadId: selectedLeadId, email, firstName: firstName || firstWord(email.split('@')[0]),
+        businessName, subject: subject.trim(), headline: subject.trim(), message: message.trim(),
+        actionType, actionUrl, meetingTime,
+        meetingAt: actionType === 'confirmed' && meetingLocal ? new Date(meetingLocal).toISOString() : ''
+      });
+      await refresh();
+      setNotice({ kind: 'success', text: `Sent to ${email}. The contact and follow-up are now recorded in Leads.` });
+    } catch (error) {
+      setNotice({ kind: 'error', text: error?.message || 'The email could not be sent.' });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return <>
+    <header className="admin-topbar">
+      <div><h1>Lead email</h1><p className="admin-topbar-sub">Send a personal follow-up, meeting confirmation, or booking link.</p></div>
+      <div className="admin-topbar-spacer" />
+      <button className="btn-admin" type="button" onClick={onOpenAutomations}>Automated emails</button>
+      <button className="btn-admin primary" type="button" disabled={busy || !canSend} onClick={send}>{busy ? 'Sending…' : 'Send email'}</button>
+    </header>
+
+    <div className="admin-body lead-email-page">
+      {notice.text && <p className={`email-notice ${notice.kind}`} aria-live="polite">{notice.text}</p>}
+      <div className="lead-email-layout">
+        <main className="admin-card lead-email-composer">
+          <section className="lead-email-section">
+            <div className="lead-email-section-head"><span>1</span><div><h3>Who is this for?</h3><p>Choose a lead to fill their details, or enter someone new.</p></div></div>
+            <div className="lead-email-fields">
+              <label className="full"><span>Lead</span><select value={selectedLeadId} onChange={event => chooseLead(event.target.value)}><option value="">New or unlisted contact</option>{leads.map(lead => <option key={lead.id} value={lead.id}>{lead.name || lead.email || lead.phone || 'Unnamed lead'}{lead.businessName ? ` — ${lead.businessName}` : ''}</option>)}</select>{loading && <small>Loading leads…</small>}</label>
+              <label><span>First name</span><input value={firstName} onChange={event => updateRecipientDetail('firstName', event.target.value)} placeholder="Alex" /></label>
+              <label><span>Business</span><input value={businessName} onChange={event => updateRecipientDetail('businessName', event.target.value)} placeholder="Acme Studio" /></label>
+              <label className="full"><span>Email</span><input type="email" value={email} onChange={event => { setEmail(event.target.value); if (selectedLeadId) setSelectedLeadId(''); }} placeholder="alex@business.com" /></label>
+            </div>
+          </section>
+
+          <section className="lead-email-section">
+            <div className="lead-email-section-head"><span>2</span><div><h3>Start with</h3><p>Use a practical starting point, then edit every word below.</p></div></div>
+            <div className="lead-email-starters">
+              {[
+                ['confirmation', 'Added to our system', 'Confirm that their details and call context are saved.'],
+                ['follow_up', 'Conversation follow-up', 'Continue a promising conversation and outline next steps.'],
+                ['custom', 'Write from scratch', 'Start with a blank subject and message.']
+              ].map(([value, label, description]) => <button key={value} type="button" className={starter === value ? 'selected' : ''} onClick={() => chooseStarter(value)}><strong>{label}</strong><small>{description}</small></button>)}
+            </div>
+            <div className="lead-email-fields message-fields">
+              <label className="full"><span>Subject</span><input value={subject} onChange={event => setSubject(event.target.value)} placeholder="A clear subject line" /></label>
+              <label className="full"><span>Message</span><textarea rows="8" value={message} onChange={event => setMessage(event.target.value)} placeholder="Write your note here…" /></label>
+            </div>
+          </section>
+
+          <section className="lead-email-section">
+            <div className="lead-email-section-head"><span>3</span><div><h3>Add a meeting action</h3><p>Confirm the time you agreed on, let them choose, or send only the note.</p></div></div>
+            <div className="lead-email-actions">
+              {[
+                ['none', 'No meeting link', 'Send the message as-is.'],
+                ['confirmed', 'Time already agreed', 'Include the exact time and Google Meet link.'],
+                ['self_schedule', 'Let them choose', 'Send your Google booking page.']
+              ].map(([value, label, description]) => <button key={value} type="button" className={actionType === value ? 'selected' : ''} onClick={() => setActionType(value)}><strong>{label}</strong><small>{description}</small></button>)}
+            </div>
+
+            {actionType === 'confirmed' && <div className="lead-email-fields meeting-fields">
+              <label><span>Agreed date and time</span><input type="datetime-local" value={meetingLocal} onChange={event => setMeetingLocal(event.target.value)} /></label>
+              <label><span>Google Meet link</span><input type="url" value={meetUrl} onChange={event => setMeetUrl(event.target.value)} placeholder="https://meet.google.com/…" /></label>
+              <div className="full meeting-helper"><div><strong>{meetingTime || 'Choose the agreed time above'}</strong><small>The recipient will see the time in your current timezone.</small></div><a className="btn-admin" href={googleCalendarUrl(meetingLocal, subject)} target="_blank" rel="noreferrer">Open Google Calendar ↗</a></div>
+            </div>}
+            {actionType === 'self_schedule' && <div className="lead-email-fields meeting-fields"><label className="full"><span>Booking page</span><input type="url" value={bookingUrl} onChange={event => setBookingUrl(event.target.value)} /></label></div>}
+          </section>
+        </main>
+
+        <aside className="admin-card lead-email-preview">
+          <div className="lead-email-preview-head"><span className="email-eyebrow">Recipient view</span><h3>Ready to review</h3><p>This is the content that will be sent through Postmark.</p></div>
+          <div className="lead-email-paper">
+            <img src="https://bitesites.org/apple-touch-icon.png" width="60" height="60" alt="BiteSites" />
+            <div className="lead-email-paper-content">
+              <small>Subject</small><strong className="preview-subject">{subject || 'Your subject will appear here'}</strong>
+              <h2>{subject || 'Your email'}</h2>
+              <p>Hi {firstName || 'there'},</p>
+              <p className="preview-message">{message || 'Your message will appear here.'}</p>
+              {actionType === 'confirmed' && meetingTime && <div className="preview-meeting"><small>Meeting time</small><strong>{meetingTime}</strong></div>}
+              {actionType !== 'none' && <span className="preview-button">{actionType === 'confirmed' ? 'Join Google Meet' : 'Choose a meeting time'}</span>}
+            </div>
+            <p className="preview-footer">This is a personal follow-up from your BiteSites conversation. Reply to this email if you have any questions.</p>
+          </div>
+        </aside>
+      </div>
+    </div>
+  </>;
+}
+
+function TemplateLibrary({ onOpenComposer }) {
   const { rows: users } = useUsers();
   const [templates, setTemplates] = useState([]);
   const [selectedId, setSelectedId] = useState('');
@@ -369,8 +574,9 @@ export default function EmailStudio() {
   return (
     <>
       <header className="admin-topbar">
-        <div><h1>Email studio</h1><p className="admin-topbar-sub">Build the message your recipients will see, then send through Postmark.</p></div>
+        <div><h1>Automated emails</h1><p className="admin-topbar-sub">Review lifecycle templates used by the website and account system.</p></div>
         <div className="admin-topbar-spacer" />
+        <button className="btn-admin" type="button" onClick={onOpenComposer}>Compose lead email</button>
         <button className="btn-admin" type="button" onClick={() => { const fresh = blankTemplate(); setSelectedId(''); setDraft(fresh); clearVariableEditor(); }}>New template</button>
         <button className="btn-admin primary" type="button" disabled={Boolean(busy)} onClick={save}>{busy === 'save' ? 'Saving…' : 'Save template'}</button>
       </header>
@@ -492,4 +698,18 @@ export default function EmailStudio() {
       </div>
     </>
   );
+}
+
+export default function EmailStudio() {
+  const [params, setParams] = useSearchParams();
+  const view = params.get('view') === 'automations' ? 'automations' : 'compose';
+  const switchView = next => {
+    const nextParams = new URLSearchParams(params);
+    if (next === 'automations') nextParams.set('view', 'automations');
+    else nextParams.delete('view');
+    setParams(nextParams);
+  };
+  return view === 'automations'
+    ? <TemplateLibrary onOpenComposer={() => switchView('compose')} />
+    : <LeadEmailComposer initialLeadId={params.get('lead') || ''} onOpenAutomations={() => switchView('automations')} />;
 }

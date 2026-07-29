@@ -6,6 +6,7 @@ import { compact, share } from './charts';
 
 const RAD = Math.PI / 180;
 const TILT = -.18;
+const MAX_TILT = Math.PI * .42;
 const HOUR = 60 * 60 * 1000;
 const DAY = 24 * HOUR;
 const WORLD_LAND = feature(worldTopology, worldTopology.objects.land);
@@ -104,9 +105,11 @@ function Globe({ locations, timeLabel }) {
     let frame = 0;
     let last = performance.now();
     let yaw = locationsRef.current[0] ? -locationsRef.current[0].lon * RAD : -.7;
+    let tilt = TILT;
     let dragging = false;
     let pointerId = null;
     let previousX = 0;
+    let previousY = 0;
     let hoverKey = '';
     let projectedMarkers = [];
 
@@ -135,8 +138,8 @@ function Globe({ locations, timeLabel }) {
       const x = Math.cos(phi) * Math.sin(lambda);
       const y = Math.sin(phi);
       const z = Math.cos(phi) * Math.cos(lambda);
-      const yy = y * Math.cos(TILT) - z * Math.sin(TILT);
-      const zz = y * Math.sin(TILT) + z * Math.cos(TILT);
+      const yy = y * Math.cos(tilt) - z * Math.sin(tilt);
+      const zz = y * Math.sin(tilt) + z * Math.cos(tilt);
       return { x: cx + x * radius, y: cy - yy * radius, z: zz };
     };
 
@@ -152,7 +155,7 @@ function Globe({ locations, timeLabel }) {
       projection
         .translate([cx, cy])
         .scale(radius)
-        .rotate([yaw / RAD, -TILT / RAD]);
+        .rotate([yaw / RAD, -tilt / RAD]);
 
       for (const star of stars) {
         ctx.fillStyle = `rgba(190,218,255,${star.a})`;
@@ -275,13 +278,16 @@ function Globe({ locations, timeLabel }) {
       dragging = true;
       pointerId = event.pointerId;
       previousX = event.clientX;
+      previousY = event.clientY;
       canvas.setPointerCapture?.(event.pointerId);
       wrap.classList.add('is-dragging');
     };
     const onPointerMove = event => {
       if (dragging && event.pointerId === pointerId) {
         yaw += (event.clientX - previousX) * .008;
+        tilt = Math.max(-MAX_TILT, Math.min(MAX_TILT, tilt + (event.clientY - previousY) * .008));
         previousX = event.clientX;
+        previousY = event.clientY;
         return;
       }
       const point = pointAt(event);
@@ -299,6 +305,7 @@ function Globe({ locations, timeLabel }) {
       if (event.pointerId !== pointerId) return;
       dragging = false;
       pointerId = null;
+      canvas.releasePointerCapture?.(event.pointerId);
       wrap.classList.remove('is-dragging');
     };
     const onPointerLeave = () => {
@@ -345,7 +352,7 @@ function Globe({ locations, timeLabel }) {
       <div className="geo-globe-orbit geo-globe-orbit-a" aria-hidden="true" />
       <div className="geo-globe-orbit geo-globe-orbit-b" aria-hidden="true" />
       <span className="geo-live-badge"><i /> Activity map</span>
-      <span className="geo-drag-hint">Drag to explore</span>
+      <span className="geo-drag-hint">Drag any direction to explore</span>
       {hovered && (
         <div
           className="geo-tooltip"

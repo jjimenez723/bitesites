@@ -127,6 +127,26 @@ await it('accepts a full submission with every optional field', () =>
     conversationId: 'chat_abc123'
   })));
 
+await it('accepts privacy-limited acquisition attribution on a lead', () =>
+  assertSucceeds(addDoc(collection(anon, 'leads'), {
+    ...validLead(), sid: 'session-123', vid: 'visitor-123', siteVersion: 'abc123',
+    attribution: {
+      first: { source: 'google', medium: 'organic', campaign: 'voice-ai', landingPage: '/', capturedAt: '2026-07-28T10:00:00.000Z' },
+      last: { source: 'newsletter', medium: 'email', landingPage: '/', capturedAt: '2026-07-28T11:00:00.000Z' },
+      conversion: { path: '/', cta: 'Grow My Business', plan: 'Automation Builder', service: 'ai' }
+    }
+  })));
+
+await it('rejects arbitrary fields hidden inside attribution', () =>
+  assertFails(addDoc(collection(anon, 'leads'), {
+    ...validLead(),
+    attribution: {
+      first: { source: 'google', medium: 'organic', landingPage: '/', capturedAt: '2026-07-28T10:00:00.000Z', email: 'stolen@example.com' },
+      last: { source: 'google', medium: 'organic', landingPage: '/', capturedAt: '2026-07-28T10:00:00.000Z' },
+      conversion: { path: '/' }
+    }
+  })));
+
 describe('leads — rejected submissions');
 await it('rejects an unknown field (no using the DB as free storage)', () =>
   assertFails(addDoc(collection(anon, 'leads'), { ...validLead(), payload: 'x'.repeat(500) })));
@@ -199,6 +219,16 @@ await it('admin (via custom claim) can read leads', () =>
 
 await it('admin can triage a lead status', () =>
   assertSucceeds(updateDoc(doc(adminByDoc, 'leads', 'seeded_lead'), { status: 'contacted' })));
+
+await it('admin can append an immutable lead activity', () =>
+  assertSucceeds(addDoc(collection(adminByDoc, 'leads', 'seeded_lead', 'activities'), {
+    type: 'stage_change', fromStatus: 'new', toStatus: 'contacted', at: serverTimestamp()
+  })));
+
+await it('visitor cannot append or read lead activity', async () => {
+  await assertFails(addDoc(collection(visitor, 'leads', 'seeded_lead', 'activities'), { type: 'tamper' }));
+  await assertFails(getDocs(collection(visitor, 'leads', 'seeded_lead', 'activities')));
+});
 
 await it('admin cannot rewrite a lead email (audit integrity)', () =>
   assertFails(updateDoc(doc(adminByDoc, 'leads', 'seeded_lead'), { email: 'changed@example.com' })));
@@ -300,6 +330,40 @@ await it('client cannot write a project', () =>
 await it('admin can write a project', () =>
   assertSucceeds(updateDoc(doc(adminByDoc, 'projects', 'proj1'), { name: 'Site build v2' })));
 
+describe('client outcomes — commercial results stay admin-only');
+await it('admin can record a client outcome', () =>
+  assertSucceeds(setDoc(doc(adminByDoc, 'clientOutcomes', 'july'), {
+    clientName: 'Acme', periodStart: new Date(), websiteLeads: 8, revenue: 12000
+  })));
+await it('public and clients cannot read or write client outcomes', async () => {
+  await assertFails(getDocs(collection(anon, 'clientOutcomes')));
+  await assertFails(setDoc(doc(clientOk, 'clientOutcomes', 'forged'), { revenue: 1 }));
+});
+
+describe('search metrics — server-written, admin-readable');
+await testEnv.withSecurityRulesDisabled(async context => {
+  await setDoc(doc(context.firestore(), 'searchMetrics', 'row1'), {
+    day: '2026-07-28', query: 'ai receptionist', clicks: 3, impressions: 40, position: 6.2
+  });
+});
+await it('admin can read search performance', () => assertSucceeds(getDocs(collection(adminByDoc, 'searchMetrics'))));
+await it('public cannot read or forge search performance', async () => {
+  await assertFails(getDocs(collection(anon, 'searchMetrics')));
+  await assertFails(setDoc(doc(adminByDoc, 'searchMetrics', 'forged'), { clicks: 999 }));
+});
+
+describe('daily analytics — function-written, admin-readable');
+await testEnv.withSecurityRulesDisabled(async context => {
+  await setDoc(doc(context.firestore(), 'analyticsDaily', '2026-07-28'), {
+    day: '2026-07-28', sessions: 12, visitors: 10, sessionCounts: { lead_created: 2 }
+  });
+});
+await it('admin can read durable funnel totals', () => assertSucceeds(getDocs(collection(adminByDoc, 'analyticsDaily'))));
+await it('public cannot read or forge durable totals', async () => {
+  await assertFails(getDocs(collection(anon, 'analyticsDaily')));
+  await assertFails(setDoc(doc(adminByDoc, 'analyticsDaily', 'forged'), { sessions: 999 }));
+});
+
 // --------------------------------------------------------------- analytics
 // `events` takes anonymous writes from every visitor, so it has the same threat
 // model as `leads`: the negative cases below are what stop it becoming free,
@@ -352,6 +416,18 @@ await it('accepts an outbound click attributed to a project', () =>
     ...validEvent(), type: 'outbound', label: 'Visit the live project',
     href: 'https://stockroomnj.com', section: 'portfolio:StockRoom NJ'
   })));
+
+await it('accepts joined conversion and detailed funnel events', async () => {
+  await assertSucceeds(addDoc(collection(anon, 'events'), {
+    ...validEvent(), type: 'lead_created', leadId: 'lead-123', source: 'intake_form', version: 'abc123'
+  }));
+  await assertSucceeds(addDoc(collection(anon, 'events'), {
+    ...validEvent(), type: 'form_error', label: 'Start your project', step: 'services', reason: 'missing_service'
+  }));
+  await assertSucceeds(addDoc(collection(anon, 'events'), {
+    ...validEvent(), type: 'plan_select', plan: 'Automation Builder', service: 'ai', cta: 'Grow My Business'
+  }));
+});
 
 // analyticsDuration() clamps to this ceiling before enqueueing. If that clamp is
 // ever removed, a long dwell starts failing here rather than in production.

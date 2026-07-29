@@ -14,6 +14,7 @@ import {
   signOutUser, resetPassword, friendlyAuthError
 } from '../lib/auth';
 import Overview from './Overview';
+import Performance from './Performance';
 import Leads from './Leads';
 import Conversations from './Conversations';
 import Users from './Users';
@@ -38,6 +39,7 @@ const AdminLogo = () => (
 
 const NAV = [
   { to: '/admin', end: true, label: 'Overview', icon: 'M3 13h4v8H3zM10 3h4v18h-4zM17 9h4v12h-4z' },
+  { to: '/admin/performance', label: 'Performance', icon: 'M3 18l5-6 4 3 8-10M16 5h4v4' },
   { to: '/admin/leads', label: 'Leads', icon: 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z' },
   { to: '/admin/conversations', label: 'Conversations', icon: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z' },
   { to: '/admin/email', label: 'Email', icon: 'M3 5h18v14H3zM3 6l9 7 9-7' },
@@ -208,6 +210,7 @@ export default function AdminApp() {
         <div className="admin-main">
           <Routes>
             <Route index element={<Overview />} />
+            <Route path="performance" element={<Performance />} />
             <Route path="leads" element={<Leads />} />
             <Route path="conversations" element={<Conversations />} />
             <Route path="email" element={<EmailStudio />} />

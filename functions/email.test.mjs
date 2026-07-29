@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { addBroadcastUnsubscribe, DEFAULT_EMAIL_TEMPLATES, buildMessage, renderTemplate } from './email.js';
+import { addBroadcastUnsubscribe, DEFAULT_EMAIL_TEMPLATES, buildLeadOutreachTemplate, buildMessage, renderTemplate } from './email.js';
 
 test('renders known variables in all message parts', () => {
   const result = renderTemplate({
@@ -84,4 +84,23 @@ test('adds visible and one-click unsubscribe controls to broadcasts', () => {
     { Name: 'List-Unsubscribe', Value: '<https://bitesites.org/api/email-preferences?token=abc>' },
     { Name: 'List-Unsubscribe-Post', Value: 'List-Unsubscribe=One-Click' }
   ]);
+});
+
+test('lead follow-ups keep custom copy escaped and include the selected meeting action', () => {
+  const template = buildLeadOutreachTemplate({ withAction: true, withMeetingTime: true });
+  const message = buildMessage({
+    from: 'BiteSites <jensy@bitesites.org>', to: 'alex@example.com', template,
+    variables: {
+      first_name: 'Alex', subject_line: 'Meeting confirmed', headline: 'Meeting confirmed',
+      preheader: 'A follow-up', message: 'Discuss <script>alert(1)</script>\nand next steps.',
+      meeting_time: 'Tuesday, July 28 at 2:00 PM EDT',
+      action_url: 'https://meet.google.com/abc-defg-hij', action_label: 'Join Google Meet',
+      action_note: 'Keep this email handy.'
+    }
+  });
+  assert.equal(message.Subject, 'Meeting confirmed');
+  assert.match(message.HtmlBody, /Tuesday, July 28 at 2:00 PM EDT/);
+  assert.match(message.HtmlBody, /https:\/\/meet\.google\.com\/abc-defg-hij/);
+  assert.doesNotMatch(message.HtmlBody, /<script>/);
+  assert.match(message.TextBody, /Discuss <script>alert\(1\)<\/script>/);
 });

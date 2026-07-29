@@ -41,6 +41,29 @@ const shell = ({ preheader, title, body, cta, footer }) => {
 </body></html>`;
 };
 
+// One-to-one sales emails intentionally use the same dependable HTML shell as
+// lifecycle mail, while keeping the admin's note as escaped plain text. The
+// white-space style preserves paragraphs without allowing arbitrary HTML into
+// a message sent from the dashboard.
+export function buildLeadOutreachTemplate({ withAction = false, withMeetingTime = false } = {}) {
+  const meeting = withMeetingTime
+    ? '<p style="margin:20px 0 0;padding:14px 16px;border:1px solid #e5e5e5;border-radius:10px;background:#fafafa;"><span style="display:block;color:#777777;font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;">Meeting time</span><strong style="display:block;margin-top:3px;color:#222222;font-size:15px;">{{meeting_time}}</strong></p>'
+    : '';
+  return {
+    name: 'Lead follow-up',
+    category: 'transactional',
+    subject: '{{subject_line}}',
+    html: shell({
+      preheader: '{{preheader}}',
+      title: '{{headline}}',
+      body: `<p style="margin:0 0 16px;">Hi {{first_name}},</p><div style="margin:0;white-space:pre-line;">{{message}}</div>${meeting}`,
+      cta: withAction ? { href: '{{action_url}}', label: '{{action_label}}', note: '{{action_note}}' } : null,
+      footer: 'This is a personal follow-up from your BiteSites conversation. Reply to this email if you have any questions.'
+    }),
+    text: `Hi {{first_name}},\n\n{{message}}${withMeetingTime ? '\n\nMeeting time: {{meeting_time}}' : ''}${withAction ? '\n\n{{action_label}}: {{action_url}}\n\n{{action_note}}' : ''}\n\nReply to this email if you have any questions.`
+  };
+}
+
 export const DEFAULT_EMAIL_TEMPLATES = {
   welcome: {
     name: 'Account confirmation',

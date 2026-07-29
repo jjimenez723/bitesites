@@ -11,6 +11,7 @@ import {
   watchSession
 } from '../lib/auth';
 import { BitMascot } from './BitMascot';
+import { setConversionIntent, trackEvent } from '../lib/analytics';
 import '../account-gate.css';
 
 const tabs = [['web', 'Web Development'], ['social', 'Social Media'], ['ai', 'AI Automation']];
@@ -50,17 +51,26 @@ function AccountDialog({ initialView = 'signup', onClose, onConfirmationResult }
 
   const isSignup = view === 'signup';
 
+  useEffect(() => {
+    trackEvent(initialView === 'signup' ? 'signup_start' : 'pricing_view', {
+      step: initialView === 'signup' ? 'account_opened' : 'login_opened',
+      service: 'pricing'
+    });
+  }, [initialView]);
+
   const changeView = nextView => {
     setView(nextView);
     setSignupStep(1);
     setShowPassword(false);
     setStatus({ kind: '', text: '' });
+    if (nextView === 'signup') trackEvent('signup_start', { step: 'account_opened', service: 'pricing' });
   };
 
   const changeSignupStep = nextStep => {
     setSignupDirection(nextStep > signupStep ? 'forward' : 'back');
     setSignupStep(nextStep);
     setShowPassword(false);
+    trackEvent('signup_step', { step: `step_${nextStep}`, value: nextStep });
   };
 
   const updateField = event => {
@@ -114,6 +124,7 @@ function AccountDialog({ initialView = 'signup', onClose, onConfirmationResult }
             ? 'Account created. Your prices are unlocking now, and a confirmation email is on its way.'
             : `Account created. ${result.confirmation?.error || 'We could not send your confirmation email. Use Resend confirmation after this dialog closes.'}`
         });
+        trackEvent('signup_complete', { outcome: 'account_created', step: 'step_2' });
         onConfirmationResult?.(result.confirmation);
         window.setTimeout(onClose, 900);
       } else if (view === 'login') {
@@ -124,6 +135,10 @@ function AccountDialog({ initialView = 'signup', onClose, onConfirmationResult }
         setStatus({ kind: 'success', text: result?.message || 'If that address has an account, a reset link is on its way.' });
       }
     } catch (error) {
+      trackEvent(isSignup ? 'signup_error' : 'form_error', {
+        step: isSignup ? `step_${signupStep}` : view,
+        reason: String(error?.code || 'validation_or_provider_error').slice(0, 200)
+      });
       setStatus({ kind: 'error', text: error?.code ? friendlyAuthError(error) : error.message || 'Something went wrong.' });
     } finally {
       setBusy(false);
@@ -313,10 +328,12 @@ function LockedPricing({ onSignup, onLogin }) {
 export default function ProtectedPricing({ tab, setTab }) {
   const [session, setSession] = useState({ loading: true, user: null });
   const [pricing, setPricing] = useState(null);
+  const [selectedPlan, setSelectedPlan] = useState(null);
   const [error, setError] = useState('');
   const [dialog, setDialog] = useState(null);
   const [confirmation, setConfirmation] = useState('');
   const [resendingConfirmation, setResendingConfirmation] = useState(false);
+  const unlockedTrackedRef = useRef(false);
 
   useEffect(() => watchSession(next => setSession(next)), []);
 
@@ -332,6 +349,15 @@ export default function ProtectedPricing({ tab, setTab }) {
       .catch(err => active && setError(err?.message || 'Pricing could not be loaded.'));
     return () => { active = false; };
   }, [session.user]);
+
+  useEffect(() => {
+    if (!pricing) return;
+    trackEvent('pricing_view', { service: tab, step: 'packages_visible' });
+    if (!unlockedTrackedRef.current) {
+      unlockedTrackedRef.current = true;
+      trackEvent('pricing_unlock', { outcome: 'pricing_loaded' });
+    }
+  }, [pricing, tab]);
 
   if (session.loading) return <div className="pricing-gate-loading" aria-label="Checking account access"><i /><i /><i /></div>;
   if (!session.user) return <><LockedPricing onSignup={() => setDialog('signup')} onLogin={() => setDialog('login')} />{dialog && <AccountDialog initialView={dialog} onClose={() => setDialog(null)} onConfirmationResult={result => setConfirmation(
@@ -361,12 +387,20 @@ export default function ProtectedPricing({ tab, setTab }) {
         <div>{!session.user.emailVerified && <button type="button" onClick={resend} disabled={resendingConfirmation}>{confirmation || 'Resend confirmation'}</button>}<button type="button" onClick={signOutUser}>Sign out</button></div>
       </div>
       <div className="tabbar" role="tablist" aria-label="Pricing services">
-        {tabs.map(([key, label]) => <button className={`tabbtn ${tab === key ? 'active' : ''}`} onClick={() => setTab(key)} key={key} type="button" role="tab" aria-selected={tab === key} aria-controls="pricing-options">{label}</button>)}
+        {tabs.map(([key, label]) => <button className={`tabbtn ${tab === key ? 'active' : ''}`} onClick={() => { setTab(key); trackEvent('pricing_view', { service: key, step: 'tab_selected' }); }} key={key} type="button" role="tab" aria-selected={tab === key} aria-controls="pricing-options">{label}</button>)}
       </div>
       {error && <div className="pricing-gate-error">{error} <button type="button" onClick={() => window.location.reload()}>Try again</button></div>}
       {!pricing && !error && <div className="pricing-gate-loading"><i /><i /><i /></div>}
       {pricing && <div className="price-grid" id="pricing-options" role="tabpanel" aria-live="polite" aria-label={`${tab === 'web' ? 'Web Development' : tab === 'social' ? 'Social Media' : 'AI Automation'} packages`}>
-        {pricing[tab].map(([title, desc, price, items, popular], index) => <article className={`price-card pricing-card-enter ${popular ? 'popular' : ''}`} style={{ animationDelay: `${index * 70}ms` }} key={title}>{popular && <span className="badge">Most Popular</span>}<h4>{title}</h4><p className="plandesc">{desc}</p><div className="price">{price}</div><div className="pricenote">{tab === 'social' ? 'monthly engagement' : 'project scope'}</div><ul>{items.map(item => <li key={item}>{item}</li>)}</ul><a className={`btn ${popular ? 'btn-ai' : 'btn-ghost'}`} href="#start">Grow My Business</a></article>)}
+        {pricing[tab].map(([title, desc, price, items, popular], index) => {
+          const selected = selectedPlan?.tab === tab ? selectedPlan.title === title : popular;
+          const selectPlan = () => {
+            setSelectedPlan({ tab, title });
+            setConversionIntent({ plan: title, service: tab, cta: 'Grow My Business' });
+            trackEvent('plan_select', { plan: title, service: tab, cta: 'Grow My Business' });
+          };
+          return <article className={`price-card pricing-card-enter ${popular ? 'popular' : ''} ${selected ? 'selected' : ''}`} style={{ animationDelay: `${index * 70}ms` }} key={title} onClick={selectPlan}>{popular && <span className="badge">Most Popular</span>}<h4>{title}</h4><p className="plandesc">{desc}</p><div className="price">{price}</div><div className="pricenote">{tab === 'social' ? 'monthly engagement' : 'project scope'}</div><ul>{items.map(item => <li key={item}>{item}</li>)}</ul><a className={`btn ${selected ? 'btn-ai' : 'btn-ghost'}`} href="#start" onClick={event => { event.stopPropagation(); selectPlan(); }}>Grow My Business</a></article>;
+        })}
       </div>}
       {pricing && <p className="pricing-note">Every package is a starting point. We’ll shape the scope around your goals, timeline, and current tools.</p>}
     </>

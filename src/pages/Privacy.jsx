@@ -98,7 +98,8 @@ export default function Privacy() {
           <li>pages viewed, sections reached, scroll depth, and interactions with links and controls;</li>
           <li>
             click positions expressed as relative page coordinates, device category, viewport size,
-            referring URL, and campaign query parameters;
+            referring URL, and allowlisted campaign labels such as source, medium, campaign,
+            content, and term;
           </li>
           <li>
             an approximate city, state or region, and country inferred from your IP address. We round
@@ -114,6 +115,11 @@ export default function Privacy() {
         <ul>
           <li>the page path on our site where you submitted it;</li>
           <li>the referring URL, if your browser sent one;</li>
+          <li>
+            the random browser and session identifiers, first- and last-touch campaign labels,
+            and the service, package, or call-to-action associated with the submission, so we can
+            understand which marketing activity produces enquiries and customers;
+          </li>
           <li>your browser&rsquo;s user-agent string;</li>
           <li>a server-generated timestamp.</li>
         </ul>
@@ -177,8 +183,9 @@ export default function Privacy() {
           <li>
             <strong>First-party analytics.</strong> We store a random browser identifier in local
             storage and a random visit identifier in session storage. These values contain no name,
-            email address, or advertising identifier and are used only for aggregate site analytics.
-            Clearing browser storage resets them.
+            email address or third-party advertising identifier. When you submit an enquiry, we attach
+            these random values and the associated first-party campaign labels to that enquiry so we can
+            measure conversion and follow the sales outcome. Clearing browser storage resets them.
           </li>
           <li>
             <strong>Authentication.</strong> If you sign in, Firebase Authentication stores a session
@@ -208,6 +215,14 @@ export default function Privacy() {
         <ul>
           <li>respond to your enquiry and follow up about the services you asked about;</li>
           <li>prepare proposals, quotes and statements of work;</li>
+          <li>
+            manage enquiry stages, appointments, response times and commercial outcomes, and evaluate
+            which services and marketing sources are effective and sustainable;
+          </li>
+          <li>
+            record aggregated client outcomes such as leads, answered calls, appointments, attributed
+            revenue and service-quality indicators so we can improve delivery and report value;
+          </li>
           <li>create and administer accounts, and verify who is authorised to access what;</li>
           <li>provide, maintain, secure and improve the site and our services;</li>
           <li>send requested account, inquiry and conversation messages and honour email preferences;</li>

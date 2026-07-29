@@ -173,8 +173,8 @@ export function RankList({ rows, dead = false, empty = 'Nothing recorded yet.' }
 // ----------------------------------------------------------------- funnel
 
 /** Ordered stages, so an ordinal ramp — never categorical hues for a sequence. */
-export function Funnel({ steps, total }) {
-  if (!total) return <div className="admin-empty">No scroll data yet.</div>;
+export function Funnel({ steps, total, empty = 'No funnel data yet.' }) {
+  if (!total) return <div className="admin-empty">{empty}</div>;
 
   return (
     <div className="funnel">

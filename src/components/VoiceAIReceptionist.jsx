@@ -197,6 +197,11 @@ export function VoiceAIReceptionist({ open, onClose }) {
       durationSec,
       error: message
     });
+    trackEvent('call_state', {
+      step: 'ended', outcome: resolvedOutcome,
+      reason: message ? String(message).slice(0, 200) : undefined,
+      value: Math.max(0, Math.round(durationSec))
+    });
     if (resolvedOutcome === 'completed' && durationSec >= 10) setCompletedCallId(callId);
     callStartRef.current = 0;
     callConnectedRef.current = false;
@@ -223,11 +228,13 @@ export function VoiceAIReceptionist({ open, onClose }) {
     setElapsed(0);
     sawConnectingRef.current = false;
     try {
+      trackEvent('call_state', { step: 'start_requested' });
       await startVoiceCall();
       callStartRef.current = Date.now();
       callConnectedRef.current = false;
       callIdRef.current = await startCall();
     } catch {
+      trackEvent('call_state', { step: 'start_failed', outcome: 'failed', reason: 'voice_widget_did_not_start' });
       setStarting(false);
       setError('We could not reach the voice agent. Please refresh and try again.');
       closeCallRecord('failed', 'voice widget did not start');
@@ -269,6 +276,7 @@ export function VoiceAIReceptionist({ open, onClose }) {
     if (!callIdRef.current) return;
     if (connected) callConnectedRef.current = true;
     logCallState(callIdRef.current, callState);
+    trackEvent('call_state', { step: callState, outcome: connected ? 'connected' : undefined });
   }, [callState, connected]);
 
   useEffect(() => {

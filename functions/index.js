@@ -16,20 +16,23 @@
 import { onDocumentCreated } from 'firebase-functions/v2/firestore';
 import { onRequest, onCall, HttpsError } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
-import { defineSecret } from 'firebase-functions/params';
+import { defineSecret, defineString } from 'firebase-functions/params';
 import { setGlobalOptions } from 'firebase-functions/v2';
 import { initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { FieldValue, Timestamp, getFirestore } from 'firebase-admin/firestore';
 import { createHash, randomBytes } from 'node:crypto';
+import { GoogleAuth } from 'google-auth-library';
 import {
   addBroadcastUnsubscribe,
   DEFAULT_EMAIL_TEMPLATES,
+  buildLeadOutreachTemplate,
   buildMessage,
   getEmailTemplate,
   seedEmailTemplates,
   sendPostmark
 } from './email.js';
+import { aggregateFunnelData } from './aggregate-funnel.js';
 
 initializeApp();
 setGlobalOptions({ region: 'us-central1', maxInstances: 10 });
@@ -39,6 +42,8 @@ const VOICE_WEBHOOK_SECRET = defineSecret('VOICE_WEBHOOK_SECRET');
 const GHL_API_TOKEN = defineSecret('GHL_API_TOKEN');
 const POSTMARK_SERVER_TOKEN = defineSecret('POSTMARK_SERVER_TOKEN');
 const POSTMARK_WEBHOOK_SECRET = defineSecret('POSTMARK_WEBHOOK_SECRET');
+const LEAD_LIFECYCLE_WEBHOOK_SECRET = defineSecret('LEAD_LIFECYCLE_WEBHOOK_SECRET');
+const SEARCH_CONSOLE_SITE_URL = defineString('SEARCH_CONSOLE_SITE_URL', { default: 'sc-domain:bitesites.org' });
 
 // The sub-account the Voice AI agent lives in. Not a secret — it is visible in
 // the GoHighLevel URL bar — so a plain constant rather than a stored secret. A
@@ -239,7 +244,11 @@ function buildPayload(lead, leadId) {
       urgencyTag: lead.urgencyTag || null,
       preferredContactMethod: lead.preferredContactMethod,
       projectDetails: lead.projectDetails || null,
-      roleInCompany: lead.roleInCompany || null
+      roleInCompany: lead.roleInCompany || null,
+      sessionId: lead.sid || null,
+      visitorId: lead.vid || null,
+      siteVersion: lead.siteVersion || null,
+      attribution: lead.attribution || null
     }
   };
 }
@@ -443,6 +452,196 @@ function parseDate(value) {
   const parsed = new Date(typeof value === 'number' && value < 1e12 ? value * 1000 : value);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
+
+// ---------------------------------------------------------- lead lifecycle
+// Return path for CRM/calendar outcomes. The original lead sync sends `leadId`
+// to GoHighLevel; mapping it back here makes stage, appointment and revenue
+// updates deterministic instead of relying on fuzzy contact matching.
+const LIFECYCLE_STATUSES = new Set(['new', 'contacted', 'qualified', 'booked', 'proposal', 'won', 'lost']);
+const APPOINTMENT_STATUSES = new Set(['none', 'booked', 'rescheduled', 'cancelled', 'attended', 'no_show']);
+const LOST_REASONS = new Set(['', 'price', 'timing', 'no_response', 'competitor', 'poor_fit', 'internal_solution', 'other']);
+const ECONOMIC_FIELDS = [
+  'quotedValue', 'contractValue', 'cashCollected', 'recurringMonthlyRevenue',
+  'estimatedHours', 'actualHours', 'loadedLaborCost', 'contractorCost',
+  'softwareCost', 'refunds'
+];
+
+const nonNegative = value => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? Math.round(parsed * 100) / 100 : 0;
+};
+
+export const recordLeadLifecycle = onRequest(
+  { secrets: [LEAD_LIFECYCLE_WEBHOOK_SECRET], maxInstances: 10 },
+  async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    if (req.method !== 'POST') { res.set('Allow', 'POST').status(405).json({ error: 'method-not-allowed' }); return; }
+    const expected = str(LEAD_LIFECYCLE_WEBHOOK_SECRET.value(), 200);
+    const provided = str(req.get('x-webhook-secret'), 200);
+    if (expected.length < 16 || expected === 'unset') { res.status(503).json({ error: 'not-configured' }); return; }
+    if (provided !== expected) { res.status(401).json({ error: 'unauthorised' }); return; }
+
+    const body = req.body && typeof req.body === 'object' ? flatten(req.body) : {};
+    const db = getFirestore();
+    const leadId = str(body.leadId || body.lead_id, 200);
+    let leadRef = leadId ? db.collection('leads').doc(leadId) : null;
+    let snapshot = leadRef ? await leadRef.get() : null;
+
+    // Email/phone matching is a fallback for systems that cannot retain custom
+    // fields. It is intentionally exact and limited to one result.
+    if (!snapshot?.exists) {
+      const email = str(body.email, 200).toLowerCase();
+      const phone = str(body.phone, 40);
+      const match = email
+        ? await db.collection('leads').where('email', '==', email).orderBy('createdAt', 'desc').limit(1).get()
+        : phone
+          ? await db.collection('leads').where('phone', '==', phone).orderBy('createdAt', 'desc').limit(1).get()
+          : null;
+      if (match && !match.empty) {
+        snapshot = match.docs[0];
+        leadRef = snapshot.ref;
+      }
+    }
+    if (!snapshot?.exists || !leadRef) { res.status(404).json({ error: 'lead-not-found' }); return; }
+
+    const previous = snapshot.data();
+    const update = { updatedAt: FieldValue.serverTimestamp() };
+    const status = str(body.status || body.stage, 30).toLowerCase();
+    if (status && !LIFECYCLE_STATUSES.has(status)) { res.status(400).json({ error: 'invalid-status' }); return; }
+    if (status) {
+      update.status = status;
+      update.statusChangedAt = FieldValue.serverTimestamp();
+      update[`stageTimestamps.${status}`] = FieldValue.serverTimestamp();
+      if (status !== 'new' && !previous.firstResponseAt) update.firstResponseAt = FieldValue.serverTimestamp();
+    }
+
+    const appointmentStatus = str(body.appointmentStatus || body.appointment_status, 30).toLowerCase();
+    if (appointmentStatus && !APPOINTMENT_STATUSES.has(appointmentStatus)) { res.status(400).json({ error: 'invalid-appointment-status' }); return; }
+    if (appointmentStatus) update['appointment.status'] = appointmentStatus;
+    const scheduledFor = parseDate(body.scheduledFor || body.scheduled_for || body.appointmentTime);
+    if (scheduledFor) update['appointment.scheduledFor'] = Timestamp.fromDate(scheduledFor);
+    const appointmentEventAt = parseDate(body.appointmentEventAt || body.appointment_event_at) || new Date();
+    if (appointmentStatus === 'booked' || appointmentStatus === 'rescheduled') update['appointment.bookedAt'] = Timestamp.fromDate(appointmentEventAt);
+    if (appointmentStatus === 'attended') update['appointment.attendedAt'] = Timestamp.fromDate(appointmentEventAt);
+
+    const lostReason = str(body.lostReason || body.lost_reason, 40).toLowerCase();
+    if (!LOST_REASONS.has(lostReason)) { res.status(400).json({ error: 'invalid-lost-reason' }); return; }
+    if (lostReason) update['qualification.lostReason'] = lostReason;
+    const owner = str(body.owner, 120);
+    const competitor = str(body.competitor, 160);
+    const primaryProblem = str(body.primaryProblem || body.primary_problem, 1000);
+    if (owner) update.owner = owner;
+    if (competitor) update['qualification.competitor'] = competitor;
+    if (primaryProblem) update['qualification.primaryProblem'] = primaryProblem;
+
+    const suppliedEconomics = body.economics && typeof body.economics === 'object' ? body.economics : body;
+    const economics = { ...(previous.economics || {}) };
+    let hasEconomics = false;
+    for (const field of ECONOMIC_FIELDS) {
+      if (suppliedEconomics[field] === undefined && suppliedEconomics[field.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`)] === undefined) continue;
+      const snake = field.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`);
+      economics[field] = nonNegative(suppliedEconomics[field] ?? suppliedEconomics[snake]);
+      hasEconomics = true;
+    }
+    if (hasEconomics) {
+      const contract = nonNegative(economics.contractValue);
+      const costs = nonNegative(economics.loadedLaborCost) + nonNegative(economics.contractorCost)
+        + nonNegative(economics.softwareCost) + nonNegative(economics.refunds);
+      economics.grossProfit = Math.round((contract - costs) * 100) / 100;
+      economics.grossMargin = contract > 0 ? Math.round((economics.grossProfit / contract) * 10000) / 100 : 0;
+      update.economics = economics;
+    }
+
+    const eventKey = str(body.eventId || body.event_id, 200)
+      || createHash('sha256').update(JSON.stringify(req.body)).digest('hex').slice(0, 48);
+    const activityRef = leadRef.collection('activities').doc(`webhook_${eventKey.replace(/[^A-Za-z0-9_-]/g, '_')}`.slice(0, 500));
+    const batch = db.batch();
+    batch.update(leadRef, update);
+    batch.set(activityRef, {
+      type: 'lifecycle_webhook',
+      fromStatus: previous.status || 'new',
+      toStatus: status || previous.status || 'new',
+      appointmentStatus: appointmentStatus || '',
+      changed: Object.keys(update),
+      at: FieldValue.serverTimestamp()
+    }, { merge: true });
+    await batch.commit();
+    res.status(200).json({ ok: true, leadId: leadRef.id, status: status || previous.status || 'new' });
+  }
+);
+
+// ---------------------------------------------------------- organic search
+// Search Console is intentionally pulled server-side with Application Default
+// Credentials. Grant the deployed function service account read access to the
+// Search Console property; no OAuth token or API key is shipped to the browser.
+export const syncSearchConsole = onSchedule(
+  { schedule: 'every day 05:15', timeoutSeconds: 180, maxInstances: 1 },
+  async () => {
+    const siteUrl = str(SEARCH_CONSOLE_SITE_URL.value(), 500);
+    if (!siteUrl) return;
+    const end = new Date();
+    // Search Console final data is delayed. Re-read a rolling seven-day window
+    // and overwrite deterministic rows so late adjustments settle naturally.
+    end.setUTCDate(end.getUTCDate() - 2);
+    const start = new Date(end);
+    start.setUTCDate(start.getUTCDate() - 6);
+    const dateKey = date => date.toISOString().slice(0, 10);
+    try {
+      const auth = new GoogleAuth({ scopes: ['https://www.googleapis.com/auth/webmasters.readonly'] });
+      const client = await auth.getClient();
+      const response = await client.request({
+        url: `https://www.googleapis.com/webmasters/v3/sites/${encodeURIComponent(siteUrl)}/searchAnalytics/query`,
+        method: 'POST',
+        data: {
+          startDate: dateKey(start), endDate: dateKey(end),
+          dimensions: ['date', 'query', 'page', 'device'],
+          type: 'web', dataState: 'final', rowLimit: 25000
+        }
+      });
+      const rows = Array.isArray(response.data?.rows) ? response.data.rows : [];
+      const db = getFirestore();
+      for (let offset = 0; offset < rows.length; offset += 450) {
+        const batch = db.batch();
+        for (const row of rows.slice(offset, offset + 450)) {
+          const [day, query, page, device] = row.keys || [];
+          if (!day || !query || !page) continue;
+          const id = createHash('sha256').update(`${day}\n${query}\n${page}\n${device || ''}`).digest('hex');
+          batch.set(db.collection('searchMetrics').doc(id), {
+            day: str(day, 10), query: str(query, 500), page: str(page, 1000),
+            device: str(device, 20).toLowerCase(), clicks: nonNegative(row.clicks),
+            impressions: nonNegative(row.impressions), ctr: nonNegative(row.ctr),
+            position: nonNegative(row.position), syncedAt: FieldValue.serverTimestamp()
+          }, { merge: true });
+        }
+        await batch.commit();
+      }
+      await db.doc('systemHealth/search-console').set({
+        lastRunAt: FieldValue.serverTimestamp(), status: 'ok', rows: rows.length,
+        startDate: dateKey(start), endDate: dateKey(end), siteUrl
+      }, { merge: true });
+      console.log('[search-console]', JSON.stringify({ siteUrl, rows: rows.length, start: dateKey(start), end: dateKey(end) }));
+    } catch (error) {
+      const db = getFirestore();
+      await db.doc('systemHealth/search-console').set({
+        lastRunAt: FieldValue.serverTimestamp(), status: 'failed', error: str(error.message, 1000), siteUrl
+      }, { merge: true });
+      await createOperationalAlert(db, {
+        key: 'search-console-sync', title: 'Search Console sync failed',
+        message: error.message, component: 'Search Console', reference: siteUrl
+      });
+      throw error;
+    }
+  }
+);
+
+// ---------------------------------------------------- durable funnel totals
+// Heat maps intentionally read a capped event sample. Commercial funnels should
+// not become undercounts at the same threshold, so only the low-volume decision
+// events are rolled into one daily document with per-session deduplication.
+export const aggregateFunnelEvent = onDocumentCreated(
+  { document: 'events/{eventId}', maxInstances: 10 },
+  async event => aggregateFunnelData(event.data?.data())
+);
 
 const AGENT_HINTS = ['agent', 'assistant', 'ai', 'bot', 'byte', 'system'];
 const isAgent = speaker => AGENT_HINTS.some(hint => speaker.includes(hint));
@@ -1683,6 +1882,161 @@ export const sendAdminEmail = onCall(
         templateId, kind: 'admin-send', recipientCount: messages.length, skipped,
         sentBy: request.auth.uid, status: 'failed', error: str(error.message, 500)
       });
+      throw new HttpsError('internal', str(error.message, 300));
+    }
+  }
+);
+
+export const sendLeadEmail = onCall(
+  { enforceAppCheck: true, secrets: [POSTMARK_SERVER_TOKEN], timeoutSeconds: 30, maxInstances: 5 },
+  async request => {
+    const db = await requireAdmin(request);
+    const email = str(request.data?.email, 200).toLowerCase();
+    const firstNameValue = str(request.data?.firstName, 120) || 'there';
+    const businessName = str(request.data?.businessName, 200);
+    const subject = str(request.data?.subject, 200);
+    const headline = str(request.data?.headline, 160) || subject;
+    const message = typeof request.data?.message === 'string'
+      ? request.data.message.trim().slice(0, 10000)
+      : '';
+    const actionType = ['none', 'confirmed', 'self_schedule'].includes(request.data?.actionType)
+      ? request.data.actionType
+      : 'none';
+    const actionUrl = str(request.data?.actionUrl, 2000);
+    const meetingTime = str(request.data?.meetingTime, 300);
+    const meetingAt = str(request.data?.meetingAt, 100);
+    const rawLeadId = str(request.data?.leadId, 200);
+    const leadId = rawLeadId.includes('/') ? '' : rawLeadId;
+
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+      throw new HttpsError('invalid-argument', 'Enter a valid recipient email address.');
+    }
+    if (!subject || !message) {
+      throw new HttpsError('invalid-argument', 'A subject and message are required.');
+    }
+    if (actionType !== 'none') {
+      let parsed;
+      try { parsed = new URL(actionUrl); } catch { /* handled below */ }
+      if (!parsed || parsed.protocol !== 'https:') {
+        throw new HttpsError('invalid-argument', 'The meeting or booking link must be a secure https:// URL.');
+      }
+    }
+    if (actionType === 'confirmed' && !meetingTime) {
+      throw new HttpsError('invalid-argument', 'Add the agreed meeting time before sending.');
+    }
+    const meetingDate = meetingAt ? new Date(meetingAt) : null;
+    if (actionType === 'confirmed' && (!meetingDate || Number.isNaN(meetingDate.getTime()))) {
+      throw new HttpsError('invalid-argument', 'The agreed meeting date is invalid.');
+    }
+
+    const preference = await emailPreference(db, email);
+    if (preference.transactionalBlocked) {
+      throw new HttpsError('failed-precondition', 'Email delivery to this address is suppressed.');
+    }
+
+    const actionLabel = actionType === 'confirmed' ? 'Join Google Meet'
+      : actionType === 'self_schedule' ? 'Choose a meeting time'
+        : '';
+    const actionNote = actionType === 'confirmed'
+      ? 'Keep this email handy—the button above is your meeting link.'
+      : actionType === 'self_schedule'
+        ? 'The booking page will show the currently available times.'
+        : '';
+    const template = buildLeadOutreachTemplate({
+      withAction: actionType !== 'none',
+      withMeetingTime: actionType === 'confirmed'
+    });
+    const env = emailEnvironment();
+    try {
+      const result = await sendPostmark(POSTMARK_SERVER_TOKEN.value(), buildMessage({
+        from: env.from,
+        to: email,
+        template,
+        variables: {
+          first_name: firstNameValue,
+          subject_line: subject,
+          headline,
+          preheader: message.replace(/\s+/g, ' ').slice(0, 140),
+          message,
+          action_url: actionUrl,
+          action_label: actionLabel,
+          action_note: actionNote,
+          meeting_time: meetingTime
+        },
+        stream: env.transactionalStream,
+        tag: 'admin-lead-follow-up'
+      }));
+
+      await recordDelivery(db, {
+        templateId: 'lead-follow-up', kind: 'lead-follow-up', recipientCount: 1,
+        recipientKey: emailKey(email), leadId: leadId || null, actionType,
+        sentBy: request.auth.uid, status: 'sent', postmark: [result.MessageID].filter(Boolean)
+      });
+
+      {
+        // Delivery has already succeeded at this point. A CRM logging problem
+        // must not report the email as failed and tempt the admin to send a
+        // duplicate, so this secondary update is deliberately best-effort.
+        try {
+          let leadRef = leadId ? db.doc(`leads/${leadId}`) : null;
+          let leadSnapshot = leadRef ? await leadRef.get() : null;
+          if (!leadSnapshot?.exists && !leadId) {
+            const matching = await db.collection('leads').where('email', '==', email).limit(1).get();
+            leadSnapshot = matching.docs[0] || null;
+            leadRef = leadSnapshot?.ref || db.collection('leads').doc();
+          }
+          if (leadRef) {
+            const lead = leadSnapshot?.exists ? leadSnapshot.data() : {};
+            const isNewLead = !leadSnapshot?.exists;
+            const update = { updatedAt: FieldValue.serverTimestamp() };
+            if (!lead.firstResponseAt) update.firstResponseAt = FieldValue.serverTimestamp();
+            const nextStatus = actionType === 'confirmed'
+              ? 'booked'
+              : (!lead.status || lead.status === 'new') ? 'contacted' : '';
+            if (nextStatus && lead.status !== nextStatus) {
+              update.status = nextStatus;
+              update.statusChangedAt = FieldValue.serverTimestamp();
+              update[`stageTimestamps.${nextStatus}`] = FieldValue.serverTimestamp();
+            }
+            if (actionType === 'confirmed') {
+              update['appointment.status'] = 'booked';
+              update['appointment.scheduledFor'] = Timestamp.fromDate(meetingDate);
+            }
+            const batch = db.batch();
+            if (isNewLead) {
+              const createdStatus = nextStatus || 'contacted';
+              batch.set(leadRef, {
+                name: firstNameValue, email, businessName, source: 'cold_call',
+                services: [], preferredContactMethod: 'email', createdAt: FieldValue.serverTimestamp(),
+                updatedAt: FieldValue.serverTimestamp(), firstResponseAt: FieldValue.serverTimestamp(),
+                status: createdStatus, statusChangedAt: FieldValue.serverTimestamp(),
+                stageTimestamps: { [createdStatus]: FieldValue.serverTimestamp() },
+                ...(actionType === 'confirmed' ? {
+                  appointment: { status: 'booked', scheduledFor: Timestamp.fromDate(meetingDate) }
+                } : {})
+              });
+            } else {
+              batch.update(leadRef, update);
+            }
+            batch.create(leadRef.collection('activities').doc(), {
+              type: 'email_sent', subject, actionType,
+              ...(meetingDate ? { meetingAt: Timestamp.fromDate(meetingDate) } : {}),
+              at: FieldValue.serverTimestamp(), sentBy: request.auth.uid
+            });
+            await batch.commit();
+          }
+        } catch (error) {
+          console.error('[email] lead follow-up activity could not be recorded:', error.message);
+        }
+      }
+      return { ok: true, sent: 1 };
+    } catch (error) {
+      await recordDelivery(db, {
+        templateId: 'lead-follow-up', kind: 'lead-follow-up', recipientCount: 1,
+        recipientKey: emailKey(email), leadId: leadId || null,
+        sentBy: request.auth.uid, status: 'failed', error: str(error.message, 500)
+      });
+      if (error instanceof HttpsError) throw error;
       throw new HttpsError('internal', str(error.message, 300));
     }
   }

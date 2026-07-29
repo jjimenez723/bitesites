@@ -104,6 +104,12 @@ const services = [
   { key: 'social', title: 'Social Media Management', text: 'Content planning, publishing, and reporting that keeps your brand active and consistent.', bullets: ['A consistent publishing cadence that keeps you visible', 'Stronger alignment between social, web, and campaigns', 'Higher-quality engagement from the right audience'] }
 ];
 
+const serviceFormValues = {
+  ai: 'ai_automation',
+  web: 'web_development',
+  social: 'social_media_management'
+};
+
 // Every clip is encoded to a 0.5s GOP (`-g 15 -keyint_min 15 -sc_threshold 0`
 // at 30fps) and muxed with `-movflags +faststart`. Both matter and neither is
 // optional: a long GOP makes every seek decode from up to six seconds back,
@@ -470,6 +476,11 @@ function AiReceptionist({ onClose, origin, initialAnswer }) {
   }, [step]);
 
   useEffect(() => {
+    if (question?.key) trackEvent('chat_progress', { step: question.key, value: Math.max(1, step + 1) });
+    else if (step === receptionistQuestions.length) trackEvent('chat_progress', { step: 'contact', value: step + 1 });
+  }, [step, question?.key]);
+
+  useEffect(() => {
     const timer = window.setInterval(() => setThinkingLine(line => (line + 1) % thinkingLines.length), 1100);
     return () => window.clearInterval(timer);
   }, []);
@@ -530,10 +541,12 @@ function AiReceptionist({ onClose, origin, initialAnswer }) {
     try {
       leadIdRef.current = await submitLead(payload, 'bit_chat');
       outcomeRef.current = 'converted';
-      trackEvent('form_submit', { label: 'Bit chat — project notes' });
+      trackEvent('lead_created', { label: 'Bit chat — project notes', leadId: leadIdRef.current, source: 'bit_chat' });
+      trackEvent('form_submit', { label: 'Bit chat — project notes', leadId: leadIdRef.current, source: 'bit_chat' });
       setStatus({ text: 'You’re all set. Our team will follow up shortly.', kind: 'success' });
     } catch (error) {
       outcomeRef.current = 'failed';
+      trackEvent('form_error', { label: 'Bit chat — project notes', step: 'submit', reason: String(error?.code || 'submission_failed').slice(0, 200) });
       setStatus({ text: error.message || 'Unable to send your request. Please try again.', kind: 'error' });
     }
   };
@@ -567,7 +580,7 @@ function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [tab, setTab] = useState('web');
   const [modal, setModal] = useState(null);
-  const [activeService, setActiveService] = useState('ai');
+  const [selectedServices, setSelectedServices] = useState([]);
   const [status, setStatus] = useState({ text: '', kind: '' });
   const [activeProject, setActiveProject] = useState(0);
   const [receptionistOpen, setReceptionistOpen] = useState(false);
@@ -1529,10 +1542,26 @@ function App() {
     const data = new FormData(form);
     const payload = Object.fromEntries(data.entries());
     payload.services = data.getAll('services');
-    if (!payload.services.length) return setStatus({ text: 'Please select at least one service.', kind: 'error' });
-    if (payload.preferredContactMethod === 'phone' && !payload.phone.trim()) return setStatus({ text: 'Please include a phone number if you prefer a phone call.', kind: 'error' });
+    if (!payload.services.length) {
+      trackEvent('form_error', { label: 'Start your project', step: 'services', reason: 'missing_service' });
+      return setStatus({ text: 'Please select at least one service.', kind: 'error' });
+    }
+    if (payload.preferredContactMethod === 'phone' && !payload.phone.trim()) {
+      trackEvent('form_error', { label: 'Start your project', step: 'phone', reason: 'phone_required_for_contact_method' });
+      return setStatus({ text: 'Please include a phone number if you prefer a phone call.', kind: 'error' });
+    }
     setStatus({ text: 'Sending…', kind: '' });
-    try { await submitLead(payload, 'intake_form'); form.reset(); trackEvent('form_submit', { label: 'Start your project' }); setStatus({ text: 'Thanks — your project request has been received. We’ll be in touch soon.', kind: 'success' }); } catch (error) { setStatus({ text: error.message || 'Unable to submit the form. Please try again.', kind: 'error' }); }
+    try {
+      const leadId = await submitLead(payload, 'intake_form');
+      form.reset();
+      setSelectedServices([]);
+      trackEvent('lead_created', { label: 'Start your project', leadId, source: 'intake_form' });
+      trackEvent('form_submit', { label: 'Start your project', leadId, source: 'intake_form' });
+      setStatus({ text: 'Thanks — your project request has been received. We’ll be in touch soon.', kind: 'success' });
+    } catch (error) {
+      trackEvent('form_error', { label: 'Start your project', step: 'submit', reason: String(error?.code || 'submission_failed').slice(0, 200) });
+      setStatus({ text: error.message || 'Unable to submit the form. Please try again.', kind: 'error' });
+    }
   };
 
   return <>
@@ -1550,7 +1579,7 @@ function App() {
     </aside>
     <main id="top">
       <section className="hero"><div className="hero-bg"><InteractiveNebulaShader /><div className="hero-overlay" /></div><div className="wrap hero-content"><Eyebrow gradient>AI-powered digital solutions</Eyebrow><h1>Intelligence built<br />into your <span className="gradient-text">business.</span></h1><p className="lead">BiteSites builds Voice AI receptionists, websites, and automations that answer faster, capture more leads, and take repetitive work off your team.</p><div className="hero-actions"><Button href="#start" variant="ai">Start Your Project</Button><Button href="#ai-receptionist" variant="ghost">Meet Byte &amp; Bit</Button></div></div></section>
-      <section className="intake" id="start"><div className="wrap intake-grid"><div className="section-head reveal"><Eyebrow gradient>Start your project</Eyebrow><h2>Tell us what you need.</h2><p>Use one form for web development, social media management, or AI automation. We only ask for the details needed to route your project and follow up.</p></div><form className="intake-form reveal" onSubmit={submit}><div className="form-row"><Field label="Name" name="name" required /><Field label="Email" name="email" type="email" required /></div><div className="form-row"><Field label="Phone (optional)" name="phone" type="tel" /><Field label="Business / Company (optional)" name="businessName" /></div><div className="form-row"><Field label="Role in company (optional)" name="roleInCompany" /><label className="field"><span>Business size</span><select name="businessSize" required defaultValue=""><option value="" disabled>Select size</option><option value="solo">Solo / Freelancer</option><option value="small">2-10 employees</option><option value="growing">11-50 employees</option><option value="established">51-200 employees</option><option value="enterprise">200+ employees</option></select></label></div><label className="field"><span>Timeline (optional)</span><select name="urgencyTag" defaultValue=""><option value="">No urgency selected</option><option value="asap">ASAP</option><option value="2_4_weeks">2-4 weeks</option><option value="1_2_months">1-2 months</option><option value="flexible">Flexible</option></select></label><fieldset className="field"><legend>Services <small>(select all that apply)</small></legend><div className="choices">{[['web_development','Web Development'],['social_media_management','Social Media Management'],['ai_automation','AI Automation']].map(([value, label]) => <label className="choice" key={value}><input type="checkbox" name="services" value={value} />{label}</label>)}</div></fieldset><fieldset className="field"><legend>Preferred contact method</legend><div className="choices"><label className="choice"><input type="radio" name="preferredContactMethod" value="email" defaultChecked />Email</label><label className="choice"><input type="radio" name="preferredContactMethod" value="phone" />Phone</label></div></fieldset><label className="field"><span>Project details</span><textarea name="projectDetails" placeholder="What are you looking to accomplish?" /></label><Button variant="ai" type="submit">Start Your Project</Button><p className={`form-status ${status.kind}`}>{status.text}</p></form></div></section>
+      <section className="intake" id="start"><div className="wrap intake-grid"><div className="section-head reveal"><Eyebrow gradient>Start your project</Eyebrow><h2>Tell us what you need.</h2><p>Use one form for web development, social media management, or AI automation. We only ask for the details needed to route your project and follow up.</p></div><form className="intake-form reveal" onSubmit={submit}><div className="form-row"><Field label="Name" name="name" required /><Field label="Email" name="email" type="email" required /></div><div className="form-row"><Field label="Phone (optional)" name="phone" type="tel" /><Field label="Business / Company (optional)" name="businessName" /></div><div className="form-row"><Field label="Role in company (optional)" name="roleInCompany" /><label className="field"><span>Business size</span><select name="businessSize" required defaultValue=""><option value="" disabled>Select size</option><option value="solo">Solo / Freelancer</option><option value="small">2-10 employees</option><option value="growing">11-50 employees</option><option value="established">51-200 employees</option><option value="enterprise">200+ employees</option></select></label></div><label className="field"><span>Timeline (optional)</span><select name="urgencyTag" defaultValue=""><option value="">No urgency selected</option><option value="asap">ASAP</option><option value="2_4_weeks">2-4 weeks</option><option value="1_2_months">1-2 months</option><option value="flexible">Flexible</option></select></label><fieldset className="field"><legend>Services <small>(select all that apply)</small></legend><div className="choices">{[['web_development','Web Development'],['social_media_management','Social Media Management'],['ai_automation','AI Automation']].map(([value, label]) => <label className="choice" key={value}><input type="checkbox" name="services" value={value} checked={selectedServices.includes(value)} onChange={() => setSelectedServices(current => current.includes(value) ? current.filter(service => service !== value) : [...current, value])} />{label}</label>)}</div></fieldset><fieldset className="field"><legend>Preferred contact method</legend><div className="choices"><label className="choice"><input type="radio" name="preferredContactMethod" value="email" defaultChecked />Email</label><label className="choice"><input type="radio" name="preferredContactMethod" value="phone" />Phone</label></div></fieldset><label className="field"><span>Project details</span><textarea name="projectDetails" placeholder="What are you looking to accomplish?" /></label><Button variant="ai" type="submit">Start Your Project</Button><p className={`form-status ${status.kind}`}>{status.text}</p></form></div></section>
       <div className="strip" aria-label="What we do"><div className="ticker"><div className="ticker-track">{[0, 1].map(copy => <div className="ticker-group" key={copy} aria-hidden={copy === 1 ? 'true' : undefined}>{tickerServices.map(service => <span key={service}>{service}</span>)}</div>)}</div></div></div>
       <section className="voice-receptionist-section" id="ai-receptionist" aria-labelledby="voice-receptionist-heading">
         <div className="wrap">
@@ -1611,7 +1640,7 @@ function App() {
         </div>
       </section>
       <section className="pad" id="ai"><div className="wrap"><SectionHead label="Our focus" title="AI that actually runs your business." gradient>This is where we spend most of our time now — designing AI systems that answer the phone, qualify leads, and handle repetitive work, so your team doesn’t have to.</SectionHead><div className="ai-grid">{aiSolutions.map(([icon, title, text]) => <article className="ai-card reveal" key={title}><div className="ai-icon">{icon}</div><h3>{title}</h3><p>{text}</p></article>)}</div></div></section>
-      <section className="pad services-section" id="services"><MeshFieldBackdrop /><div className="wrap"><SectionHead label="What we do" title="Digital services built around growth, not filler.">Three connected service lines that help businesses build a stronger presence, reach the right people, and reduce the manual work holding growth back.</SectionHead><div className="services-grid">{services.map((service, index) => <article className={`service-card reveal ${service.key} ${activeService === service.key ? 'featured' : ''}`} key={service.key} role="button" tabIndex={0} onClick={() => { setActiveService(service.key); setModal(service.key); }} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setActiveService(service.key); setModal(service.key); } }} aria-label={`Explore ${service.title}`}>{service.badge && <span className="service-badge">{service.badge}</span>}<span className="service-icon">{['✦','□','↻'][index]}</span><span className="service-card-title">{service.title}</span><span className="desc">{service.text}</span><ul>{service.bullets.map(item => <li key={item}>{item}</li>)}</ul><span className="text-link">Explore {service.title} →</span></article>)}</div><div className="segments reveal">{[['Small business','Build a credible online presence, stay visible, and reduce repetitive admin work without adding complexity.'],['Medium business','Connect campaigns, service lines, and internal workflows as growing volume creates more moving parts.'],['Large business','Coordinate more stakeholders and more complex processes without sacrificing speed.']].map(([title, text]) => <div className="segment" key={title}><div className="tag">{title}</div><p>{text}</p></div>)}</div></div></section>
+      <section className="pad services-section" id="services"><MeshFieldBackdrop /><div className="wrap"><SectionHead label="What we do" title="Digital services built around growth, not filler.">Three connected service lines that help businesses build a stronger presence, reach the right people, and reduce the manual work holding growth back.</SectionHead><div className="services-grid">{services.map((service, index) => <article className={`service-card reveal ${service.key}`} key={service.key} role="button" tabIndex={0} onClick={() => setModal(service.key)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setModal(service.key); } }} aria-label={`Explore ${service.title}`}>{service.badge && <span className="service-badge">{service.badge}</span>}<div className="service-icon">{['✦','□','↻'][index]}</div><h3>{service.title}</h3><p className="desc">{service.text}</p><ul>{service.bullets.map(item => <li key={item}>{item}</li>)}</ul><span className="text-link">Explore {service.title} →</span></article>)}</div><div className="segments reveal">{[['Small business','Build a credible online presence, stay visible, and reduce repetitive admin work without adding complexity.'],['Medium business','Connect campaigns, service lines, and internal workflows as growing volume creates more moving parts.'],['Large business','Coordinate more stakeholders and more complex processes without sacrificing speed.']].map(([title, text]) => <div className="segment" key={title}><div className="tag">{title}</div><p>{text}</p></div>)}</div></div></section>
       {/* No inline style object: --portfolio-scrub is written imperatively by
           writePortfolioProgress so that playback and scrubbing never re-render
           the page. Adding a style prop back here would fight it. */}
@@ -1790,7 +1819,7 @@ function App() {
       <section className="pad"><div className="wrap"><div className="cta-final reveal"><Eyebrow>Get started</Eyebrow><h2>Ready to build what is next?</h2><p>Tell us what you need, choose services, and let us know how you want to be contacted.</p><div className="hero-actions"><Button href="#start" variant="ai">Start Your Project</Button><Button href="#pricing" variant="ghost">View Pricing</Button></div></div></div></section>
     </main>
     <footer className="site-footer"><div className="wrap footer-inner"><div className="footer-links footer-links-left"><a href="#services">Services</a><a href="#about">About</a><a href="#team">Team</a><a href="#pricing">Pricing</a></div><MorphingLogo location="footer" /><div className="footer-links footer-links-right"><a href="#start">Start a Project</a><Link to="/terms">Terms</Link><Link to="/privacy">Privacy</Link></div><div className="footer-copy">© 2026 BiteSites. All rights reserved.</div></div></footer>
-    {modal && <div className="modal-backdrop" onClick={() => setModal(null)}><div className="detail-panel" role="dialog" aria-modal="true" onClick={event => event.stopPropagation()}><button className="close" onClick={() => setModal(null)} aria-label="Close">×</button><div className="detail-hero"><Eyebrow gradient={modal === 'ai'}>Services</Eyebrow><h2>{detailCopy[modal][0]}</h2><p>{detailCopy[modal][1]}</p></div><div className="detail-content"><h3>What’s included</h3><ul className="detail-list">{detailCopy[modal][2].map(item => <li key={item}>{item}</li>)}</ul><div className="hero-actions"><Button href="#start" variant="ai" onClick={() => setModal(null)}>Start Your Project</Button><Button href="#pricing" variant="ghost" onClick={() => setModal(null)}>See pricing</Button></div></div></div></div>}
+    {modal && <div className="modal-backdrop" onClick={() => setModal(null)}><div className="detail-panel" role="dialog" aria-modal="true" onClick={event => event.stopPropagation()}><button className="close" onClick={() => setModal(null)} aria-label="Close">×</button><div className="detail-hero"><Eyebrow gradient={modal === 'ai'}>Services</Eyebrow><h2>{detailCopy[modal][0]}</h2><p>{detailCopy[modal][1]}</p></div><div className="detail-content"><h3>What’s included</h3><ul className="detail-list">{detailCopy[modal][2].map(item => <li key={item}>{item}</li>)}</ul><div className="hero-actions"><Button href="#start" variant="ai" onClick={() => { setSelectedServices([serviceFormValues[modal]]); setModal(null); }}>Start Your Project</Button><Button href="#pricing" variant="ghost" onClick={() => { setTab(modal); setModal(null); }}>See pricing</Button></div></div></div></div>}
     <VoiceAIReceptionist open={voiceAgentOpen} onClose={() => setVoiceAgentOpen(false)} />
     {receptionistOpen && <AiReceptionist origin={chatOrigin} initialAnswer={receptionistInitialAnswer} onClose={closeReceptionist} />}
     {!receptionistOpen && !voiceAgentOpen && !voiceSectionVisible && <div className={`chat-launcher ${receptionistNudge ? 'nudged' : ''}`}><p>Need help scoping a project?</p><button type="button" onClick={openReceptionist} aria-label="Open Bit, the AI receptionist"><BitMascot className="bit-launcher-avatar" /><em>Chat with Bit</em></button></div>}

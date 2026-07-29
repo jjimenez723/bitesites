@@ -7,6 +7,7 @@
 // when something is genuinely wrong.
 
 import { firestore } from './firestore';
+import { analyticsContext } from './analytics';
 
 const BUSINESS_SIZES = ['solo', 'small', 'growing', 'established', 'enterprise'];
 const URGENCY_TAGS = ['asap', '2_4_weeks', '1_2_months', 'flexible'];
@@ -84,6 +85,15 @@ export function buildLead(input, source) {
     if (referrer) lead.referrer = referrer;
     const userAgent = clean(navigator?.userAgent, 400);
     if (userAgent) lead.userAgent = userAgent;
+
+    // This is the join between acquisition behaviour and commercial outcome.
+    // It deliberately contains campaign labels and random ids only—never form
+    // values, email addresses, arbitrary query parameters, or ad profiles.
+    const context = analyticsContext();
+    lead.sid = context.sid;
+    lead.vid = context.vid;
+    lead.siteVersion = context.siteVersion;
+    lead.attribution = context.attribution;
   }
 
   return lead;

@@ -67,7 +67,8 @@ service cloud.firestore {
         'name', 'email', 'phone', 'businessName', 'roleInCompany',
         'businessSize', 'urgencyTag', 'services', 'preferredContactMethod',
         'projectDetails', 'customAnswers', 'source', 'status', 'createdAt',
-        'pagePath', 'referrer', 'userAgent', 'conversationId'
+        'pagePath', 'referrer', 'userAgent', 'conversationId',
+        'sid', 'vid', 'siteVersion', 'attribution'
       ];
     }
 
@@ -87,6 +88,42 @@ service cloud.firestore {
         && optStr(answers, 'businessSize', 500);
     }
 
+    function validAttributionTouch(touch) {
+      return touch is map
+        && touch.keys().hasAll(['source', 'medium', 'landingPage', 'capturedAt'])
+        && touch.keys().hasOnly([
+             'source', 'medium', 'campaign', 'content', 'term',
+             'referrer', 'landingPage', 'capturedAt'
+           ])
+        && str(touch, 'source', 100)
+        && str(touch, 'medium', 100)
+        && str(touch, 'landingPage', 300)
+        && str(touch, 'capturedAt', 40)
+        && optStr(touch, 'campaign', 160)
+        && optStr(touch, 'content', 160)
+        && optStr(touch, 'term', 160)
+        && optStr(touch, 'referrer', 400);
+    }
+
+    function validAttributionConversion(conversion) {
+      return conversion is map
+        && conversion.keys().hasAll(['path'])
+        && conversion.keys().hasOnly(['path', 'cta', 'plan', 'service'])
+        && str(conversion, 'path', 300)
+        && optStr(conversion, 'cta', 120)
+        && optStr(conversion, 'plan', 120)
+        && optStr(conversion, 'service', 80);
+    }
+
+    function validAttribution(attribution) {
+      return attribution is map
+        && attribution.keys().hasAll(['first', 'last', 'conversion'])
+        && attribution.keys().hasOnly(['first', 'last', 'conversion'])
+        && validAttributionTouch(attribution.first)
+        && validAttributionTouch(attribution.last)
+        && validAttributionConversion(attribution.conversion);
+    }
+
     function validLead(data) {
       return data.keys().hasAll(leadRequiredKeys())
         && data.keys().hasOnly(leadAllowedKeys())
@@ -102,6 +139,10 @@ service cloud.firestore {
         && optStr(data, 'roleInCompany', 160)
         && optStr(data, 'projectDetails', 5000)
         && optStr(data, 'conversationId', 60)
+        && optStr(data, 'sid', 40)
+        && optStr(data, 'vid', 40)
+        && optStr(data, 'siteVersion', 80)
+        && (!('attribution' in data) || validAttribution(data.attribution))
 
         // Controlled vocabularies. The client normalises anything unrecognised
         // (e.g. free-text answers typed into the Bit chat) to 'other'.
@@ -145,6 +186,11 @@ service cloud.firestore {
                     && request.resource.data.createdAt == resource.data.createdAt
                     && request.resource.data.email == resource.data.email;
       allow delete: if isAdmin();
+
+      match /activities/{activityId} {
+        allow read, create: if isAdmin();
+        allow update, delete: if false;
+      }
     }
 
     // ----------------------------------------------------------------- events
@@ -158,7 +204,9 @@ service cloud.firestore {
         && data.keys().hasOnly([
              'type', 'sid', 'vid', 'path', 'day', 'device', 'ts',
              'label', 'section', 'interactive', 'x', 'y', 'vw', 'vh',
-             'value', 'referrer', 'query', 'href'
+             'value', 'referrer', 'query', 'href', 'version',
+             'leadId', 'source', 'medium', 'campaign', 'content', 'term',
+             'cta', 'plan', 'service', 'outcome', 'reason', 'step'
            ])
         // Mirrors EVENT_TYPES in src/lib/analytics.js. A type present there but
         // missing here rejects the entire writeBatch it arrives in, silently
@@ -166,7 +214,11 @@ service cloud.firestore {
         // lists in step, and deploy these rules before the client that emits.
         && data.type in ['page_view', 'click', 'section_view', 'scroll_depth',
                          'form_start', 'form_submit', 'chat_open', 'call_open', 'outbound',
-                         'portfolio_project_view', 'portfolio_progress', 'portfolio_video_health']
+                         'portfolio_project_view', 'portfolio_progress', 'portfolio_video_health',
+                         'form_step', 'form_error', 'lead_created',
+                         'pricing_view', 'pricing_unlock', 'plan_select',
+                         'signup_start', 'signup_step', 'signup_complete', 'signup_error',
+                         'booking_click', 'chat_progress', 'call_state']
         && str(data, 'sid', 40)
         && str(data, 'vid', 40)
         && str(data, 'path', 300)
@@ -179,6 +231,19 @@ service cloud.firestore {
         && optStr(data, 'referrer', 400)
         && optStr(data, 'query', 300)
         && optStr(data, 'href', 300)
+        && optStr(data, 'version', 80)
+        && optStr(data, 'leadId', 60)
+        && optStr(data, 'source', 100)
+        && optStr(data, 'medium', 100)
+        && optStr(data, 'campaign', 160)
+        && optStr(data, 'content', 160)
+        && optStr(data, 'term', 160)
+        && optStr(data, 'cta', 120)
+        && optStr(data, 'plan', 120)
+        && optStr(data, 'service', 80)
+        && optStr(data, 'outcome', 80)
+        && optStr(data, 'reason', 200)
+        && optStr(data, 'step', 80)
         && (!('interactive' in data) || data.interactive is bool)
         // Click positions are fractions of the viewport/page, never pixels.
         && (!('x' in data) || (data.x is number && data.x >= 0 && data.x <= 1))
@@ -345,6 +410,25 @@ service cloud.firestore {
       allow read:  if isAdmin()
                    || (isClient() && request.auth.uid in resource.data.clientUids);
       allow write: if isAdmin();
+    }
+
+    // Standardised client ROI snapshots. These may contain commercial results,
+    // so they are never exposed to the public analytics writer.
+    match /clientOutcomes/{outcomeId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /searchMetrics/{metricId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    match /analyticsDaily/{day} {
+      allow read: if isAdmin();
+      allow write: if false;
+      match /{document=**} {
+        allow read, write: if false;
+      }
     }
 
     // Anything not matched above is denied.

@@ -9,7 +9,7 @@
 
 import React, { useMemo, useState } from 'react';
 import { useEvents, useLeads, cutoffDay, EVENT_CAP, toDate } from './data';
-import { StatTile, TrendChart, RankList, Funnel, HeatMap, ShareBar, compact, share } from './charts';
+import { StatTile, TrendChart, RankList, Funnel, HeatMap, ShareBar, compact } from './charts';
 import GeoOverview from './GeoGlobe';
 
 const RANGES = [[7, '7d'], [30, '30d'], [90, '90d']];
@@ -197,7 +197,13 @@ export default function Overview() {
       if (age <= window) inRange += 1;
       else if (age <= window * 2) before += 1;
     }
-    return { inRange, before };
+    return {
+      inRange, before,
+      attributed: leads.filter(lead => {
+        const at = lead.createdAt?.toDate?.();
+        return at && now - at.getTime() <= window && Boolean(lead.sid);
+      }).length
+    };
   }, [leads, days]);
 
   const deviceTotal = current.devices.reduce((sum, entry) => sum + entry.value, 0);
@@ -258,7 +264,7 @@ export default function Overview() {
             label="Leads"
             value={leadCounts.inRange}
             delta={delta(leadCounts.inRange, leadCounts.before)}
-            foot={current.sessions ? `${share(leadCounts.inRange, current.sessions)}% of sessions` : undefined}
+            foot={`${leadCounts.attributed} directly attributed to a site session`}
           />
         </div>
 

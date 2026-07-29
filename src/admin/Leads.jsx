@@ -5,12 +5,14 @@
 // and email immutable on update, so triage can never quietly rewrite who a lead
 // was or when it arrived.
 
-import React, { useMemo, useState } from 'react';
-import { useLeads, setLeadStatus, toDate } from './data';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { useLeads, setLeadStatus, saveLeadCommercial, loadLeadActivities, toDate } from './data';
 import { Panel, DetailRows, Pill } from './Panel';
 import Transcript from './Transcript';
 
-const STATUSES = ['new', 'contacted', 'qualified', 'won', 'lost'];
+const STATUSES = ['new', 'contacted', 'qualified', 'booked', 'proposal', 'won', 'lost'];
+const firstWord = value => String(value || '').trim().split(/\s+/)[0] || '';
 
 // Byte's leads are written server-side by the recordVoiceCall webhook, so a
 // source this screen does not recognise is a real possibility — fall back to
@@ -18,7 +20,8 @@ const STATUSES = ['new', 'contacted', 'qualified', 'won', 'lost'];
 const SOURCE_LABELS = {
   intake_form: 'Intake form',
   bit_chat: 'Bit chat',
-  byte_voice: 'Byte call'
+  byte_voice: 'Byte call',
+  cold_call: 'Cold call'
 };
 
 const sourceLabel = lead => SOURCE_LABELS[lead.source] || lead.source || 'Unknown';
@@ -72,6 +75,133 @@ function CrmState({ crm }) {
   return <p className="admin-error">Sync failed — {crm.error || 'unknown error'}</p>;
 }
 
+const inputDate = value => {
+  const date = toDate(value);
+  if (!date) return '';
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 16);
+};
+
+const money = value => Number.isFinite(Number(value))
+  ? Number(value).toLocaleString(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })
+  : '—';
+
+const numberOrZero = value => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+};
+
+function CommercialEditor({ lead, busy, onSave }) {
+  const [form, setForm] = useState({});
+
+  useEffect(() => {
+    setForm({
+      owner: lead.owner || '',
+      nextFollowUpAt: inputDate(lead.nextFollowUpAt),
+      budgetBand: lead.qualification?.budgetBand || '',
+      decisionMaker: lead.qualification?.decisionMaker || '',
+      primaryProblem: lead.qualification?.primaryProblem || '',
+      lostReason: lead.qualification?.lostReason || '',
+      competitor: lead.qualification?.competitor || '',
+      appointmentStatus: lead.appointment?.status || 'none',
+      scheduledFor: inputDate(lead.appointment?.scheduledFor),
+      quotedValue: lead.economics?.quotedValue ?? '',
+      contractValue: lead.economics?.contractValue ?? '',
+      cashCollected: lead.economics?.cashCollected ?? '',
+      recurringMonthlyRevenue: lead.economics?.recurringMonthlyRevenue ?? '',
+      estimatedHours: lead.economics?.estimatedHours ?? '',
+      actualHours: lead.economics?.actualHours ?? '',
+      loadedLaborCost: lead.economics?.loadedLaborCost ?? '',
+      contractorCost: lead.economics?.contractorCost ?? '',
+      softwareCost: lead.economics?.softwareCost ?? '',
+      refunds: lead.economics?.refunds ?? ''
+    });
+  }, [lead.id, lead.updatedAt]);
+
+  const update = event => setForm(current => ({ ...current, [event.target.name]: event.target.value }));
+  const submit = event => {
+    event.preventDefault();
+    const economics = {
+      quotedValue: numberOrZero(form.quotedValue),
+      contractValue: numberOrZero(form.contractValue),
+      cashCollected: numberOrZero(form.cashCollected),
+      recurringMonthlyRevenue: numberOrZero(form.recurringMonthlyRevenue),
+      estimatedHours: numberOrZero(form.estimatedHours),
+      actualHours: numberOrZero(form.actualHours),
+      loadedLaborCost: numberOrZero(form.loadedLaborCost),
+      contractorCost: numberOrZero(form.contractorCost),
+      softwareCost: numberOrZero(form.softwareCost),
+      refunds: numberOrZero(form.refunds)
+    };
+    const directCosts = economics.loadedLaborCost + economics.contractorCost + economics.softwareCost + economics.refunds;
+    economics.grossProfit = economics.contractValue - directCosts;
+    economics.grossMargin = economics.contractValue > 0
+      ? Math.round((economics.grossProfit / economics.contractValue) * 10000) / 100
+      : 0;
+    onSave({
+      owner: form.owner.trim(),
+      nextFollowUpAt: form.nextFollowUpAt ? new Date(form.nextFollowUpAt) : null,
+      qualification: {
+        budgetBand: form.budgetBand,
+        decisionMaker: form.decisionMaker,
+        primaryProblem: form.primaryProblem.trim(),
+        lostReason: form.lostReason,
+        competitor: form.competitor.trim()
+      },
+      appointment: {
+        status: form.appointmentStatus,
+        scheduledFor: form.scheduledFor ? new Date(form.scheduledFor) : null
+      },
+      economics
+    });
+  };
+
+  const directCosts = ['loadedLaborCost', 'contractorCost', 'softwareCost', 'refunds']
+    .reduce((sum, key) => sum + numberOrZero(form[key]), 0);
+  const projectedProfit = numberOrZero(form.contractValue) - directCosts;
+
+  return (
+    <form className="lead-editor" onSubmit={submit}>
+      <div className="panel-section-label">Sales operations</div>
+      <div className="lead-form-grid">
+        <label><span>Owner</span><input name="owner" value={form.owner || ''} onChange={update} placeholder="Team member" /></label>
+        <label><span>Next follow-up</span><input name="nextFollowUpAt" type="datetime-local" value={form.nextFollowUpAt || ''} onChange={update} /></label>
+        <label><span>Budget</span><select name="budgetBand" value={form.budgetBand || ''} onChange={update}><option value="">Unknown</option><option value="under_2k">Under $2k</option><option value="2k_5k">$2k–$5k</option><option value="5k_10k">$5k–$10k</option><option value="10k_25k">$10k–$25k</option><option value="25k_plus">$25k+</option></select></label>
+        <label><span>Decision maker</span><select name="decisionMaker" value={form.decisionMaker || ''} onChange={update}><option value="">Unknown</option><option value="yes">Yes</option><option value="influencer">Influencer</option><option value="no">No</option></select></label>
+        <label className="full"><span>Primary problem</span><textarea name="primaryProblem" value={form.primaryProblem || ''} onChange={update} rows="2" /></label>
+        <label><span>Lost reason</span><select name="lostReason" value={form.lostReason || ''} onChange={update}><option value="">Not lost / unknown</option><option value="price">Price</option><option value="timing">Timing</option><option value="no_response">No response</option><option value="competitor">Competitor</option><option value="poor_fit">Poor fit</option><option value="internal_solution">Internal solution</option><option value="other">Other</option></select></label>
+        <label><span>Competitor</span><input name="competitor" value={form.competitor || ''} onChange={update} /></label>
+      </div>
+
+      <div className="panel-section-label">Appointment</div>
+      <div className="lead-form-grid">
+        <label><span>Outcome</span><select name="appointmentStatus" value={form.appointmentStatus || 'none'} onChange={update}><option value="none">Not booked</option><option value="booked">Booked</option><option value="rescheduled">Rescheduled</option><option value="cancelled">Cancelled</option><option value="attended">Attended</option><option value="no_show">No-show</option></select></label>
+        <label><span>Scheduled for</span><input name="scheduledFor" type="datetime-local" value={form.scheduledFor || ''} onChange={update} /></label>
+      </div>
+
+      <div className="panel-section-label">Economics</div>
+      <div className="lead-form-grid money-grid">
+        {[['quotedValue', 'Quoted value'], ['contractValue', 'Contract value'], ['cashCollected', 'Cash collected'], ['recurringMonthlyRevenue', 'Monthly recurring'], ['estimatedHours', 'Estimated hours'], ['actualHours', 'Actual hours'], ['loadedLaborCost', 'Loaded labor cost'], ['contractorCost', 'Contractor cost'], ['softwareCost', 'Software cost'], ['refunds', 'Refunds']].map(([name, label]) => (
+          <label key={name}><span>{label}</span><input name={name} type="number" min="0" step={name.includes('Hours') || name.endsWith('Hours') ? '0.25' : '0.01'} value={form[name] ?? ''} onChange={update} /></label>
+        ))}
+      </div>
+      <div className="lead-profit-preview"><span>Projected gross profit</span><strong>{money(projectedProfit)}</strong><small>Contract value less labor, contractor, software and refunds</small></div>
+      <button className="btn-admin primary" type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save commercial details'}</button>
+    </form>
+  );
+}
+
+function ActivityHistory({ leadId, refreshKey }) {
+  const [rows, setRows] = useState([]);
+  useEffect(() => {
+    let active = true;
+    loadLeadActivities(leadId).then(data => active && setRows(data)).catch(() => active && setRows([]));
+    return () => { active = false; };
+  }, [leadId, refreshKey]);
+  if (!rows.length) return null;
+  return <div><div className="panel-section-label">Activity</div><div className="lead-activity">{rows.map(row => <div key={row.id}><span>{row.type === 'stage_change' ? `${row.fromStatus} → ${row.toStatus}` : row.type === 'email_sent' ? `Email sent · ${row.subject || 'Follow-up'}` : 'Commercial details updated'}</span><time>{when(row.at)}</time></div>)}</div></div>;
+}
+
 export default function Leads() {
   const { rows, loading, error, refresh } = useLeads();
   const [openId, setOpenId] = useState(null);
@@ -80,6 +210,7 @@ export default function Leads() {
   const [search, setSearch] = useState('');
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
+  const [activityRefresh, setActivityRefresh] = useState(0);
 
   const counts = useMemo(() => {
     const map = new Map();
@@ -114,12 +245,28 @@ export default function Leads() {
     setBusy(true);
     setNotice('');
     try {
-      await setLeadStatus(id, status);
+      await setLeadStatus(id, status, open || {});
       await refresh();
+      setActivityRefresh(value => value + 1);
     } catch (err) {
       setNotice(err?.code === 'permission-denied'
         ? 'The server rejected that change.'
         : err?.message || 'Could not update the lead.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveCommercial = async fields => {
+    if (!open) return;
+    setBusy(true);
+    setNotice('');
+    try {
+      await saveLeadCommercial(open.id, fields);
+      await refresh();
+      setActivityRefresh(value => value + 1);
+    } catch (err) {
+      setNotice(err?.code === 'permission-denied' ? 'The server rejected that change.' : err?.message || 'Could not save commercial details.');
     } finally {
       setBusy(false);
     }
@@ -231,6 +378,7 @@ export default function Leads() {
           subtitle={`${sourceLabel(open)} · ${when(open.createdAt)}`}
           onClose={() => setOpenId(null)}
         >
+          {open.email && <div className="lead-primary-action"><div><strong>Follow up with {firstWord(open.name) || 'this lead'}</strong><span>Send a confirmation, Meet link, or booking page.</span></div><Link className="btn-admin primary" to={`/admin/email?lead=${encodeURIComponent(open.id)}`}>Email lead</Link></div>}
           <div>
             <div className="panel-section-label">Status</div>
             <div className="chip-row" style={{ marginTop: 10 }}>
@@ -259,9 +407,20 @@ export default function Leads() {
               ['Services', services(open)],
               ['Prefers', open.preferredContactMethod],
               ['From page', open.pagePath],
-              ['Referrer', open.referrer]
+              ['Referrer', open.referrer],
+              ['First-touch source', open.attribution?.first?.source],
+              ['First-touch medium', open.attribution?.first?.medium],
+              ['Campaign', open.attribution?.first?.campaign],
+              ['Converting CTA', open.attribution?.conversion?.cta],
+              ['Plan interest', open.attribution?.conversion?.plan],
+              ['First response', open.firstResponseAt ? when(open.firstResponseAt) : ''],
+              ['Next follow-up', open.nextFollowUpAt ? when(open.nextFollowUpAt) : '']
             ]}
           />
+
+          <CommercialEditor lead={open} busy={busy} onSave={saveCommercial} />
+
+          <ActivityHistory leadId={open.id} refreshKey={activityRefresh} />
 
           {open.projectDetails && (
             <div>

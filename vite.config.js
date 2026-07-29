@@ -1,8 +1,15 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
+const releaseId = process.env.VITE_SITE_VERSION
+  || process.env.GITHUB_SHA?.slice(0, 12)
+  || `build-${new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 12)}`;
+
 export default defineConfig({
   plugins: [react()],
+  define: {
+    'import.meta.env.VITE_SITE_VERSION': JSON.stringify(releaseId)
+  },
   server: { port: 5173 },
   build: {
     rollupOptions: {
