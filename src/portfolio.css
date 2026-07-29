@@ -88,6 +88,42 @@
   pointer-events: none;
 }
 
+/* Visible controls make the sideways deck discoverable without taking drag,
+   trackpad or keyboard browsing away. They sit over the dimmed neighbour cards,
+   leaving the active project's image and open target unobstructed. */
+.portfolio-rail-arrow {
+  position: absolute;
+  z-index: 4;
+  top: 50%;
+  width: 54px;
+  height: 54px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid rgba(255,255,255,.28);
+  border-radius: 50%;
+  background: rgba(8,9,14,.72);
+  color: #fff;
+  box-shadow: 0 12px 34px rgba(0,0,0,.36);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  transform: translateY(-50%);
+  cursor: pointer;
+  transition: background .22s ease, border-color .22s ease, transform .22s ease, opacity .22s ease;
+}
+
+.portfolio-rail-arrow-prev { left: clamp(18px,7vw,104px); }
+.portfolio-rail-arrow-next { right: clamp(18px,7vw,104px); }
+.portfolio-rail-arrow svg { width: 23px; height: 23px; }
+.portfolio-rail-arrow:hover:not(:disabled) {
+  border-color: rgba(255,255,255,.58);
+  background: rgba(255,255,255,.18);
+  transform: translateY(-50%) scale(1.06);
+}
+.portfolio-rail-arrow:active:not(:disabled) { transform: translateY(-50%) scale(.97); }
+.portfolio-rail-arrow:focus-visible { outline: 2px solid #a99bff; outline-offset: 4px; }
+.portfolio-rail-arrow:disabled { opacity: .22; cursor: default; }
+
 .portfolio-stage .portfolio-track {
   position: relative;
   width: 100%;
@@ -644,6 +680,10 @@ body.portfolio-open .chat-launcher { opacity: 0; pointer-events: none; transitio
   .portfolio-intro h2 { font-size: 33px; }
   .portfolio-intro p { max-width: 330px; margin-top: 10px; font-size: 12px; }
   .portfolio-rail { padding-block: 10px; }
+  .portfolio-rail-arrow { width: 46px; height: 46px; }
+  .portfolio-rail-arrow-prev { left: 10px; }
+  .portfolio-rail-arrow-next { right: 10px; }
+  .portfolio-rail-arrow svg { width: 20px; height: 20px; }
   .portfolio-stage .portfolio-track { gap: 14px; padding-inline: 18vw; scroll-padding-inline: 18vw; }
   .portfolio-project { flex-basis: 64vw; border-radius: 20px; }
   .portfolio-project .project-number { top: 13px; left: 13px; width: 35px; height: 35px; }

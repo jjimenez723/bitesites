@@ -1737,8 +1737,21 @@ function App() {
               from the tab order, and is what the tabIndex juggling below was
               approximating. */}
           <div className="portfolio-rail" aria-hidden={portfolioPhase.expanded} inert={portfolioPhase.expanded}>
+            <button
+              className="portfolio-rail-arrow portfolio-rail-arrow-prev"
+              type="button"
+              onClick={() => browsePortfolioRail(-1)}
+              disabled={activeProject === 0}
+              aria-label={activeProject === 0 ? 'Previous project' : `Previous project: ${projects[activeProject - 1].title}`}
+              aria-controls="portfolio-project-track"
+            >
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="m14.5 5-7 7 7 7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
             <div
               className="portfolio-track"
+              id="portfolio-project-track"
               ref={portfolioTrack}
               onScroll={handlePortfolioScroll}
               onKeyDown={event => {
@@ -1770,6 +1783,18 @@ function App() {
                 />
               </article>)}
             </div>
+            <button
+              className="portfolio-rail-arrow portfolio-rail-arrow-next"
+              type="button"
+              onClick={() => browsePortfolioRail(1)}
+              disabled={activeProject === projects.length - 1}
+              aria-label={activeProject === projects.length - 1 ? 'Next project' : `Next project: ${projects[activeProject + 1].title}`}
+              aria-controls="portfolio-project-track"
+            >
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="m9.5 5 7 7-7 7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
           </div>
 
           {/* Pointer rather than touch events, for the same reason the scrub bar
