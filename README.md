@@ -19,6 +19,9 @@ preference-managed broadcast and admin operational email.
 See **[FIREBASE_SETUP.md](FIREBASE_SETUP.md)** for the data model, the security model,
 and the remaining setup steps.
 
+See **[CLOUDFLARE_REDIRECTS.md](CLOUDFLARE_REDIRECTS.md)** for the canonical-domain
+redirect configuration, verification, and rollback steps.
+
 ```bash
 npm run test:rules                 # security-rule test suite (45 assertions)
 npm run test:email                 # HTML template rendering and escaping

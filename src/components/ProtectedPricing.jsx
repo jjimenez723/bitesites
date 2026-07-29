@@ -255,6 +255,36 @@ function PasswordField({ name = 'password', label = 'Password', value, onChange,
   </label>;
 }
 
+function PricingLockArt() {
+  const handlePointerMove = event => {
+    if (event.pointerType === 'touch') return;
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const x = (event.clientX - bounds.left) / bounds.width - .5;
+    const y = (event.clientY - bounds.top) / bounds.height - .5;
+
+    event.currentTarget.style.setProperty('--lock-rotate-x', `${-y * 14}deg`);
+    event.currentTarget.style.setProperty('--lock-rotate-y', `${x * 16}deg`);
+    event.currentTarget.style.setProperty('--lock-shift-x', `${x * 9}px`);
+    event.currentTarget.style.setProperty('--lock-shift-y', `${y * 7}px`);
+  };
+
+  const resetTilt = event => {
+    event.currentTarget.style.setProperty('--lock-rotate-x', '0deg');
+    event.currentTarget.style.setProperty('--lock-rotate-y', '0deg');
+    event.currentTarget.style.setProperty('--lock-shift-x', '0px');
+    event.currentTarget.style.setProperty('--lock-shift-y', '0px');
+  };
+
+  return (
+    <div className="pricing-lock-art" aria-hidden="true" onPointerMove={handlePointerMove} onPointerLeave={resetTilt}>
+      <span className="pricing-lock-aura" />
+      <span className="pricing-lock-orbit pricing-lock-orbit--one" />
+      <span className="pricing-lock-orbit pricing-lock-orbit--two" />
+      <img className="pricing-lock-asset" src="/assets/pricing-lock-3d.png" alt="" />
+    </div>
+  );
+}
+
 function LockedPricing({ onSignup, onLogin }) {
   return (
     <div className="pricing-locked">
@@ -262,9 +292,7 @@ function LockedPricing({ onSignup, onLogin }) {
         {[0, 1, 2].map(index => <i key={index}><b /><span /><span /><span /></i>)}
       </div>
       <div className="pricing-locked-card">
-        <span className="pricing-lock-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="11" rx="3" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></svg>
-        </span>
+        <PricingLockArt />
         <p>Pricing preview</p>
         <h3>See exactly what fits your business.</h3>
         <span>Create a free account to unlock current pricing, package details, and clear starting points for every service.</span>

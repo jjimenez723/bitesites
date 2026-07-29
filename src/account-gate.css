@@ -87,25 +87,72 @@
   background: linear-gradient(90deg, transparent, #6edcff, #b698ff, #ff9bc9, transparent);
 }
 
-.pricing-lock-icon {
-  width: 48px;
-  height: 48px;
+.pricing-lock-art {
+  --lock-rotate-x: 0deg;
+  --lock-rotate-y: 0deg;
+  --lock-shift-x: 0px;
+  --lock-shift-y: 0px;
+  position: relative;
   display: grid;
+  width: 112px;
+  height: 108px;
   place-items: center;
-  margin: 0 auto 16px;
-  border: 1px solid rgba(255, 255, 255, .2);
-  border-radius: 15px;
-  color: #fff;
-  background: linear-gradient(135deg, #1688f5, #7955e7 58%, #ec5da5);
-  box-shadow: 0 14px 32px rgba(105, 76, 218, .34);
+  margin: -8px auto 8px;
+  isolation: isolate;
+  perspective: 720px;
 }
 
-.pricing-lock-icon svg {
-  width: 23px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.8;
-  stroke-linecap: round;
+.pricing-lock-asset {
+  position: relative;
+  z-index: 2;
+  display: block;
+  width: 132px;
+  max-width: none;
+  height: auto;
+  transform: translate3d(var(--lock-shift-x), var(--lock-shift-y), 0) rotateX(var(--lock-rotate-x)) rotateY(var(--lock-rotate-y));
+  transform-style: preserve-3d;
+  transform-origin: 50% 58%;
+  filter: drop-shadow(0 16px 17px rgba(42, 64, 255, .25)) drop-shadow(0 6px 28px rgba(196, 85, 255, .24));
+  transition: transform .34s cubic-bezier(.2, .8, .2, 1), filter .34s ease;
+  user-select: none;
+}
+
+.pricing-lock-art:hover .pricing-lock-asset {
+  filter: drop-shadow(0 20px 21px rgba(42, 64, 255, .32)) drop-shadow(0 9px 34px rgba(196, 85, 255, .35));
+}
+
+.pricing-lock-aura {
+  position: absolute;
+  z-index: 0;
+  width: 78px;
+  height: 78px;
+  border-radius: 50%;
+  background: conic-gradient(from 185deg, #33c8ff, #665dff, #ec66dd, #33c8ff);
+  opacity: .62;
+  filter: blur(22px);
+  transform: translate3d(calc(var(--lock-shift-x) * .45), calc(var(--lock-shift-y) * .45), 0);
+  transition: transform .34s cubic-bezier(.2, .8, .2, 1);
+}
+
+.pricing-lock-orbit {
+  position: absolute;
+  z-index: 1;
+  border: 1px solid rgba(145, 220, 255, .22);
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.pricing-lock-orbit--one {
+  width: 98px;
+  height: 98px;
+  transform: rotate(-26deg) scaleY(.42);
+}
+
+.pricing-lock-orbit--two {
+  width: 122px;
+  height: 122px;
+  border-color: rgba(218, 131, 255, .13);
+  transform: rotate(34deg) scaleY(.26);
 }
 
 .pricing-locked-card > p {
@@ -866,6 +913,8 @@
   .pricing-locked-ghost { inset: 20px; grid-template-columns: 1fr; }
   .pricing-locked-ghost i:not(:first-child) { display: none; }
   .pricing-locked-card { padding: 34px 22px 30px; }
+  .pricing-lock-art { width: 100px; height: 96px; margin-top: -7px; }
+  .pricing-lock-asset { width: 118px; }
   .pricing-locked-card > span { font-size: 13px; }
   .pricing-locked-benefits { gap: 7px 12px; }
   .pricing-gate-loading { grid-template-columns: 1fr; }
@@ -892,6 +941,13 @@
   .account-stage-viewport { height: 218px; }
   .account-stage-viewport.is-step-2 { height: 180px; }
   .account-legal { margin-top: 8px; padding-top: 9px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pricing-lock-asset,
+  .pricing-lock-aura {
+    transition: none;
+  }
 }
 
 @media (max-width: 420px) {
