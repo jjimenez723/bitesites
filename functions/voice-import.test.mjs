@@ -25,7 +25,7 @@ process.env.VOICE_WEBHOOK_SECRET = 'a-long-enough-test-secret-value';
 process.env.GCLOUD_PROJECT = 'demo-bitesites';
 
 const { importVoiceHistory } = await import('./index.js');
-const { getFirestore } = await import('firebase-admin/firestore');
+const { getFirestore, Timestamp } = await import('firebase-admin/firestore');
 const db = getFirestore();
 
 function fakeRes() {
@@ -84,9 +84,45 @@ check('collapses to fewer contacts than calls', dry.body?.distinctContacts < dry
   `${dry.body?.distinctContacts} contacts from ${dry.body?.eligible} calls`);
 check('wrote nothing', (await db.collection('leads').get()).size === 0);
 
+// This is the first-party record for the real July 21, 11:40 p.m. website
+// session. GHL logged it 2.084 seconds later with a full transcript but no
+// email/phone. The importer must enrich this document, not drop it and not make
+// a second conversation row.
+const browserCallRef = db.collection('calls').doc('browser_july_21_2340');
+await browserCallRef.set({
+  agent: 'byte',
+  channel: 'voice',
+  provider: 'gohighlevel',
+  status: 'completed',
+  sid: 'browser-test-session',
+  path: '/voice-test',
+  startedAt: Timestamp.fromDate(new Date('2026-07-22T03:40:35.354Z')),
+  durationSec: 76
+});
+await browserCallRef.collection('turns').add({
+  kind: 'state', state: 'listening', at: Timestamp.fromDate(new Date('2026-07-22T03:40:36Z'))
+});
+
 console.log('\nimport, excluding website demos');
 const first = await run({ ...RANGE, includeDemo: 'false' });
 check('returns 200', first.code === 200, JSON.stringify(first.body));
+
+const enrichedBrowserCall = await browserCallRef.get();
+const enrichedBrowserTurns = await browserCallRef.collection('turns').get();
+const deterministicCopy = enrichedBrowserCall.get('providerCallId')
+  ? await db.collection('calls').doc(`ghl_${enrichedBrowserCall.get('providerCallId').replace(/[^A-Za-z0-9_-]/g, '_')}`).get()
+  : null;
+check('anonymous website call was enriched with its GHL id', Boolean(enrichedBrowserCall.get('providerCallId')));
+check('anonymous website transcript was stored',
+  enrichedBrowserCall.get('transcriptRecorded') === true
+  && enrichedBrowserTurns.docs.some(d => d.get('kind') === 'transcript'),
+  `${enrichedBrowserTurns.size} total turns`);
+check('browser session metadata was preserved',
+  enrichedBrowserCall.get('sid') === 'browser-test-session'
+  && enrichedBrowserCall.get('path') === '/voice-test');
+check('missing browser end event was repaired', Boolean(enrichedBrowserCall.get('endedAt')));
+check('enrichment did not create a duplicate GHL call row', deterministicCopy && !deterministicCopy.exists);
+check('anonymous conversation did not become a lead', !enrichedBrowserCall.get('leadId'));
 
 const leads = await db.collection('leads').get();
 check('created leads', leads.size > 0, `${leads.size} leads`);
@@ -121,9 +157,12 @@ check('transcripts stored against the calls', withTranscript.length > 0,
   `${withTranscript.length} leads have a transcript`);
 
 const turnsSnap = await db.collectionGroup('turns').get();
+const transcriptRoles = new Set(
+  turnsSnap.docs.filter(d => d.get('kind') === 'transcript').map(d => d.get('role'))
+);
 check('transcript roles attributed to both sides',
-  new Set(turnsSnap.docs.map(d => d.get('role'))).size === 2,
-  [...new Set(turnsSnap.docs.map(d => d.get('role')))].join(','));
+  transcriptRoles.size === 2,
+  [...transcriptRoles].join(','));
 
 console.log('\nre-running must change nothing (the poller rescans constantly)');
 const before = {

@@ -741,6 +741,10 @@ const GHL_PAGE_SIZE = 50;          // the documented maximum; 422 above it
 const GHL_MAX_PAGES = 40;          // a backstop, not an expected depth
 const POLL_WINDOW_DAYS = 2;        // re-scanned every run; the ids make that safe
 const MIN_CALL_SECONDS = 10;       // shorter than this and nobody said anything
+// GHL creates its call-log entry within a few seconds of the browser opening
+// our first-party call document. There is no shared id between those systems,
+// so a narrow timestamp match is the reliable bridge for website calls.
+const IMPORT_CALL_MATCH_WINDOW_MS = 2 * 60 * 1000;
 
 const isoDay = date => date.toISOString().slice(0, 10);
 
@@ -834,25 +838,71 @@ function readCallLog(log) {
  * be folded into its lead hundreds of times over and `callCount` would climb
  * forever. The call document is the record of what has already been counted.
  */
+async function findImportedCallDoc(db, call) {
+  const calls = db.collection('calls');
+
+  // Once a call has been enriched, this is the stable path every re-poll takes.
+  const linked = await calls.where('providerCallId', '==', call.providerCallId).limit(1).get();
+  if (!linked.empty) return linked.docs[0];
+
+  // Older imports used the deterministic GHL id. Keep recognising those even
+  // if they pre-date providerCallId being indexed or were only partly written.
+  const deterministic = await calls.doc(`ghl_${call.providerCallId.replace(/[^A-Za-z0-9_-]/g, '_')}`).get();
+  if (deterministic.exists) return deterministic;
+
+  // Website calls are already present with their state timeline. Match the
+  // nearest unclaimed browser record instead of creating a duplicate row.
+  const since = Timestamp.fromMillis(call.at.getTime() - IMPORT_CALL_MATCH_WINDOW_MS);
+  const until = Timestamp.fromMillis(call.at.getTime() + IMPORT_CALL_MATCH_WINDOW_MS);
+  const nearby = await calls
+    .where('startedAt', '>=', since)
+    .where('startedAt', '<=', until)
+    .orderBy('startedAt', 'asc')
+    .get();
+  const candidates = nearby.docs.filter(doc =>
+    doc.get('provider') === 'gohighlevel'
+    && !doc.get('providerCallId')
+    && !String(doc.get('sid') || '').startsWith('ghl:')
+  );
+  if (!candidates.length) return null;
+
+  const nearest = candidates.reduce((best, doc) => {
+    const distance = Math.abs((doc.get('startedAt')?.toMillis?.() ?? Infinity) - call.at.getTime());
+    return !best || distance < best.distance ? { doc, distance } : best;
+  }, null);
+  console.log(`[voice-poll] matched GHL call ${call.providerCallId} to browser call ${nearest.doc.id}`);
+  return nearest.doc;
+}
+
 async function storeCall(db, call) {
-  const callRef = db.collection('calls').doc(`ghl_${call.providerCallId.replace(/[^A-Za-z0-9_-]/g, '_')}`);
-  const existing = await callRef.get();
+  const matched = await findImportedCallDoc(db, call);
+  const callRef = matched?.ref
+    || db.collection('calls').doc(`ghl_${call.providerCallId.replace(/[^A-Za-z0-9_-]/g, '_')}`);
+  const existing = matched || await callRef.get();
   const alreadyLinked = Boolean(existing.get('leadId'));
 
-  await callRef.set({
+  const update = {
     agent: 'byte',
     channel: 'voice',
     provider: 'gohighlevel',
     status: 'completed',
-    sid: `ghl:${call.contactId || 'unknown'}`,
-    path: '/',
-    startedAt: Timestamp.fromDate(call.at),
-    endedAt: Timestamp.fromMillis(call.at.getTime() + call.durationSec * 1000),
     durationSec: call.durationSec,
     providerCallId: call.providerCallId,
     summary: call.summary,
     demo: call.demo
-  }, { merge: true });
+  };
+  // Preserve browser metadata and exact lifecycle timestamps when they exist,
+  // but close out old records whose page disappeared before `finishCall` ran.
+  // Server-only calls need the whole lifecycle synthesised.
+  if (!existing.exists) Object.assign(update, {
+    sid: `ghl:${call.contactId || 'unknown'}`,
+    path: '/',
+    startedAt: Timestamp.fromDate(call.at)
+  });
+  if (!existing.get('endedAt')) {
+    update.endedAt = Timestamp.fromMillis(call.at.getTime() + call.durationSec * 1000);
+  }
+  await callRef.set(update, { merge: true });
 
   if (call.transcript.length && !existing.get('transcriptRecorded')) {
     const batch = db.batch();
@@ -947,7 +997,15 @@ async function importVoiceCalls({ token, locationId, since, until, includeDemo }
   const db = getFirestore();
   const logs = await fetchCallLogs({ token, locationId, since, until });
 
-  const stats = { scanned: logs.length, skipped: 0, alreadyImported: 0, leadsCreated: 0, leadsUpdated: 0, calls: 0 };
+  const stats = {
+    scanned: logs.length,
+    skipped: 0,
+    conversationsOnly: 0,
+    alreadyImported: 0,
+    leadsCreated: 0,
+    leadsUpdated: 0,
+    calls: 0
+  };
 
   // Oldest first, so `createdAt` settles on the earliest call and a later one
   // only ever fills gaps in what the earlier calls already told us.
@@ -959,11 +1017,15 @@ async function importVoiceCalls({ token, locationId, since, until, includeDemo }
     if (!call.providerCallId) { stats.skipped += 1; continue; }
     if (call.demo && !includeDemo) { stats.skipped += 1; continue; }
     if (call.durationSec < MIN_CALL_SECONDS) { stats.skipped += 1; continue; }
-    // No email and no caller id is a conversation, not a lead.
-    if (!call.email && !call.phone) { stats.skipped += 1; continue; }
-
     const stored = await storeCall(db, call);
     stats.calls += 1;
+
+    // Contact details decide whether this becomes a lead, not whether its
+    // transcript is worth retaining. Website calls usually have neither.
+    if (!call.email && !call.phone) {
+      stats.conversationsOnly += 1;
+      continue;
+    }
 
     // Already counted against its lead on an earlier pass — the transcript and
     // summary above are still refreshed, but it must not be counted twice.

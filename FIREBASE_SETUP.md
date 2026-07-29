@@ -405,10 +405,13 @@ turned up rather than when the import ran.
 document records the lead it was counted against; a call that has already been folded in
 is never counted twice. Without that, `callCount` would climb forever.
 
-**What gets skipped:** calls under 10 seconds, and calls with neither an email nor a
-caller id — a conversation nobody left contact details on is not a lead. Website-demo
-calls (`trialCall`) *are* imported but tagged `voice.demo`, so they show a "demo" chip in
-the dashboard and can be told apart from someone who dialled the number.
+**What gets skipped:** calls under 10 seconds. A call with neither an email nor a caller
+id is still stored under **Conversations** with its transcript and summary; it simply does
+not become a lead. For website calls, the importer matches the GoHighLevel log to the
+browser's existing call document by its start time, enriching that row instead of making a
+duplicate. Website-demo calls (`trialCall`) *are* imported but tagged `voice.demo`, so
+they show a "demo" chip in the dashboard and can be told apart from someone who dialled
+the number.
 
 **Backfill** over any range — always dry-run first:
 
