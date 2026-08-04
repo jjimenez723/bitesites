@@ -562,6 +562,191 @@ await it('anonymous visitor cannot read calls', () =>
 await it('admin can read calls', () =>
   assertSucceeds(getDocs(collection(adminByDoc, 'calls'))));
 
+// ---------------------------------------------------------------------------
+// Outbound calling.
+//
+// These collections hold cold contacts — people who never asked to be in a
+// database. The negative assertions are the load-bearing ones: an anonymous
+// visitor who could create a prospect could inject a phone number straight into
+// a dialing queue, and one who could read prospects would have a scraped-contact
+// dump behind a public API.
+//
+// Note that an ADMIN cannot create a prospect from the browser either. Every
+// prospect goes through the import service, which normalises, deduplicates and
+// compliance-checks it; a browser-created prospect would skip all three.
+// ---------------------------------------------------------------------------
+
+await testEnv.withSecurityRulesDisabled(async context => {
+  const db = context.firestore();
+  await setDoc(doc(db, 'prospects', 'p1'), {
+    type: 'outbound_prospect',
+    name: 'Joes Plumbing',
+    companyName: 'Joes Plumbing',
+    phoneE164: '+12015550142',
+    source: { system: 'scraper', provider: 'mock', sourceDocumentId: 'src-1' },
+    lifecycle: { status: 'ready', convertedLeadId: '' },
+    contactability: { doNotCall: false },
+    dedupe: { canonicalKey: 'phone:+12015550142' },
+    duplicate: { status: 'unique' },
+    importRunId: 'run-1',
+    createdAt: new Date()
+  });
+  await setDoc(doc(db, 'prospects', 'p1', 'activities', 'a1'), { type: 'discovered', at: new Date() });
+  await setDoc(doc(db, 'outboundCampaigns', 'camp1'), { name: 'Test', status: 'draft', mode: 'power' });
+  await setDoc(doc(db, 'outboundTargets', 'tgt1'), { campaignId: 'camp1', state: 'ready' });
+  await setDoc(doc(db, 'dialerSessions', 'sess1'), { campaignId: 'camp1', userUid: 'admin_doc', status: 'active' });
+  await setDoc(doc(db, 'leadResearch', 'prospect_p1'), { approved: false, verifiedFacts: [] });
+  await setDoc(doc(db, 'scrapeJobs', 'job1'), { provider: 'mock', status: 'queued' });
+  await setDoc(doc(db, 'scrapeJobs', 'job1', 'results', 'r1'), { raw: { name: 'x' } });
+  await setDoc(doc(db, 'importRuns', 'run1'), { sourceSystem: 'watcher_leads', status: 'completed' });
+  await setDoc(doc(db, 'importRuns', 'run1', 'errors', 'e1'), { reason: 'invalid_record' });
+  await setDoc(doc(db, 'outboundCallEvents', 'evt1'), { type: 'completed' });
+});
+
+describe('prospects — cold contacts are admin-read, server-write');
+
+await it('anonymous visitor cannot read prospects', () =>
+  assertFails(getDocs(collection(anon, 'prospects'))));
+
+await it('a signed-in non-admin cannot read prospects', () =>
+  assertFails(getDocs(collection(visitor, 'prospects'))));
+
+await it('a client cannot read prospects', () =>
+  assertFails(getDocs(collection(clientOk, 'prospects'))));
+
+await it('admin can read prospects', () =>
+  assertSucceeds(getDocs(collection(adminByDoc, 'prospects'))));
+
+await it('anonymous visitor cannot create a prospect', () =>
+  assertFails(setDoc(doc(anon, 'prospects', 'injected'), {
+    name: 'Injected', phoneE164: '+15550000000', lifecycle: { status: 'ready' }
+  })));
+
+await it('an anonymous visitor cannot mark themselves an outbound lead', () =>
+  assertFails(addDoc(collection(anon, 'leads'), { ...validLead(), source: 'outbound' })));
+
+await it('even an admin cannot create a prospect from the browser', () =>
+  assertFails(setDoc(doc(adminByDoc, 'prospects', 'p2'), { name: 'Hand made' })));
+
+await it('even an admin cannot delete a prospect from the browser', () =>
+  assertFails(deleteDoc(doc(adminByDoc, 'prospects', 'p1'))));
+
+await it('admin can triage a prospect’s lifecycle', () =>
+  assertSucceeds(updateDoc(doc(adminByDoc, 'prospects', 'p1'), {
+    lifecycle: { status: 'archived', convertedLeadId: '' },
+    updatedAt: serverTimestamp()
+  })));
+
+await it('admin cannot rewrite a prospect’s source attribution', () =>
+  assertFails(updateDoc(doc(adminByDoc, 'prospects', 'p1'), {
+    source: { system: 'manual', provider: 'typed-by-hand' }
+  })));
+
+await it('admin cannot rewrite a prospect’s dedupe keys', () =>
+  assertFails(updateDoc(doc(adminByDoc, 'prospects', 'p1'), {
+    dedupe: { canonicalKey: 'phone:+19990000000' }
+  })));
+
+await it('admin cannot rewrite which import run produced a prospect', () =>
+  assertFails(updateDoc(doc(adminByDoc, 'prospects', 'p1'), { importRunId: 'forged' })));
+
+describe('prospect activities — append-only audit trail');
+
+await it('anonymous visitor cannot read prospect activities', () =>
+  assertFails(getDocs(collection(anon, 'prospects', 'p1', 'activities'))));
+
+await it('admin can append an activity', () =>
+  assertSucceeds(addDoc(collection(adminByDoc, 'prospects', 'p1', 'activities'), {
+    type: 'note', at: serverTimestamp()
+  })));
+
+await it('nobody can rewrite an activity', () =>
+  assertFails(updateDoc(doc(adminByDoc, 'prospects', 'p1', 'activities', 'a1'), { type: 'rewritten' })));
+
+await it('nobody can delete an activity', () =>
+  assertFails(deleteDoc(doc(adminByDoc, 'prospects', 'p1', 'activities', 'a1'))));
+
+describe('campaigns, targets and sessions — read-only in the browser');
+
+await it('anonymous visitor cannot read campaigns', () =>
+  assertFails(getDocs(collection(anon, 'outboundCampaigns'))));
+
+await it('admin can read campaigns', () =>
+  assertSucceeds(getDocs(collection(adminByDoc, 'outboundCampaigns'))));
+
+// A browser that could set `status: running` would start dialing without the
+// provider-capability check createOutboundCampaign performs.
+await it('admin cannot start a campaign by writing the document', () =>
+  assertFails(updateDoc(doc(adminByDoc, 'outboundCampaigns', 'camp1'), { status: 'running' })));
+
+await it('admin cannot create a campaign from the browser', () =>
+  assertFails(setDoc(doc(adminByDoc, 'outboundCampaigns', 'camp2'), { name: 'Hand made' })));
+
+await it('anonymous visitor cannot read outbound targets', () =>
+  assertFails(getDocs(collection(anon, 'outboundTargets'))));
+
+await it('admin can read outbound targets', () =>
+  assertSucceeds(getDocs(collection(adminByDoc, 'outboundTargets'))));
+
+// The lock is a transactional invariant. A browser write could hand the same
+// person to two representatives.
+await it('admin cannot write a target’s lock from the browser', () =>
+  assertFails(updateDoc(doc(adminByDoc, 'outboundTargets', 'tgt1'), { lockedBySessionId: 'mine' })));
+
+await it('anonymous visitor cannot read dialer sessions', () =>
+  assertFails(getDocs(collection(anon, 'dialerSessions'))));
+
+await it('admin can watch a dialer session', () =>
+  assertSucceeds(getDoc(doc(adminByDoc, 'dialerSessions', 'sess1'))));
+
+await it('admin cannot claim a session winner from the browser', () =>
+  assertFails(updateDoc(doc(adminByDoc, 'dialerSessions', 'sess1'), { connectedCallId: 'forged' })));
+
+describe('research, scrape jobs and import runs');
+
+await it('anonymous visitor cannot read lead research', () =>
+  assertFails(getDocs(collection(anon, 'leadResearch'))));
+
+await it('admin can read lead research', () =>
+  assertSucceeds(getDoc(doc(adminByDoc, 'leadResearch', 'prospect_p1'))));
+
+// Approval goes through approveLeadResearch, which is what keeps verifiedFacts
+// and sources unforgeable — an admin may reword a summary, not invent a fact.
+await it('admin cannot approve research by writing the document', () =>
+  assertFails(updateDoc(doc(adminByDoc, 'leadResearch', 'prospect_p1'), { approved: true })));
+
+await it('anonymous visitor cannot read scrape jobs', () =>
+  assertFails(getDocs(collection(anon, 'scrapeJobs'))));
+
+await it('admin can read scrape jobs', () =>
+  assertSucceeds(getDocs(collection(adminByDoc, 'scrapeJobs'))));
+
+await it('anonymous visitor cannot read raw scrape results', () =>
+  assertFails(getDocs(collection(anon, 'scrapeJobs', 'job1', 'results'))));
+
+await it('admin can read raw scrape results', () =>
+  assertSucceeds(getDocs(collection(adminByDoc, 'scrapeJobs', 'job1', 'results'))));
+
+await it('nobody can write a raw scrape result from the browser', () =>
+  assertFails(setDoc(doc(adminByDoc, 'scrapeJobs', 'job1', 'results', 'r2'), { raw: {} })));
+
+await it('anonymous visitor cannot read import runs', () =>
+  assertFails(getDocs(collection(anon, 'importRuns'))));
+
+await it('admin can read import runs and their errors', () =>
+  assertSucceeds(getDocs(collection(adminByDoc, 'importRuns', 'run1', 'errors'))));
+
+await it('nobody can forge an import run', () =>
+  assertFails(setDoc(doc(adminByDoc, 'importRuns', 'run2'), { sourceSystem: 'forged' })));
+
+// The idempotency ledger. Readable from the browser it would be useless; writable
+// it would let a redelivered webhook be replayed.
+await it('nobody can read the call-event ledger', () =>
+  assertFails(getDoc(doc(adminByDoc, 'outboundCallEvents', 'evt1'))));
+
+await it('nobody can write the call-event ledger', () =>
+  assertFails(setDoc(doc(adminByDoc, 'outboundCallEvents', 'evt2'), { type: 'forged' })));
+
 describe('catch-all — undeclared collections are closed');
 await it('nobody can write to an arbitrary collection', () =>
   assertFails(setDoc(doc(anon, 'anything', 'x'), { a: 1 })));

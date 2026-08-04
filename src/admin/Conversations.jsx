@@ -18,6 +18,20 @@ const TABS = [
   { key: 'calls', label: 'Byte · voice', sub: 'turns', agent: 'Byte' }
 ];
 
+// Direction filter for the voice tab. Applied client-side over the page we
+// already loaded rather than as a `where` clause, for one specific reason:
+// every call recorded before the outbound feature existed has no `direction`
+// field at all, and a Firestore equality filter would silently drop all of
+// them from the Inbound view. Absent means inbound — that is the rule, and it
+// is only expressible in memory.
+const DIRECTIONS = [
+  ['all', 'All'],
+  ['inbound', 'Inbound'],
+  ['outbound', 'Outbound']
+];
+
+const directionOf = row => (row.direction === 'outbound' ? 'outbound' : 'inbound');
+
 const when = value => {
   const date = toDate(value);
   return date
@@ -39,9 +53,15 @@ function duration(row) {
 
 export default function Conversations() {
   const [tabIndex, setTabIndex] = useState(0);
+  const [direction, setDirection] = useState('all');
   const tab = TABS[tabIndex];
-  const { rows, loading, error, refresh } = useConversations(tab.key, 'startedAt');
+  const { rows: allRows, loading, error, refresh } = useConversations(tab.key, 'startedAt');
   const [openId, setOpenId] = useState(null);
+
+  const isVoice = tab.key === 'calls';
+  const rows = isVoice && direction !== 'all'
+    ? allRows.filter(row => directionOf(row) === direction)
+    : allRows;
 
   const open = rows.find(row => row.id === openId) || null;
 
@@ -66,6 +86,22 @@ export default function Conversations() {
               </button>
             ))}
           </div>
+
+          {isVoice && (
+            <div className="admin-segment" role="group" aria-label="Call direction">
+              {DIRECTIONS.map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  aria-pressed={direction === value}
+                  onClick={() => { setDirection(value); setOpenId(null); }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+
           <button className="btn-admin" type="button" onClick={refresh}>Refresh</button>
         </div>
       </header>
@@ -85,6 +121,7 @@ export default function Conversations() {
                 <thead>
                   <tr>
                     <th>Started</th>
+                    {isVoice && <th>Direction</th>}
                     <th>Page</th>
                     <th className="num">{tab.key === 'chats' ? 'Messages' : 'Duration'}</th>
                     <th>Outcome</th>
@@ -100,7 +137,14 @@ export default function Conversations() {
                       onClick={() => setOpenId(row.id)}
                     >
                       <td className="cell-strong">{when(row.startedAt)}</td>
-                      <td className="cell-dim cell-wrap">{row.path || '/'}</td>
+                      {isVoice && (
+                        <td className="cell-dim">
+                          {directionOf(row)}
+                          {row.operator ? ` · ${row.operator}` : ''}
+                        </td>
+                      )}
+                      {/* An outbound call has no page — it did not start on the site. */}
+                      <td className="cell-dim cell-wrap">{row.path || (directionOf(row) === 'outbound' ? '—' : '/')}</td>
                       <td className="num">
                         {tab.key === 'chats' ? (row.messageCount || 0) : (duration(row) || '—')}
                       </td>
@@ -125,6 +169,17 @@ export default function Conversations() {
           <DetailRows
             rows={[
               ['Status', <Pill kind={open.status}>{open.status}</Pill>],
+              ...(isVoice ? [
+                ['Direction', directionOf(open)],
+                ['Operator', open.operator],
+                ['Dialer mode', open.dialerMode],
+                ['Disposition', open.disposition],
+                ['Campaign', open.campaignId],
+                ['Prospect', open.prospectId],
+                ['Recording', open.recordingUrl
+                  ? <a href={open.recordingUrl} target="_blank" rel="noreferrer noopener">Open recording</a>
+                  : '']
+              ] : []),
               ['Started', when(open.startedAt)],
               ['Ended', open.endedAt ? when(open.endedAt) : ''],
               ['Duration', duration(open)],

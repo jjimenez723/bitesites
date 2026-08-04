@@ -418,6 +418,117 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
 
+    // ------------------------------------------------------- outbound calling
+    //
+    // Everything in this block is admin-only for READS and effectively
+    // server-only for WRITES. The reasoning, collection by collection:
+    //
+    //   * `prospects` are cold contacts nobody consented to be in a database.
+    //     Anonymous visitors must not be able to create one (that would let a
+    //     script inject a phone number into a dialing queue) and must not be
+    //     able to read one (that would be a scraped-contact dump behind a
+    //     public API). Even an admin cannot create one from the browser: every
+    //     prospect goes through the import service, which normalises,
+    //     deduplicates and compliance-checks it. A browser-created prospect
+    //     would skip all three.
+    //
+    //   * `outboundTargets`, `dialerSessions` and `calls` state are written by
+    //     Cloud Functions holding the Admin SDK, because their invariants are
+    //     transactional (one lock per target, one winner per session). A
+    //     browser that could write them could hand the same person to two reps.
+    //
+    //   * Activities are append-only from the browser and unmodifiable after
+    //     the fact — the audit trail for who was called, and when, is only
+    //     worth having if it cannot be rewritten.
+    //
+    // Nothing here changes the public lead form, Bit, the client portal or any
+    // existing role behaviour.
+
+    match /prospects/{prospectId} {
+      allow read: if isAdmin();
+      // Server-only lifecycle. See the note above: creation must go through
+      // the import service, and deletion is an archive operation there too.
+      allow create, delete: if false;
+      // Admins triage from the console. Source attribution, dedupe keys and
+      // the import run are immutable from the browser — they are the audit
+      // trail that says where this person's number came from.
+      allow update: if isAdmin()
+                    && request.resource.data.diff(resource.data).affectedKeys()
+                         .hasOnly([
+                           'lifecycle', 'notes', 'tags', 'duplicate',
+                           'contactability', 'updatedAt', 'firstName', 'lastName',
+                           'jobTitle', 'name', 'companyName'
+                         ]);
+
+      match /activities/{activityId} {
+        allow read:   if isAdmin();
+        allow create: if isAdmin();
+        allow update, delete: if false;
+      }
+    }
+
+    match /outboundCampaigns/{campaignId} {
+      // Campaigns are the one outbound record an admin composes directly, but
+      // even here the callables own status and counts — a browser that could
+      // set `status: running` would start dialing without the provider
+      // capability check that createOutboundCampaign performs.
+      allow read: if isAdmin();
+      allow create, update, delete: if false;
+
+      match /events/{eventId} {
+        allow read: if isAdmin();
+        allow write: if false;
+      }
+    }
+
+    match /outboundTargets/{targetId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    match /dialerSessions/{sessionId} {
+      // A rep watches their own session live; the transitions are all written
+      // server-side inside transactions.
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    match /leadResearch/{contactKey} {
+      // Read-only in the browser. Approval goes through approveLeadResearch,
+      // which is what keeps `verifiedFacts` and `sources` unforgeable — an
+      // admin may reword a summary, not invent a sourced fact.
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    match /scrapeJobs/{jobId} {
+      allow read: if isAdmin();
+      allow write: if false;
+
+      // Raw provider payloads. Admin-only and pruned on a retention schedule
+      // by outboundNightlyMaintenance — see §14.
+      match /results/{resultId} {
+        allow read: if isAdmin();
+        allow write: if false;
+      }
+    }
+
+    match /importRuns/{runId} {
+      allow read: if isAdmin();
+      allow write: if false;
+
+      match /errors/{errorId} {
+        allow read: if isAdmin();
+        allow write: if false;
+      }
+    }
+
+    match /outboundCallEvents/{eventId} {
+      // The idempotency ledger. Not even readable from the browser: it exists
+      // so a redelivered webhook is a no-op, and nothing in the UI needs it.
+      allow read, write: if false;
+    }
+
     match /searchMetrics/{metricId} {
       allow read: if isAdmin();
       allow write: if false;

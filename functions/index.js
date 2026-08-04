@@ -2470,3 +2470,60 @@ export const setUserRole = onCall(
     return { uid, role, email: target.email || '' };
   }
 );
+
+// ---------------------------------------------------------------------------
+// Outbound calls — lead discovery, prospects, campaigns, dialers, webhooks.
+//
+// Re-exported rather than defined here. `index.js` is already the largest file
+// in the codebase and the outbound feature is ~10 modules on its own; keeping
+// its callables in outbound-api.js means a change to the dialer cannot break
+// the lead sync sitting above it. Firebase only deploys what this file exports,
+// so the re-export is what makes them real functions.
+// ---------------------------------------------------------------------------
+
+export {
+  // Configuration and capability reporting.
+  getOutboundConfig,
+
+  // Lead discovery.
+  createLeadDiscoveryJob,
+  runLeadDiscoveryJob,
+  pauseLeadDiscoveryJob,
+  cancelLeadDiscoveryJob,
+  discoveryWorker,
+
+  // Prospects.
+  importProspectCsv,
+  resolveProspectDuplicate,
+  promoteProspectToLead,
+
+  // Campaigns.
+  createOutboundCampaign,
+  updateOutboundCampaign,
+  startOutboundCampaign,
+  pauseOutboundCampaign,
+  resumeOutboundCampaign,
+  cancelOutboundCampaign,
+  importOutboundTargets,
+
+  // Research.
+  researchOutboundContact,
+  approveLeadResearch,
+  prepareTargetForDialing,
+
+  // Dialing.
+  startPowerDialerSession,
+  startParallelDialerSession,
+  dialNextTargets,
+  heartbeatDialerSession,
+  stopDialerSessionCall,
+  submitCallDisposition,
+  moveTargetToCallLater,
+  markTargetDoNotCall,
+
+  // Provider webhooks and scheduled maintenance.
+  recordOutboundCallEvent,
+  reconcileOutbound,
+  runAICampaigns,
+  outboundNightlyMaintenance
+} from './outbound-api.js';

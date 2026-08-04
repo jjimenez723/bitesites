@@ -1,0 +1,222 @@
+/* Outbound calls.
+ *
+ * Everything is scoped under .bs-admin, like the rest of the console, so this
+ * file can never reach the marketing site. It is imported only from
+ * OutboundCalls.jsx, which is itself only reachable from the lazily loaded
+ * admin bundle — a visitor to bitesites.org never downloads it.
+ *
+ * Nothing here redefines a colour. The tokens (--surface-*, --ink-*, --s1..s8,
+ * --good/--warning/--critical) come from admin.css and are used as-is; a second
+ * palette in a second file is how two screens in one product stop matching.
+ */
+
+.bs-admin .outbound-subnav {
+  display: flex; gap: 2px; flex-wrap: wrap;
+  background: var(--surface-2); border: 1px solid var(--line);
+  border-radius: 12px; padding: 4px; margin-bottom: 18px;
+}
+.bs-admin .outbound-subnav button {
+  border: 0; background: transparent; color: var(--ink-3);
+  padding: 7px 14px; border-radius: 9px; cursor: pointer;
+  font-size: 12.5px; font-weight: 600; transition: .15s;
+}
+.bs-admin .outbound-subnav button:hover { color: var(--ink-2); }
+.bs-admin .outbound-subnav button[aria-current='page'] { background: var(--surface-3); color: var(--ink); }
+.bs-admin .outbound-subnav button:focus-visible { outline: 2px solid var(--brand-violet); outline-offset: 1px; }
+.bs-admin .outbound-subnav .outbound-subnav-count {
+  margin-left: 6px; font-size: 10.5px; color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* A standing notice, not a dismissible toast: the fact that these are technical
+   controls rather than legal approval does not stop being true after one read. */
+.bs-admin .outbound-compliance-note {
+  border: 1px solid rgba(250, 178, 25, .3); background: rgba(250, 178, 25, .07);
+  color: #f3cf88; border-radius: 12px; padding: 11px 15px;
+  font-size: 12px; line-height: 1.55; margin-bottom: 16px;
+}
+.bs-admin .outbound-compliance-note strong { color: var(--warning); }
+
+.bs-admin .outbound-form { display: flex; flex-direction: column; gap: 14px; }
+.bs-admin .outbound-form-grid {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px;
+}
+.bs-admin .outbound-form-grid label { display: flex; min-width: 0; flex-direction: column; gap: 5px; }
+.bs-admin .outbound-form-grid label.full { grid-column: 1 / -1; }
+.bs-admin .outbound-form-grid label > span { color: var(--ink-3); font-size: 11px; font-weight: 650; }
+.bs-admin .outbound-form-grid label > small { color: var(--ink-3); font-size: 10.5px; line-height: 1.45; }
+.bs-admin .outbound-form-grid input,
+.bs-admin .outbound-form-grid select,
+.bs-admin .outbound-form-grid textarea {
+  box-sizing: border-box; width: 100%;
+  border: 1px solid var(--line); border-radius: 9px; padding: 9px 11px;
+  color: var(--ink); background: var(--surface-1); font: inherit; font-size: 12.5px;
+  resize: vertical;
+}
+.bs-admin .outbound-form-grid input:focus,
+.bs-admin .outbound-form-grid select:focus,
+.bs-admin .outbound-form-grid textarea:focus {
+  outline: none; border-color: var(--brand-violet); box-shadow: 0 0 0 3px rgba(124, 58, 237, .12);
+}
+.bs-admin .outbound-form-grid .checkbox-row {
+  flex-direction: row; align-items: center; gap: 9px;
+}
+.bs-admin .outbound-form-grid .checkbox-row input { width: auto; }
+
+.bs-admin .outbound-day-picker { display: flex; flex-wrap: wrap; gap: 5px; }
+.bs-admin .outbound-day-picker button {
+  border: 1px solid var(--line); background: var(--surface-1); color: var(--ink-3);
+  border-radius: 8px; padding: 6px 11px; font-size: 11.5px; font-weight: 600; cursor: pointer;
+}
+.bs-admin .outbound-day-picker button[aria-pressed='true'] {
+  background: rgba(124, 58, 237, .16); border-color: rgba(124, 58, 237, .4); color: var(--ink);
+}
+
+/* ------------------------------------------------------------- status pills */
+
+.bs-admin .pill.ready,
+.bs-admin .pill.approved { color: var(--good); border-color: rgba(12, 163, 12, .35); }
+.bs-admin .pill.needs_review,
+.bs-admin .pill.awaiting_approval,
+.bs-admin .pill.possible { color: var(--warning); border-color: rgba(250, 178, 25, .32); }
+.bs-admin .pill.running,
+.bs-admin .pill.dialing,
+.bs-admin .pill.processing { color: #34c9eb; border-color: rgba(52, 201, 235, .32); }
+.bs-admin .pill.connected { color: var(--good); border-color: rgba(12, 163, 12, .45); }
+.bs-admin .pill.call_later,
+.bs-admin .pill.paused,
+.bs-admin .pill.voicemail,
+.bs-admin .pill.no_answer,
+.bs-admin .pill.busy { color: var(--ink-2); }
+.bs-admin .pill.do_not_call,
+.bs-admin .pill.do_not_contact,
+.bs-admin .pill.invalid,
+.bs-admin .pill.invalid_number,
+.bs-admin .pill.cancelled { color: var(--critical); border-color: rgba(208, 59, 59, .35); }
+.bs-admin .pill.confirmed { color: var(--serious); border-color: rgba(236, 131, 90, .35); }
+.bs-admin .pill.unique { color: var(--ink-3); }
+
+/* ------------------------------------------------------------- live dialing */
+
+.bs-admin .outbound-live {
+  display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 18px;
+}
+.bs-admin .outbound-legs { display: flex; flex-direction: column; gap: 9px; }
+.bs-admin .outbound-leg {
+  display: flex; align-items: center; gap: 11px;
+  border: 1px solid var(--line); border-radius: 11px;
+  padding: 11px 13px; background: var(--surface-2);
+}
+.bs-admin .outbound-leg.is-connected {
+  border-color: rgba(12, 163, 12, .5); background: rgba(12, 163, 12, .09);
+}
+.bs-admin .outbound-leg.is-cancelled { opacity: .5; }
+.bs-admin .outbound-leg-name { font-weight: 600; font-size: 13px; }
+.bs-admin .outbound-leg-meta { color: var(--ink-3); font-size: 11.5px; }
+.bs-admin .outbound-leg .pill { margin-left: auto; }
+
+/* The live indicator. `prefers-reduced-motion` turns the pulse off rather than
+   removing the dot — the colour still says "a call is up right now". */
+.bs-admin .outbound-live-dot {
+  display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--good); flex: none;
+  box-shadow: 0 0 0 0 rgba(12, 163, 12, .6);
+  animation: outboundPulse 1.7s infinite;
+}
+@keyframes outboundPulse {
+  70% { box-shadow: 0 0 0 9px rgba(12, 163, 12, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(12, 163, 12, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bs-admin .outbound-live-dot { animation: none; }
+}
+
+.bs-admin .outbound-dispositions { display: flex; flex-wrap: wrap; gap: 7px; }
+.bs-admin .outbound-dispositions .btn-admin { font-size: 12px; padding: 7px 12px; }
+
+/* --------------------------------------------------------------- the brief */
+
+.bs-admin .outbound-brief { display: flex; flex-direction: column; gap: 14px; }
+.bs-admin .outbound-brief h4 {
+  font-size: 11px; letter-spacing: .07em; text-transform: uppercase;
+  color: var(--ink-3); font-weight: 650; margin-bottom: 7px;
+}
+.bs-admin .outbound-fact {
+  display: flex; gap: 9px; align-items: baseline;
+  font-size: 12.5px; line-height: 1.55; padding: 6px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, .045);
+}
+.bs-admin .outbound-fact:last-child { border-bottom: 0; }
+.bs-admin .outbound-fact-source {
+  flex: none; font-size: 10.5px; color: var(--ink-3);
+  border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px;
+}
+/* Unverified material is visually demoted on purpose — the whole point of the
+   verified/hypothesis split is that a rep can tell them apart at a glance. */
+.bs-admin .outbound-hypothesis {
+  font-size: 12px; line-height: 1.5; color: var(--ink-3); font-style: italic;
+  padding: 5px 0 5px 11px; border-left: 2px solid var(--line-strong);
+}
+.bs-admin .outbound-opening {
+  border: 1px solid rgba(124, 58, 237, .3); background: rgba(124, 58, 237, .08);
+  border-radius: 11px; padding: 12px 14px; font-size: 13px; line-height: 1.6;
+}
+
+.bs-admin .outbound-source-list { display: flex; flex-direction: column; gap: 5px; }
+.bs-admin .outbound-source-list a { color: #7fb4f0; font-size: 11.5px; text-decoration: none; }
+.bs-admin .outbound-source-list a:hover { text-decoration: underline; }
+
+/* ------------------------------------------------------------------ misc */
+
+.bs-admin .outbound-progress {
+  height: 6px; border-radius: 99px; background: var(--surface-3); overflow: hidden;
+}
+.bs-admin .outbound-progress > i {
+  display: block; height: 100%; background: var(--brand); transition: width .3s;
+}
+
+.bs-admin .outbound-metric-row {
+  display: flex; flex-wrap: wrap; gap: 18px 26px; margin-top: 4px;
+}
+.bs-admin .outbound-metric { display: flex; flex-direction: column; gap: 2px; }
+.bs-admin .outbound-metric strong { font-size: 19px; font-variant-numeric: tabular-nums; }
+.bs-admin .outbound-metric span { font-size: 11px; color: var(--ink-3); }
+
+.bs-admin .outbound-select-bar {
+  display: flex; align-items: center; gap: 11px; flex-wrap: wrap;
+  padding: 11px 14px; margin-bottom: 12px;
+  border: 1px solid rgba(124, 58, 237, .3); background: rgba(124, 58, 237, .08);
+  border-radius: 11px; font-size: 12.5px;
+}
+
+.bs-admin .outbound-capability-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 7px 18px;
+  font-size: 12px;
+}
+.bs-admin .outbound-capability-grid div { display: flex; gap: 7px; align-items: center; color: var(--ink-2); }
+.bs-admin .outbound-capability-grid i {
+  width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--ink-3);
+}
+.bs-admin .outbound-capability-grid .yes i { background: var(--good); }
+.bs-admin .outbound-capability-grid .no i { background: var(--critical); }
+
+.bs-admin .outbound-limitations { margin: 9px 0 0 16px; padding: 0; }
+.bs-admin .outbound-limitations li { font-size: 11.5px; color: var(--ink-3); line-height: 1.6; }
+
+.bs-admin .outbound-drop {
+  border: 1px dashed var(--line-strong); border-radius: 12px;
+  padding: 26px 20px; text-align: center; color: var(--ink-3); font-size: 12.5px;
+}
+.bs-admin .outbound-drop input { display: block; margin: 11px auto 0; font-size: 12px; }
+
+.bs-admin .outbound-stale {
+  font-size: 11.5px; color: var(--warning); display: inline-flex; gap: 6px; align-items: center;
+}
+
+@media (max-width: 1080px) {
+  .bs-admin .outbound-live { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 760px) {
+  .bs-admin .outbound-form-grid { grid-template-columns: minmax(0, 1fr); }
+  .bs-admin .outbound-form-grid label.full { grid-column: auto; }
+}

@@ -31,6 +31,32 @@ Live and verified against production:
 
 ---
 
+## Outbound calling — built, not deployed
+
+The `/admin/outbound` area (lead discovery, prospects, campaigns, power and
+parallel dialing) is implemented and tested but **has not been deployed and is
+not production-ready**. It ships inert: with no provider secrets configured,
+every provider reports itself unconfigured, every webhook returns
+`503 not-configured`, and only the mock dialer works.
+
+Before it can be used for real:
+
+- Provider credentials (see OUTBOUND_CALLING_SETUP.md)
+- Live provider webhooks
+- GoHighLevel workflow setup, if AI calling is wanted
+- **Legal and compliance approval** — the technical controls enforce configured
+  settings; they do not make a campaign lawful
+- One controlled live test call
+- Separate approval before any production data migration
+
+Three documents cover it: **OUTBOUND_CALLING_SETUP.md** (providers, secrets,
+webhooks, the compliance checklist), **LEAD_DISCOVERY_SETUP.md** (sources, jobs,
+the local worker, enrichment), **WATCHER_MIGRATION.md** (migrating the
+`watcher-leads-89349` corpus). **CAPABILITY_INVENTORY.md** records what was
+inspected in the source systems and what was deliberately excluded.
+
+---
+
 ## What still needs you
 
 ### 1. Switch on Google sign-in
@@ -140,6 +166,45 @@ roles/{uid}        role: 'admin' | 'client'. Admin-writable only. The access-con
 users/{uid}        Self-service profile. Created at sign-up with status 'pending'.
 projects/{id}      Client portal records. clientUids[] controls who can read.
 ```
+
+Outbound calling adds a second contact universe. It is deliberately separate
+from `leads` — see the note below the collection list.
+
+```
+prospects/{id}                  Cold contacts: scraped, imported, migrated. Admin-read, server-write.
+  activities/{id}               Append-only audit trail per prospect.
+outboundCampaigns/{id}          Calling campaigns. Admin-read; every write goes through a callable.
+  events/{id}                   Status changes, for the audit trail.
+outboundTargets/{id}            One contact in one campaign. Exactly one of leadId/prospectId is set.
+dialerSessions/{id}             A live power or parallel dialing session, plus its heartbeat.
+leadResearch/{contactKey}       The sourced call brief. Key is `lead_<id>` or `prospect_<id>`.
+scrapeJobs/{id}                 Lead-discovery jobs.
+  results/{id}                  Raw provider payloads. Admin-only, deleted after 7 days.
+importRuns/{id}                 Migration and CSV import runs, with their counts.
+  errors/{id}                   Per-record failures — never in the run document.
+outboundCallEvents/{id}         Webhook idempotency ledger. Unreadable and unwritable from any client.
+```
+
+**Why `prospects` is not `leads`.** A `lead` is someone who engaged with
+BiteSites — a form, a Bit chat, a Byte call — and the Overview and Performance
+screens count it as a website conversion. A scraped business engaged with
+nothing. Importing 40,000 of them into `leads` would destroy the funnel numbers,
+the response-time metrics and the conversion reporting all at once.
+
+A prospect becomes a lead only after **meaningful engagement**: someone answered
+a call, a meeting was booked, an email was replied to, or an administrator
+qualified it by hand. An attempted call is explicitly not enough —
+`promoteProspect` refuses that trigger. Converted leads carry
+`source: 'outbound'` and an `acquisition` block naming the campaign, target and
+first connected call, so outbound-sourced leads can be excluded from
+website-conversion maths.
+
+Calls stay in the **existing** `calls` collection with optional outbound fields
+(`direction`, `operator`, `dialerMode`, `campaignId`, `targetId`, `prospectId`,
+`disposition`, `attemptNumber`, `cancellationReason`, …), and transcripts stay in
+`calls/{id}/turns`. There is no second call-history system. A call with no
+`direction` — every call recorded before this feature — is treated as inbound
+everywhere it is read.
 
 A lead (optional fields are omitted rather than stored empty):
 
@@ -581,6 +646,19 @@ npm run test:analytics # durable daily funnel aggregation and deduplication
 npm run test:import    # the GHL call-log import, live API → emulator
 npm run test:role      # setUserRole — role document and auth claim stay in step
 npm run test:email     # template rendering, escaping, and Postmark payloads
+
+# Outbound calling and lead discovery. No test places a call, contacts a
+# provider, reads a credential, or touches a real Firebase project.
+npm run test:prospects        # normalisation — pure, no emulator
+npm run test:dedupe           # dedupe, compliance, Airbnb boundary, CSV — pure
+npm run test:migration        # the migration tool's pure halves — pure
+npm run test:discovery        # discovery jobs, import, resume, the local worker
+npm run test:conversion       # prospect → lead, and the shared contact layer
+npm run test:outbound         # campaigns, locking, first-answer-wins, dispositions
+npm run test:outbound-webhook # webhook authentication and redelivery
+npm run test:enrichment       # website fingerprinting, briefs, approval
+npm run test:all              # build + every suite above, in order
+
 npm run role -- <email> <admin|client|none>   # grant or revoke portal access
 npm run deploy         # build + deploy hosting and Firestore rules/indexes
 npm run deploy:rules   # rules and indexes only

@@ -17,11 +17,17 @@ const firstWord = value => String(value || '').trim().split(/\s+/)[0] || '';
 // Byte's leads are written server-side by the recordVoiceCall webhook, so a
 // source this screen does not recognise is a real possibility — fall back to
 // showing the raw value rather than silently filing it under "Intake form".
+// `outbound` is deliberately its own source and not folded into `cold_call`:
+// these leads came from a campaign against a cold prospect, so anything that
+// measures the website's conversion rate has to be able to exclude them. See
+// functions/prospect-conversion.js — nothing reaches `leads` with this source
+// until a person actually engaged.
 const SOURCE_LABELS = {
   intake_form: 'Intake form',
   bit_chat: 'Bit chat',
   byte_voice: 'Byte call',
-  cold_call: 'Cold call'
+  cold_call: 'Cold call',
+  outbound: 'Outbound campaign'
 };
 
 const sourceLabel = lead => SOURCE_LABELS[lead.source] || lead.source || 'Unknown';
