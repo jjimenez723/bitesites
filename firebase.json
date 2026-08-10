@@ -52,6 +52,10 @@
         "function": { "functionId": "twilioHybridAISipEvent", "region": "us-central1" }
       },
       {
+        "source": "/api/twilio-hybrid-voicemail",
+        "function": { "functionId": "twilioHybridVoicemailTwiML", "region": "us-central1" }
+      },
+      {
         "source": "/api/hybrid-ai-media",
         "function": { "functionId": "hybridAIMediaControl", "region": "us-central1" }
       },
