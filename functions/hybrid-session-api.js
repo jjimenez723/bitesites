@@ -10,6 +10,7 @@ import { FieldValue, getFirestore } from 'firebase-admin/firestore';
 
 import {
   startDialerSession,
+  heartbeatSession,
   dialNext,
   stopDialerSession,
   applyDisposition,
@@ -75,7 +76,8 @@ function twilioConfig() {
     twimlAppSid: secretValue(TWILIO_TWIML_APP_SID),
     apiKeySid: secretValue(TWILIO_API_KEY_SID),
     apiKeySecret: secretValue(TWILIO_API_KEY_SECRET),
-    statusCallbackUrl: `${publicUrl}/api/hybrid-outbound-events`
+    statusCallbackUrl: `${publicUrl}/api/hybrid-outbound-events`,
+    hybridV2: true
   };
 }
 
@@ -113,7 +115,6 @@ export const startHybridDialerSession = onCall({ ...callOptions, secrets: HYBRID
   const sessionOverride = request.data?.sessionOverride && typeof request.data.sessionOverride === 'object'
     ? JSON.parse(JSON.stringify(request.data.sessionOverride))
     : {};
-  // Bound the serialized override so a callable cannot be used as bulk storage.
   const overrideJson = JSON.stringify(sessionOverride);
   if (overrideJson.length > 12000) throw new HttpsError('invalid-argument', 'Session override is too large.');
 
@@ -141,6 +142,14 @@ export const startHybridDialerSession = onCall({ ...callOptions, secrets: HYBRID
   };
 });
 
+/** Heartbeat is ownership-checked so outbound_rep does not need the admin-only legacy callable. */
+export const heartbeatHybridDialerSession = onCall(callOptions, async request => {
+  const { db, uid } = await requireDialer(request);
+  const sessionId = requireId(request.data?.sessionId, 'session id');
+  await requireOwnedSession(db, sessionId, uid);
+  return heartbeatSession(db, sessionId);
+});
+
 /**
  * Launch exactly one three-leg batch at a time. This prevents repeated clicks
  * from turning a 3-line product setting into 6/9/12 concurrent PSTN calls.
@@ -152,9 +161,6 @@ export const dialHybridTargets = onCall({ ...callOptions, timeoutSeconds: 180, s
   if (session.hybridV2 !== true) throw new HttpsError('failed-precondition', 'This is not a Hybrid Dialer V2 session.');
   if (session.status !== 'active') return { started: [], reason: `session_${session.status}` };
 
-  // An activeCallIds entry remains historical until the session ends, so inspect
-  // call status rather than array length. A new batch is allowed only when every
-  // previous leg is terminal.
   const nonTerminal = [];
   for (const callId of (session.activeCallIds || []).slice(-20)) {
     const snapshot = await db.doc(`calls/${callId}`).get();
@@ -168,8 +174,6 @@ export const dialHybridTargets = onCall({ ...callOptions, timeoutSeconds: 180, s
   const providerId = campaignSnapshot.get('provider');
   if (providerId !== 'twilio') throw new HttpsError('failed-precondition', 'Hybrid V2 currently requires Twilio.');
 
-  // Legacy connectedCallId is deprecated for V2. Ensure an old/replayed value
-  // cannot stop a new V2 batch after all prior calls are terminal.
   await db.doc(`dialerSessions/${sessionId}`).set({
     connectedCallId: '', connectedTargetId: '', connectedAt: null,
     rep: { state: 'available', activeCallId: '', listeningCallId: '' },
@@ -256,8 +260,6 @@ export const markHybridCallDoNotCall = onCall({ ...callOptions, secrets: HYBRID_
   const call = { id: callId, ...callSnapshot.data() };
   await requireOwnedSession(db, call.sessionId, uid);
 
-  // Suppress globally first so even a provider/webhook failure cannot leave the
-  // contact callable. Then terminate the live carrier leg when present.
   await markDoNotCall(db, call.targetId, { actor: email || uid });
   if (call.provider === 'twilio' && call.providerCallId) {
     const provider = getCallingProvider('twilio', twilioConfig());
