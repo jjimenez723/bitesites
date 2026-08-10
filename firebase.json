@@ -40,6 +40,41 @@
         }
       },
       {
+        "source": "/api/hybrid-outbound-events",
+        "function": {
+          "functionId": "recordHybridCallEvent",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/twilio-prospect-twiml",
+        "function": {
+          "functionId": "twilioHybridProspectTwiML",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/twilio-browser-twiml",
+        "function": {
+          "functionId": "twilioHybridBrowserTwiML",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/twilio-conference-events",
+        "function": {
+          "functionId": "twilioHybridConferenceEvent",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "/api/hybrid-ai-media",
+        "function": {
+          "functionId": "hybridAIMediaControl",
+          "region": "us-central1"
+        }
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }
