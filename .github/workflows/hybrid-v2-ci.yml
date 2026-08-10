@@ -1,0 +1,56 @@
+name: Hybrid Dialer V2 CI
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install root dependencies and refresh lockfile
+        run: npm install
+
+      - name: Secret scan
+        run: npm run secrets:check
+
+      - name: Build React app
+        run: npm run build
+
+      - name: Hybrid orchestration tests
+        run: npm run test:hybrid-dialer
+
+      - name: Agent runtime tests
+        run: npm run test:agent-runtime
+
+      - name: Install and check Firebase Functions
+        working-directory: functions
+        run: |
+          npm install
+          npm run check
+
+      - name: Install and check Realtime sideband
+        working-directory: services/realtime-sideband
+        run: |
+          npm install
+          npm run check
+
+      - name: Upload generated lockfiles
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hybrid-v2-lockfiles
+          if-no-files-found: warn
+          path: |
+            package-lock.json
+            services/realtime-sideband/package-lock.json
