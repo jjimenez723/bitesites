@@ -2,9 +2,10 @@
 //
 // The operator starts one three-line batch. The server routes exactly one live
 // answer to the free rep and assigns additional human answers to isolated AI
-// sessions. The browser never decides ownership.
+// sessions. The browser never decides ownership or whether a new batch is safe;
+// the server checks every previous call before launching another three.
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { outbound, useAction, useLiveDoc, useSessionHeartbeat } from './data';
 import { Empty } from './SourceBadge';
 import ActiveCallPanel from './ActiveCallPanel';
@@ -47,8 +48,6 @@ export default function DialerControls({ campaignId, campaigns = [], onSelectCam
 
   useEffect(() => () => leaveHybridVoice(), []);
 
-  const activeNonTerminal = useMemo(() => Boolean(sessionId && (session?.activeCallIds || []).length), [sessionId, session?.activeCallIds]);
-
   const start = async () => {
     let override = {};
     if (sessionOverride.trim()) override = { instructions: sessionOverride.trim() };
@@ -65,7 +64,11 @@ export default function DialerControls({ campaignId, campaigns = [], onSelectCam
     setSessionId('');
   };
 
-  const dial = () => action.run(() => outbound.dialHybrid(sessionId), '3-call batch launched.');
+  const dial = async () => {
+    const result = await action.run(() => outbound.dialHybrid(sessionId), '');
+    if (!result) return;
+    if (result.reason === 'batch_in_progress') return;
+  };
 
   const toggleAuto = async event => {
     const enabled = event.target.checked;
@@ -158,7 +161,7 @@ export default function DialerControls({ campaignId, campaigns = [], onSelectCam
             </div>
 
             {!profilesLoading && !profiles.length && (
-              <p className="admin-note">Create an AI agent profile in Settings before starting the Hybrid Dialer.</p>
+              <p className="admin-note">Create an AI agent profile in the AI Agents tab before starting the Hybrid Dialer.</p>
             )}
 
             <div className="admin-filters" style={{ marginTop: 14 }}>
@@ -178,13 +181,13 @@ export default function DialerControls({ campaignId, campaigns = [], onSelectCam
                 <input type="checkbox" checked={session?.takeover?.autoEnabled ?? autoTakeover} onChange={toggleAuto} />
                 Auto Takeover
               </label>
-              <button className="btn-admin primary" type="button" disabled={action.busy || activeNonTerminal} onClick={dial}>
+              <button className="btn-admin primary" type="button" disabled={action.busy} onClick={dial}>
                 {action.busy ? 'Launching…' : 'Launch 3 Calls'}
               </button>
               <button className="btn-admin danger" type="button" disabled={action.busy} onClick={stop}>End Session</button>
             </div>
             <p className="admin-note" style={{ marginTop: 10 }}>
-              A new 3-call batch is available after the current batch has fully ended. Active call cards never show a generic Call button.
+              The server blocks a new batch until the current one is fully resolved. Active call cards never show a generic Call button.
             </p>
           </div>
         )}
