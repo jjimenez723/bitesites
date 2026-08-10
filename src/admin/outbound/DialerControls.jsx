@@ -4,7 +4,7 @@
 // answer to the free rep and assigns additional human answers to isolated AI
 // sessions. The browser never decides ownership.
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { outbound, useAction, useLiveDoc, useSessionHeartbeat } from './data';
 import { Empty } from './SourceBadge';
 import ActiveCallPanel from './ActiveCallPanel';
@@ -47,8 +47,6 @@ export default function DialerControls({ campaignId, campaigns = [], onSelectCam
 
   useEffect(() => () => leaveHybridVoice(), []);
 
-  const activeNonTerminal = useMemo(() => Boolean(sessionId && (session?.activeCallIds || []).length), [sessionId, session?.activeCallIds]);
-
   const start = async () => {
     let override = {};
     if (sessionOverride.trim()) override = { instructions: sessionOverride.trim() };
@@ -70,7 +68,14 @@ export default function DialerControls({ campaignId, campaigns = [], onSelectCam
     // permission. Once permission is granted, the server can asynchronously
     // assign the first answering prospect and the softphone can join it.
     await prepareHybridVoice();
-    return outbound.dialHybrid(sessionId);
+    const result = await outbound.dialHybrid(sessionId);
+    if (result?.reason === 'batch_in_progress') {
+      throw new Error('The current 3-call batch is still active. End or finish those calls before launching the next batch.');
+    }
+    if (result?.reason === 'no_eligible_targets') {
+      throw new Error('No eligible targets are ready to call right now.');
+    }
+    return result;
   }, '3-call batch launched.');
 
   const toggleAuto = async event => {
@@ -184,13 +189,13 @@ export default function DialerControls({ campaignId, campaigns = [], onSelectCam
                 <input type="checkbox" checked={session?.takeover?.autoEnabled ?? autoTakeover} onChange={toggleAuto} />
                 Auto Takeover
               </label>
-              <button className="btn-admin primary" type="button" disabled={action.busy || activeNonTerminal} onClick={dial}>
+              <button className="btn-admin primary" type="button" disabled={action.busy} onClick={dial}>
                 {action.busy ? 'Launching…' : 'Launch 3 Calls'}
               </button>
               <button className="btn-admin danger" type="button" disabled={action.busy} onClick={stop}>End Session</button>
             </div>
             <p className="admin-note" style={{ marginTop: 10 }}>
-              A new 3-call batch is available after the current batch has fully ended. Active call cards never show a generic Call button.
+              The server refuses a new batch while any current call is still live. Once all three legs are terminal, this same session can launch the next batch.
             </p>
           </div>
         )}
