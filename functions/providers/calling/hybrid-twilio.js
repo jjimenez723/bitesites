@@ -271,7 +271,13 @@ export class HybridTwilioDialer extends CallingProviderAdapter {
     else if (status === 'failed') type = 'failed';
     else if (status === 'initiated' || status === 'queued') type = 'dialing';
 
-    const disposition = type === 'human_answered' || type === 'completed' ? 'connected'
+    // Legacy outbound uses a non-empty status callback URL and historically
+    // treated carrier completion as a connected disposition. Hybrid V2's
+    // webhook normalizer is instantiated without a callback URL because the
+    // callback already arrived at the V2 endpoint; in that path completion must
+    // not invent `connected`, especially after AMD classified voicemail.
+    const legacyCompletedConnection = type === 'completed' && Boolean(this.statusCallbackUrl);
+    const disposition = type === 'human_answered' || legacyCompletedConnection ? 'connected'
       : type === 'machine_answered' ? 'voicemail'
         : ['busy', 'no_answer', 'failed', 'cancelled'].includes(type) ? type : '';
 
