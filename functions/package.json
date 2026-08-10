@@ -3,9 +3,9 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "main": "index.js",
+  "main": "v2-index.js",
   "scripts": {
-    "check": "node --check index.js"
+    "check": "node --check v2-index.js && node --check hybrid-dialer-api.js && node --check hybrid-call-orchestration.js && node --check agent-runtime.js"
   },
   "engines": {
     "node": "22"
