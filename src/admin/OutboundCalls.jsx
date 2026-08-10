@@ -1,14 +1,4 @@
-// Outbound Calls — the admin area for lead discovery and outbound sales.
-//
-// One screen with an internal sub-navigation rather than nine sidebar entries:
-// the console's sidebar is the map of the product, and nine of its twelve
-// entries being one feature would misrepresent it. The sub-nav is a real
-// tablist with arrow-key movement, so it is navigable without a mouse.
-//
-// This component owns exactly two pieces of shared state — the selected
-// campaign and the open prospect — because every tab needs one or both and
-// threading them through nine components separately is how two tabs end up
-// disagreeing about which campaign you are looking at.
+// Outbound Calls — lead discovery, sales orchestration, AI agents and dialer.
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useCampaigns, outbound } from './outbound/data';
@@ -22,7 +12,9 @@ import DialerControls from './outbound/DialerControls';
 import CallLaterQueue from './outbound/CallLaterQueue';
 import CallHistory from './outbound/CallHistory';
 import ProviderStatus from './outbound/ProviderStatus';
+import AgentProfiles from './outbound/AgentProfiles';
 import './outbound/outbound.css';
+import './outbound/hybrid.css';
 
 const TABS = [
   ['campaigns', 'Campaigns'],
@@ -31,6 +23,7 @@ const TABS = [
   ['review', 'Import Review'],
   ['queue', 'Queue'],
   ['dialer', 'Live Dialer'],
+  ['agents', 'AI Agents'],
   ['later', 'Call Later'],
   ['history', 'History'],
   ['settings', 'Settings']
@@ -52,19 +45,14 @@ export default function OutboundCalls() {
       .catch(error => setConfig({
         data: null,
         loading: false,
-        // Anything other than a real permission problem is almost always "the
-        // functions have not been deployed yet", which is worth saying out loud
-        // rather than rendering an empty settings page.
         error: error?.code === 'functions/permission-denied'
-          ? 'This account does not have admin access to outbound calling.'
+          ? 'This account does not have access to outbound calling.'
           : `Could not load provider status: ${error?.message || 'the outbound functions may not be deployed yet.'}`
       }));
   }, []);
 
   useEffect(loadConfig, [loadConfig]);
 
-  // Default to the first campaign so Queue, Dialer, Call Later and History all
-  // have something to show without an extra click.
   useEffect(() => {
     if (!campaignId && campaigns.rows.length) setCampaignId(campaigns.rows[0].id);
   }, [campaigns.rows, campaignId]);
@@ -88,9 +76,9 @@ export default function OutboundCalls() {
     <>
       <header className="admin-topbar">
         <div>
-          <h1>Outbound Calls</h1>
+          <h1>Outbound Sales</h1>
           <p className="admin-topbar-sub">
-            Find businesses, review them, and call them — with every number traced back to where it came from.
+            Discover prospects, configure AI agents, run human + AI calls, and audit every outcome in one workspace.
           </p>
         </div>
         <div className="admin-topbar-spacer" />
@@ -141,65 +129,31 @@ export default function OutboundCalls() {
               onSelect={setCampaignId}
             />
           )}
-
           {tab === 'discovery' && <LeadDiscovery sources={sources} />}
-
-          {tab === 'prospects' && (
-            <ProspectList campaigns={campaigns.rows} onOpen={setProspectId} />
-          )}
-
+          {tab === 'prospects' && <ProspectList campaigns={campaigns.rows} onOpen={setProspectId} />}
           {tab === 'review' && <ImportReview onOpen={setProspectId} />}
-
           {tab === 'queue' && (
-            <LeadQueue
-              campaignId={campaignId}
-              campaigns={campaigns.rows}
-              onSelectCampaign={setCampaignId}
-              onOpenProspect={setProspectId}
-            />
+            <LeadQueue campaignId={campaignId} campaigns={campaigns.rows}
+              onSelectCampaign={setCampaignId} onOpenProspect={setProspectId} />
           )}
-
           {tab === 'dialer' && (
-            <DialerControls
-              campaignId={campaignId}
-              campaigns={campaigns.rows}
-              onSelectCampaign={setCampaignId}
-            />
+            <DialerControls campaignId={campaignId} campaigns={campaigns.rows} onSelectCampaign={setCampaignId} />
           )}
-
+          {tab === 'agents' && <AgentProfiles />}
           {tab === 'later' && (
-            <CallLaterQueue
-              campaignId={campaignId}
-              campaigns={campaigns.rows}
-              onSelectCampaign={setCampaignId}
-            />
+            <CallLaterQueue campaignId={campaignId} campaigns={campaigns.rows} onSelectCampaign={setCampaignId} />
           )}
-
           {tab === 'history' && (
-            <CallHistory
-              campaignId={campaignId}
-              campaigns={campaigns.rows}
-              onSelectCampaign={setCampaignId}
-            />
+            <CallHistory campaignId={campaignId} campaigns={campaigns.rows} onSelectCampaign={setCampaignId} />
           )}
-
           {tab === 'settings' && (
-            <ProviderStatus
-              config={config.data}
-              loading={config.loading}
-              error={config.error}
-              onRefresh={loadConfig}
-            />
+            <ProviderStatus config={config.data} loading={config.loading} error={config.error} onRefresh={loadConfig} />
           )}
         </div>
       </div>
 
       {prospectId && (
-        <ProspectDetail
-          prospectId={prospectId}
-          onClose={() => setProspectId(null)}
-          onChanged={campaigns.refresh}
-        />
+        <ProspectDetail prospectId={prospectId} onClose={() => setProspectId(null)} onChanged={campaigns.refresh} />
       )}
     </>
   );
