@@ -1,10 +1,10 @@
-// Twilio Programmable Voice adapter for Hybrid Dialer V2.
+// Twilio Programmable Voice adapter with an explicit Hybrid Dialer V2 mode.
 //
-// Unlike the legacy first-answer-wins adapter, every outbound leg receives its
-// own provider SID and is sent into a conference-aware TwiML route. Human answer
-// routing then decides whether a rep or an isolated AI controller joins that
-// conference. Sibling answered calls are never cancelled merely because the rep
-// is already busy.
+// Legacy callers retain the old ApplicationSid/status-callback behavior. Hybrid
+// V2 callers opt in with `hybridV2: true`, which routes each PSTN leg into its
+// own conference and sends AMD/status events to the V2 orchestration endpoint.
+// This keeps the existing mock/power/parallel test surface stable while the new
+// UI uses the conference-capable path.
 
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { CallingProviderAdapter, callEvent } from './adapter.js';
@@ -19,10 +19,7 @@ export class HybridTwilioError extends Error {
 export class HybridTwilioDialer extends CallingProviderAdapter {
   static id = 'twilio';
   static label = 'Twilio Programmable Voice';
-  static requiredSecrets = [
-    'TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_TWIML_APP_SID',
-    'TWILIO_API_KEY_SID', 'TWILIO_API_KEY_SECRET'
-  ];
+  static requiredSecrets = ['TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_TWIML_APP_SID'];
 
   static capabilities = {
     programmaticOutboundCall: true,
@@ -47,7 +44,8 @@ export class HybridTwilioDialer extends CallingProviderAdapter {
   static limitations = [
     'Live carrier behavior still requires verification with a configured Twilio account and controlled test numbers.',
     'AMD is probabilistic and can add answer latency.',
-    'AI media attachment is handled by the BiteSites media runtime, not by this carrier adapter.',
+    'Hybrid AI media attachment is handled by the BiteSites media runtime, not by this carrier adapter.',
+    'Hybrid browser audio additionally needs TWILIO_API_KEY_SID and TWILIO_API_KEY_SECRET.',
     'Caller-ID registration, STIR/SHAKEN attestation, consent and jurisdiction-specific calling rules remain deployment responsibilities.'
   ];
 
@@ -59,6 +57,7 @@ export class HybridTwilioDialer extends CallingProviderAdapter {
     this.apiKeySid = config.apiKeySid || '';
     this.apiKeySecret = config.apiKeySecret || '';
     this.statusCallbackUrl = config.statusCallbackUrl || '';
+    this.hybridV2 = config.hybridV2 === true;
     this.fetchImpl = config.fetchImpl || globalThis.fetch;
   }
 
@@ -67,8 +66,6 @@ export class HybridTwilioDialer extends CallingProviderAdapter {
     if (!this.accountSid) missing.push('TWILIO_ACCOUNT_SID');
     if (!this.authToken) missing.push('TWILIO_AUTH_TOKEN');
     if (!this.twimlAppSid) missing.push('TWILIO_TWIML_APP_SID');
-    if (!this.apiKeySid) missing.push('TWILIO_API_KEY_SID');
-    if (!this.apiKeySecret) missing.push('TWILIO_API_KEY_SECRET');
     if (!this.statusCallbackUrl) missing.push('OUTBOUND_WEBHOOK_URL');
     return { ok: missing.length === 0, missing };
   }
@@ -109,6 +106,15 @@ export class HybridTwilioDialer extends CallingProviderAdapter {
     return url.toString();
   }
 
+  #callbackWithMetadata(metadata = {}) {
+    if (!this.statusCallbackUrl) return '';
+    const url = new URL(this.statusCallbackUrl);
+    for (const [key, value] of Object.entries(metadata)) {
+      if (value !== undefined && value !== null && value !== '') url.searchParams.set(key, String(value));
+    }
+    return url.toString();
+  }
+
   #metadata({ target, campaign, sessionId, legIndex }) {
     return {
       campaignId: clean(target.campaignId || campaign.id, 160),
@@ -120,6 +126,32 @@ export class HybridTwilioDialer extends CallingProviderAdapter {
 
   #callParams({ target, campaign, sessionId, legIndex }) {
     const metadata = this.#metadata({ target, campaign, sessionId, legIndex });
+
+    if (!this.hybridV2) {
+      const callback = this.#callbackWithMetadata(metadata);
+      const params = {
+        To: target.phoneE164,
+        From: campaign.callerId,
+        ApplicationSid: this.twimlAppSid,
+        MachineDetection: 'DetectMessageEnd',
+        MachineDetectionTimeout: '15',
+        AsyncAmd: 'true',
+        Timeout: '25',
+        StatusCallbackEvent: 'initiated ringing answered completed',
+        StatusCallbackMethod: 'POST'
+      };
+      if (callback) {
+        params.StatusCallback = callback;
+        params.AsyncAmdStatusCallback = callback;
+        params.AsyncAmdStatusCallbackMethod = 'POST';
+      }
+      if (campaign.recordCalls !== false) {
+        params.Record = 'true';
+        params.RecordingStatusCallback = callback;
+      }
+      return params;
+    }
+
     const prospectTwiml = this.#hybridUrl('/api/twilio-prospect-twiml', metadata);
     const statusCallback = this.#hybridUrl('/api/hybrid-outbound-events', metadata);
     if (!prospectTwiml || !statusCallback) throw new HybridTwilioError('Hybrid callback URLs are not configured');
