@@ -1,107 +1,86 @@
-// What the rep looks at while a call is up.
+// Hybrid Dialer V2 live workspace.
 //
-// The connected leg is unmistakable — a pulsing dot, a green surface, and the
-// contact's brief filling the pane — because in a five-line parallel session
-// the one thing a rep must never be unsure about is which person is on the
-// line. Losing legs are visibly demoted the moment they are cancelled.
+// V1 rendered one "winner" and demoted/cancelled every sibling. V2 renders all
+// live calls because additional human answers remain connected under isolated
+// AI controllers while the rep handles one conversation.
 
-import React from 'react';
-import { useLiveDoc } from './data';
-import { StatusPill, formatPhone, formatDuration, localTime } from './SourceBadge';
-import LeadResearchPanel from './LeadResearchPanel';
+import React, { useMemo } from 'react';
+import { useLiveCalls, useTargets } from './data';
+import HybridCallCard from './HybridCallCard';
 
-function Leg({ callId, connectedCallId }) {
-  const { data: call } = useLiveDoc(`calls/${callId}`);
-  if (!call) return null;
+const terminal = call => ['completed', 'cancelled', 'failed'].includes(call?.status);
 
-  const connected = call.id === connectedCallId || call.status === 'connected';
-  const cancelled = call.status === 'cancelled';
-
-  return (
-    <div className={`outbound-leg ${connected ? 'is-connected' : ''} ${cancelled ? 'is-cancelled' : ''}`}>
-      {connected && <span className="outbound-live-dot" aria-hidden="true" />}
-      <div style={{ minWidth: 0 }}>
-        <div className="outbound-leg-name">
-          {call.prospectId || call.leadId || call.targetId}
-        </div>
-        <div className="outbound-leg-meta">
-          attempt {call.attemptNumber || 1}
-          {call.durationSec ? ` · ${formatDuration(call.durationSec)}` : ''}
-          {cancelled && call.cancellationReason ? ` · ${call.cancellationReason.replace(/_/g, ' ')}` : ''}
-        </div>
-      </div>
-      <StatusPill status={connected ? 'connected' : call.status} />
-    </div>
-  );
+function priority(call) {
+  if (call?.handoff?.requestedBy === 'prospect' && ['requested', 'queued'].includes(call?.handoff?.state)) return 500;
+  if (call?.control?.controller === 'human') return 400;
+  if (call?.handoff?.requestedBy === 'rep' && ['requested', 'queued'].includes(call?.handoff?.state)) return 350;
+  if (call?.control?.controller === 'ai') return 300;
+  if (call?.status === 'ringing') return 200;
+  return 100;
 }
 
-export default function ActiveCallPanel({ session, target, contact }) {
+export default function ActiveCallPanel({ session, onDisposition }) {
+  const callIds = session?.activeCallIds || [];
+  const calls = useLiveCalls(callIds);
+  const targets = useTargets(session?.campaignId || '', {
+    states: ['dialing', 'connected', 'call_later', 'voicemail', 'no_answer']
+  });
+
+  const targetById = useMemo(() => new Map(targets.rows.map(target => [target.id, target])), [targets.rows]);
+  const active = useMemo(() => calls.rows
+    .filter(call => !terminal(call))
+    .sort((a, b) => priority(b) - priority(a)), [calls.rows]);
+  const humanRequests = active.filter(call => call?.handoff?.requestedBy === 'prospect' && ['requested', 'queued'].includes(call?.handoff?.state)).length;
+  const aiCount = active.filter(call => call?.control?.controller === 'ai').length;
+  const humanCount = active.filter(call => call?.control?.controller === 'human' || call?.control?.controller === 'transitioning').length;
+
   if (!session) return null;
 
-  const legs = session.activeCallIds || [];
-  const connectedCallId = session.connectedCallId || '';
-  const contactType = target?.contactType || 'prospect';
-  const contactId = target?.prospectId || target?.leadId || '';
-
   return (
-    <div className="outbound-live">
+    <div className="outbound-live hybrid-live-workspace">
       <div className="admin-card">
         <div className="card-head">
           <div>
-            <h3>
-              {connectedCallId ? 'On a call' : legs.length ? 'Dialing…' : 'Idle'}
-              {connectedCallId && <span className="outbound-live-dot" style={{ marginLeft: 9 }} aria-hidden="true" />}
-            </h3>
+            <h3>Live calls</h3>
             <p>
-              {session.mode === 'parallel'
-                ? `${legs.length} line(s) up. The first verified human answer connects; the rest are cancelled automatically.`
-                : 'One line at a time. The next target is only locked once this one is resolved.'}
+              One rep can speak on one call. Other human answers stay alive with independent AI agents until they finish or you take over.
             </p>
           </div>
-        </div>
-
-        {!legs.length ? (
-          <p className="admin-note">No live legs. Use “Dial next” to start.</p>
-        ) : (
-          <div className="outbound-legs">
-            {legs.map(callId => <Leg key={callId} callId={callId} connectedCallId={connectedCallId} />)}
-          </div>
-        )}
-
-        {contact && (
-          <div style={{ marginTop: 18, paddingTop: 16, borderTop: '1px solid var(--line)' }}>
-            <div className="outbound-metric-row">
-              <div className="outbound-metric">
-                <strong style={{ fontSize: 15 }}>{contact.companyName || contact.name || '—'}</strong>
-                <span>Business</span>
-              </div>
-              <div className="outbound-metric">
-                <strong style={{ fontSize: 15 }}>{formatPhone(target?.phoneE164)}</strong>
-                <span>Number being dialled</span>
-              </div>
-              <div className="outbound-metric">
-                <strong style={{ fontSize: 15 }}>{target?.timezone ? localTime(target.timezone) : 'unknown'}</strong>
-                <span>Their local time</span>
-              </div>
-              <div className="outbound-metric">
-                <strong style={{ fontSize: 15 }}>{target?.attemptCount || 0}/{target?.maxAttempts || 3}</strong>
-                <span>Attempts</span>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-
-      <div className="admin-card">
-        <div className="card-head">
-          <div>
-            <h3>Brief</h3>
-            <p>Say the sourced facts. Anything marked unverified is a question, not a statement.</p>
+          <div className="hybrid-live-summary">
+            <span className="pill">{active.length} active</span>
+            <span className="pill">{aiCount} AI</span>
+            <span className="pill">{humanCount} human</span>
+            {humanRequests > 0 && <span className="pill danger">{humanRequests} requested you</span>}
           </div>
         </div>
-        {contactId
-          ? <LeadResearchPanel contactType={contactType} contactId={contactId} compact />
-          : <p className="admin-note">A brief appears once a target is connected.</p>}
+
+        <div className="hybrid-rep-state">
+          <span className={`hybrid-rep-dot state-${session?.rep?.state || 'available'}`} />
+          <strong>Rep: {(session?.rep?.state || 'available').replace(/_/g, ' ')}</strong>
+          <span className="admin-note">
+            Auto Takeover {session?.takeover?.autoEnabled ? 'on' : 'off'}
+          </span>
+        </div>
+
+        {calls.loading && !active.length && <p className="admin-note">Loading live calls…</p>}
+        {calls.error && <p className="admin-error">{calls.error}</p>}
+        {!calls.loading && !active.length && (
+          <p className="admin-note">No active calls. Launch the next 3-call batch when you are ready.</p>
+        )}
+
+        {active.length > 0 && (
+          <div className="hybrid-call-grid">
+            {active.map(call => (
+              <HybridCallCard
+                key={call.id}
+                call={call}
+                session={session}
+                target={targetById.get(call.targetId)}
+                onDisposition={onDisposition}
+              />
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
