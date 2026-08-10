@@ -1,15 +1,8 @@
 // Firestore reads and callable invocations for the outbound feature.
 //
-// Same contract as src/admin/data.js: every collection here is admin-only in
-// firestore.rules, so an unauthorised query fails with permission-denied rather
-// than returning something. Reads are capped for the same reason as elsewhere —
-// a prospect corpus grows without bound and a screen that silently pulls 40k
-// documents is a surprise bill.
-//
-// Writes are conspicuously absent. Prospects, targets, sessions, campaigns and
-// research are all server-owned; the browser calls a function, and the function
-// holds the invariants (normalise before storing, one lock per target, one
-// winner per session). A `setDoc` from here could not honour any of them.
+// All writes flow through Cloud Functions. Hybrid Dialer V2 adds live call and
+// transcript subscriptions plus the rep/session/agent-profile callables needed
+// for AI overflow, listen-only monitoring, and smooth takeover.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -27,12 +20,11 @@ const rows = snapshot => snapshot.docs.map(entry => ({ id: entry.id, ...entry.da
 
 const friendlyError = error =>
   error?.code === 'permission-denied'
-    ? 'This account does not have admin access to outbound data.'
+    ? 'This account does not have access to outbound data.'
     : error?.code === 'failed-precondition'
       ? 'That query needs a Firestore index that has not been deployed yet — run npm run deploy:rules.'
       : error?.message || 'Could not load data.';
 
-/** Generic one-shot loader, matching the shape the rest of the console uses. */
 export function useOutboundQuery(build, deps = []) {
   const [state, setState] = useState({ rows: [], loading: true, error: null, capped: false });
 
@@ -55,12 +47,6 @@ export function useOutboundQuery(build, deps = []) {
   return { ...state, refresh: run };
 }
 
-/**
- * Live subscription, for the two places where polling would be wrong: a running
- * discovery job and an active dialer session. Everywhere else uses the one-shot
- * loader — a live listener on a 500-row table is a listener that re-renders on
- * every unrelated write.
- */
 export function useLiveDoc(path) {
   const [state, setState] = useState({ data: null, loading: true, error: null });
   useEffect(() => {
@@ -75,6 +61,54 @@ export function useLiveDoc(path) {
   return state;
 }
 
+/**
+ * Subscribe to the bounded set of active call documents in a dialer session.
+ * Firestore does not support an ergonomic live `documentId in [...]` query for
+ * a changing client-side array without extra indexes, so each known call gets
+ * its own tiny listener and the results are recombined in session order.
+ */
+export function useLiveCalls(callIds = []) {
+  const key = (callIds || []).join('|');
+  const [state, setState] = useState({ rows: [], loading: Boolean(callIds?.length), error: null });
+  useEffect(() => {
+    const ids = (callIds || []).filter(Boolean).slice(-20);
+    if (!ids.length) { setState({ rows: [], loading: false, error: null }); return undefined; }
+    const values = new Map();
+    let remaining = ids.length;
+    const unsubscribers = ids.map(callId => onSnapshot(
+      doc(db, 'calls', callId),
+      snapshot => {
+        values.set(callId, snapshot.exists() ? { id: snapshot.id, ...snapshot.data() } : null);
+        remaining = Math.max(0, remaining - 1);
+        setState({ rows: ids.map(id => values.get(id)).filter(Boolean), loading: remaining > 0, error: null });
+      },
+      error => setState(current => ({ ...current, loading: false, error: friendlyError(error) }))
+    ));
+    return () => unsubscribers.forEach(unsubscribe => unsubscribe());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+  return state;
+}
+
+/** Live, speaker-labelled transcript for one active call. */
+export function useCallTurns(callId) {
+  const [state, setState] = useState({ rows: [], loading: Boolean(callId), error: null });
+  useEffect(() => {
+    if (!callId) { setState({ rows: [], loading: false, error: null }); return undefined; }
+    const q = query(
+      collection(db, 'calls', callId, 'turns'),
+      orderBy('sequence', 'asc'),
+      limit(250)
+    );
+    return onSnapshot(
+      q,
+      snapshot => setState({ rows: rows(snapshot), loading: false, error: null }),
+      error => setState({ rows: [], loading: false, error: friendlyError(error) })
+    );
+  }, [callId]);
+  return state;
+}
+
 export const useCampaigns = () =>
   useOutboundQuery(() => ({
     cap: LIST_CAP,
@@ -84,8 +118,6 @@ export const useCampaigns = () =>
 export const useProspects = ({ status = 'all', system = 'all' } = {}) =>
   useOutboundQuery(() => {
     const clauses = [];
-    // One equality filter at a time. Combining status + system would need a
-    // third composite index for a filter pair nobody has asked for yet.
     if (status !== 'all') clauses.push(where('lifecycle.status', '==', status));
     else if (system !== 'all') clauses.push(where('source.system', '==', system));
     return {
@@ -133,7 +165,7 @@ export const useTargets = (campaignId, { states = null } = {}) =>
     };
   }, [campaignId, (states || []).join(',')]);
 
-export const useOutboundCalls = (campaignId) =>
+export const useOutboundCalls = campaignId =>
   useOutboundQuery(() => {
     const clauses = campaignId && campaignId !== 'all'
       ? [where('campaignId', '==', campaignId)]
@@ -171,13 +203,6 @@ export async function loadResearchDoc(key) {
 
 let functionsPromise = null;
 
-/**
- * firebase/functions is imported lazily and only once.
- *
- * Every other admin screen does the same (see `setRole` in ../data.js): pulling
- * the callable SDK into the module graph statically would drag it into the
- * admin chunk for anyone who never opens this page.
- */
 async function callable(name, payload) {
   if (!functionsPromise) {
     functionsPromise = import('firebase/functions').then(module => ({
@@ -216,6 +241,7 @@ export const outbound = {
   approveResearch: (key, edits) => callable('approveLeadResearch', { key, edits }),
   prepareTarget: targetId => callable('prepareTargetForDialing', { targetId }),
 
+  // Legacy dialer actions retained for compatibility and emulator rehearsal.
   startPowerSession: campaignId => callable('startPowerDialerSession', { campaignId }),
   startParallelSession: (campaignId, concurrency) =>
     callable('startParallelDialerSession', { campaignId, concurrency }),
@@ -224,16 +250,33 @@ export const outbound = {
   stopSession: (sessionId, reason) => callable('stopDialerSessionCall', { sessionId, reason }),
   disposition: payload => callable('submitCallDisposition', payload),
   callLater: (targetId, minutes, reason) => callable('moveTargetToCallLater', { targetId, minutes, reason }),
-  doNotCall: targetId => callable('markTargetDoNotCall', { targetId })
+  doNotCall: targetId => callable('markTargetDoNotCall', { targetId }),
+
+  // Hybrid Dialer V2.
+  startHybridSession: (campaignId, { agentProfileId, sessionOverride = {}, autoTakeover = false } = {}) =>
+    callable('startHybridDialerSession', { campaignId, agentProfileId, sessionOverride, autoTakeover }),
+  dialHybrid: sessionId => callable('dialHybridTargets', { sessionId }),
+  stopHybridSession: (sessionId, reason = 'ended') => callable('stopHybridDialerSession', { sessionId, reason }),
+  endHybridCall: callId => callable('endHybridCall', { callId }),
+  dncHybridCall: callId => callable('markHybridCallDoNotCall', { callId }),
+  hybridDisposition: payload => callable('submitHybridDisposition', payload),
+  setAutoTakeover: (sessionId, enabled) => callable('setHybridAutoTakeover', { sessionId, enabled }),
+  requestTakeover: callId => callable('requestHybridTakeover', { callId }),
+  beginListen: callId => callable('beginHybridListen', { callId }),
+  stopListen: callId => callable('stopHybridListen', { callId }),
+  voiceToken: () => callable('getHybridVoiceAccessToken'),
+
+  // AI agent profiles / knowledge bases.
+  listAgentProfiles: () => callable('listAIAgentProfiles'),
+  createAgentProfile: profile => callable('createAIAgentProfile', profile),
+  updateAgentProfile: (profileId, profile) => callable('updateAIAgentProfile', { profileId, profile }),
+  archiveAgentProfile: profileId => callable('archiveAIAgentProfile', { profileId }),
+  previewAgentRuntime: payload => callable('previewAIAgentRuntime', payload),
+  listKnowledgeBases: () => callable('listAIKnowledgeBases'),
+  createKnowledgeBase: payload => callable('createAIKnowledgeBase', payload),
+  upsertKnowledgeDocument: payload => callable('upsertAIKnowledgeDocument', payload)
 };
 
-/**
- * Keep a dialer session alive while the tab is open.
- *
- * The server treats a session with no heartbeat for two minutes as abandoned
- * and releases its locks, which is what stops a closed laptop from holding a
- * queue hostage. Beating every 45 seconds leaves room for one lost request.
- */
 export function useSessionHeartbeat(sessionId) {
   const active = useRef(sessionId);
   active.current = sessionId;
@@ -246,7 +289,6 @@ export function useSessionHeartbeat(sessionId) {
   }, [sessionId]);
 }
 
-/** Shared async-action state, so every button in the feature behaves the same. */
 export function useAction() {
   const [state, setState] = useState({ busy: false, error: '', message: '' });
   const run = useCallback(async (fn, successMessage = '') => {
