@@ -15,6 +15,7 @@ import ProviderStatus from './outbound/ProviderStatus';
 import AgentProfiles from './outbound/AgentProfiles';
 import './outbound/outbound.css';
 import './outbound/hybrid.css';
+import './outbound/agents.css';
 
 const TABS = [
   ['campaigns', 'Campaigns'],
