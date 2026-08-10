@@ -11,6 +11,7 @@ let devicePromise = null;
 let currentCall = null;
 let currentMode = '';
 let currentCallId = '';
+let micPermissionGranted = false;
 
 async function buildDevice() {
   const [{ Device }, tokenResult] = await Promise.all([
@@ -42,6 +43,23 @@ export async function hybridVoiceDevice() {
   return devicePromise;
 }
 
+/**
+ * Call this from a user gesture before launching a batch. Browsers are allowed
+ * to show a microphone prompt at that point. The temporary stream is closed
+ * immediately; later server-assigned joins reuse the granted permission.
+ */
+export async function prepareHybridVoice() {
+  await hybridVoiceDevice();
+  if (micPermissionGranted) return true;
+  if (!navigator?.mediaDevices?.getUserMedia) {
+    throw new Error('This browser does not support microphone access.');
+  }
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  stream.getTracks().forEach(track => track.stop());
+  micPermissionGranted = true;
+  return true;
+}
+
 function clearCurrent(call) {
   if (call && currentCall !== call) return;
   currentCall = null;
@@ -50,8 +68,9 @@ function clearCurrent(call) {
 }
 
 /**
- * Join one active call. `listen` joins server-muted and does not request a local
- * microphone track; `human` requests the microphone and joins unmuted.
+ * Join one active call. Listen joins server-muted. Human joins with microphone
+ * audio. `prepareHybridVoice()` should have been called from the batch-launch
+ * gesture before a human call is assigned asynchronously.
  */
 export async function joinHybridCall(callId, mode = 'human') {
   if (!callId) throw new Error('A call id is required.');
@@ -101,5 +120,6 @@ export async function destroyHybridVoice() {
     device.destroy();
   } finally {
     devicePromise = null;
+    micPermissionGranted = false;
   }
 }
