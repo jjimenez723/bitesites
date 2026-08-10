@@ -1,15 +1,15 @@
 // The calling-provider registry.
 //
 // One import site for every dialer, and one place that answers "can this
-// provider actually do what this campaign is asking for?" — `assertSupports`
-// below is what turns an unverified capability into a refusal at campaign save
-// time rather than a surprise halfway through a parallel session.
+// provider actually do what this campaign is asking for?". Hybrid V2 keeps the
+// provider boundary explicit so state-machine correctness remains in BiteSites,
+// while carrier-specific media primitives remain in the adapter.
 
 import { CallingProviderAdapter, CALL_DISPOSITIONS, CALL_EVENT_TYPES, callEvent, eventId } from './adapter.js';
 import { MockDialer } from './mock-dialer.js';
 import { KixieDialer } from './kixie.js';
 import { GoHighLevelDialer } from './gohighlevel.js';
-import { TwilioDialer } from './twilio.js';
+import { HybridTwilioDialer } from './hybrid-twilio.js';
 
 export { CallingProviderAdapter, CALL_DISPOSITIONS, CALL_EVENT_TYPES, callEvent, eventId };
 
@@ -17,7 +17,7 @@ const REGISTRY = new Map([
   [MockDialer.id, MockDialer],
   [KixieDialer.id, KixieDialer],
   [GoHighLevelDialer.id, GoHighLevelDialer],
-  [TwilioDialer.id, TwilioDialer]
+  [HybridTwilioDialer.id, HybridTwilioDialer]
 ]);
 
 export const CALLING_PROVIDER_IDS = [...REGISTRY.keys()];
@@ -45,19 +45,18 @@ const MODE_REQUIREMENTS = {
   parallel: ['parallelDial', 'perLegCallIds', 'humanAnswerDetection', 'cancelCallLeg']
 };
 
-/**
- * Refuse a campaign whose provider cannot do what its mode requires.
- *
- * Parallel is the one that matters. Its whole safety argument is "detect the
- * first human answer, then cancel the rest" — a provider missing either half
- * would leave BiteSites ringing five people with nobody able to hang up the
- * four who lose. So the check is structural, not advisory.
- */
-export function assertSupports(providerId, mode, concurrency = 1) {
+/** Additional V2 requirements for human + AI orchestration. */
+const HYBRID_REQUIREMENTS = [
+  'parallelDial', 'perLegCallIds', 'humanAnswerDetection',
+  'conferenceControl', 'browserAudio', 'listenOnly', 'attachAI', 'detachAI',
+  'signedWebhooks', 'hybridOrchestration'
+];
+
+export function assertSupports(providerId, mode, concurrency = 1, { hybrid = false } = {}) {
   const Provider = REGISTRY.get(String(providerId || ''));
   if (!Provider) return { ok: false, missing: ['unknown_provider'] };
 
-  const required = MODE_REQUIREMENTS[mode] || [];
+  const required = hybrid && mode === 'parallel' ? HYBRID_REQUIREMENTS : (MODE_REQUIREMENTS[mode] || []);
   const missing = required.filter(capability => Provider.capabilities[capability] !== true);
 
   const limit = Number(Provider.capabilities.maxConcurrency || 1);
