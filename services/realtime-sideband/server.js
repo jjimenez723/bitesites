@@ -8,6 +8,8 @@ const OPENAI_WEBHOOK_SECRET = process.env.OPENAI_WEBHOOK_SECRET || '';
 const AI_MEDIA_WEBHOOK_SECRET = process.env.AI_MEDIA_WEBHOOK_SECRET || '';
 const FIREBASE_CONTROL_URL = process.env.FIREBASE_CONTROL_URL
   || 'https://bitesites.org/api/hybrid-sideband-control';
+const FIREBASE_CARRIER_URL = process.env.FIREBASE_CARRIER_URL
+  || new URL('/api/hybrid-ai-carrier-control', FIREBASE_CONTROL_URL).toString();
 const OPENAI_BASE = 'https://api.openai.com/v1';
 
 if (!OPENAI_API_KEY) console.warn('[sideband] OPENAI_API_KEY is not configured');
@@ -22,14 +24,14 @@ const clean = (value, max = 1000) => typeof value === 'string'
   ? value.trim().replace(/\s+/g, ' ').slice(0, max)
   : '';
 
-async function control(callId, action, extra = {}) {
-  const response = await fetch(FIREBASE_CONTROL_URL, {
+async function postFirebase(url, payload) {
+  const response = await fetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'x-ai-media-secret': AI_MEDIA_WEBHOOK_SECRET
     },
-    body: JSON.stringify({ callId, action, ...extra })
+    body: JSON.stringify(payload)
   });
   const text = await response.text();
   let body = {};
@@ -42,6 +44,12 @@ async function control(callId, action, extra = {}) {
   }
   return body;
 }
+
+const control = (callId, action, extra = {}) =>
+  postFirebase(FIREBASE_CONTROL_URL, { callId, action, ...extra });
+
+const carrierControl = (callId, action, extra = {}) =>
+  postFirebase(FIREBASE_CARRIER_URL, { callId, action, ...extra });
 
 function headerValue(headers = [], wanted) {
   const normalized = wanted.toLowerCase();
@@ -73,10 +81,7 @@ const TOOL_SCHEMAS = {
     description: 'Record a qualification fact learned from the prospect. This does not perform any external action.',
     parameters: {
       type: 'object',
-      properties: {
-        field: { type: 'string' },
-        value: { type: 'string' }
-      },
+      properties: { field: { type: 'string' }, value: { type: 'string' } },
       required: ['field', 'value'],
       additionalProperties: false
     }
@@ -87,10 +92,7 @@ const TOOL_SCHEMAS = {
     description: 'Record a sales-interest signal for analytics. This never causes a human transfer by itself.',
     parameters: {
       type: 'object',
-      properties: {
-        signal: { type: 'string' },
-        detail: { type: 'string' }
-      },
+      properties: { signal: { type: 'string' }, detail: { type: 'string' } },
       required: ['signal'],
       additionalProperties: false
     }
@@ -104,10 +106,7 @@ function usableTools(names = []) {
 async function acceptRealtimeCall(realtimeCallId, runtime) {
   const response = await fetch(`${OPENAI_BASE}/realtime/calls/${encodeURIComponent(realtimeCallId)}/accept`, {
     method: 'POST',
-    headers: {
-      Authorization: `Bearer ${OPENAI_API_KEY}`,
-      'Content-Type': 'application/json'
-    },
+    headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       type: 'realtime',
       model: clean(runtime.model, 120) || 'gpt-realtime',
@@ -134,8 +133,7 @@ async function acceptRealtimeCall(realtimeCallId, runtime) {
 async function hangupRealtimeCall(realtimeCallId) {
   if (!realtimeCallId) return;
   await fetch(`${OPENAI_BASE}/realtime/calls/${encodeURIComponent(realtimeCallId)}/hangup`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${OPENAI_API_KEY}` }
+    method: 'POST', headers: { Authorization: `Bearer ${OPENAI_API_KEY}` }
   }).catch(() => {});
 }
 
@@ -148,9 +146,7 @@ async function writeTranscript(session, speaker, text, event = {}) {
   if (!normalized) return;
   session.sequence += 1;
   await control(session.callId, 'transcript', {
-    speaker,
-    text: normalized,
-    sequence: session.sequence,
+    speaker, text: normalized, sequence: session.sequence,
     modelEventId: clean(event.event_id || event.item_id || event.response_id, 200),
     final: true
   }).catch(error => console.warn('[sideband] transcript write failed', error.message));
@@ -171,6 +167,13 @@ async function executeTool(session, event) {
       realtimeCallId: session.realtimeCallId,
       reason: clean(args.reason, 300)
     });
+    // DNC is both a future suppression and an immediate stop. The media service
+    // has no Twilio credential, so it asks Firebase's bounded carrier endpoint
+    // to end only this existing prospect leg.
+    await carrierControl(session.callId, 'end_prospect_call', {
+      actor: session.realtimeCallId,
+      reason: 'explicit_do_not_call'
+    }).catch(error => console.warn('[sideband] DNC carrier end failed', error.message));
     session.endAfterTool = true;
   } else if (name === 'record_qualification') {
     output = await control(session.callId, 'agent_signal', {
@@ -190,11 +193,7 @@ async function executeTool(session, event) {
 
   send(session.ws, {
     type: 'conversation.item.create',
-    item: {
-      type: 'function_call_output',
-      call_id: event.call_id,
-      output: JSON.stringify(output)
-    }
+    item: { type: 'function_call_output', call_id: event.call_id, output: JSON.stringify(output) }
   });
 
   if (session.endAfterTool) {
@@ -224,10 +223,9 @@ async function pollControl(session) {
       return;
     }
 
-    if (controller === 'transitioning' && handoffState === 'announcing' && !session.handoffResponseId && !session.handoffRequested) {
+    if (controller === 'transitioning' && handoffState === 'announcing'
+        && !session.handoffResponseId && !session.handoffRequested) {
       session.handoffRequested = true;
-      // Smooth handoff has priority over whatever the AI was saying. Cut the
-      // current audio first so the prospect hears one clean transition sentence.
       send(session.ws, { type: 'response.cancel' });
       send(session.ws, { type: 'output_audio_buffer.clear' });
       send(session.ws, {
@@ -258,12 +256,9 @@ function startSidebandSocket({ callId, realtimeCallId, runtime }) {
 
   ws.on('open', async () => {
     await control(callId, 'attached', {
-      realtimeCallId,
-      model: runtime.model,
-      voice: runtime.voice
+      realtimeCallId, model: runtime.model, voice: runtime.voice
     }).catch(error => console.warn('[sideband] attach acknowledgement failed', error.message));
 
-    // Overflow calls should not sit in silence waiting for the prospect to talk.
     send(ws, {
       type: 'response.create',
       response: {
@@ -293,9 +288,11 @@ function startSidebandSocket({ callId, realtimeCallId, runtime }) {
         });
         send(ws, { type: 'response.create' });
       });
-    } else if (event.type === 'response.created' && event.response?.metadata?.response_purpose === 'bitesites_handoff') {
+    } else if (event.type === 'response.created'
+        && event.response?.metadata?.response_purpose === 'bitesites_handoff') {
       session.handoffResponseId = clean(event.response.id, 200);
-    } else if (event.type === 'output_audio_buffer.stopped' && session.handoffResponseId && event.response_id === session.handoffResponseId) {
+    } else if (event.type === 'output_audio_buffer.stopped'
+        && session.handoffResponseId && event.response_id === session.handoffResponseId) {
       void control(callId, 'handoff_phrase_spoken', { realtimeCallId })
         .catch(error => console.warn('[sideband] handoff completion signal failed', error.message));
       session.handoffResponseId = '';
@@ -330,14 +327,12 @@ async function handleIncoming(event) {
   }
   if (sessions.has(callId)) return;
 
-  let prepared;
   try {
-    prepared = await control(callId, 'prepare');
+    const prepared = await control(callId, 'prepare');
     await acceptRealtimeCall(realtimeCallId, prepared.runtime);
     startSidebandSocket({ callId, realtimeCallId, runtime: prepared.runtime });
   } catch (error) {
     console.error('[sideband] could not accept realtime call', callId, error.message);
-    // Reject/terminate the OpenAI leg rather than leaving a SIP call ringing.
     await fetch(`${OPENAI_BASE}/realtime/calls/${encodeURIComponent(realtimeCallId)}/reject`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
