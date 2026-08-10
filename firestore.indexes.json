@@ -172,14 +172,6 @@
         { "fieldPath": "createdAt", "order": "DESCENDING" }
       ]
     },
-    { "//": "lead-discovery.pruneRawResults — retention sweep across all jobs.",
-      "collectionGroup": "results",
-      "queryScope": "COLLECTION_GROUP",
-      "fields": [
-        { "fieldPath": "expiresAt", "order": "ASCENDING" }
-      ]
-    },
-
     {
       "collectionGroup": "outboundCampaigns",
       "queryScope": "COLLECTION",
@@ -262,5 +254,13 @@
       ]
     }
   ],
-  "fieldOverrides": []
+  "fieldOverrides": [
+    {
+      "collectionGroup": "results",
+      "fieldPath": "expiresAt",
+      "indexes": [
+        { "order": "ASCENDING", "queryScope": "COLLECTION_GROUP" }
+      ]
+    }
+  ]
 }

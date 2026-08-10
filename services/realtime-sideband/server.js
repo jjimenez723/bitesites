@@ -342,10 +342,10 @@ async function handleIncoming(event) {
 }
 
 // Raw body is required for OpenAI webhook signature verification.
-app.post('/openai/webhook', express.text({ type: '*/*', limit: '1mb' }), (req, res) => {
+app.post('/openai/webhook', express.text({ type: '*/*', limit: '1mb' }), async (req, res) => {
   let event;
   try {
-    event = openai.webhooks.unwrap(req.body, req.headers);
+    event = await openai.webhooks.unwrap(req.body, req.headers);
   } catch (error) {
     console.warn('[sideband] invalid OpenAI webhook signature', error.message);
     res.status(400).json({ error: 'invalid-signature' });

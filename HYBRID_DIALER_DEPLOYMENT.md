@@ -2,6 +2,31 @@
 
 This runbook takes the code in `agent/hybrid-ai-dialer-v2` from a green build to a controlled live deployment. Do not place production calls until the final verification section passes with numbers owned or explicitly authorized by the project team.
 
+## Automated setup
+
+Use the repository automation instead of running each workspace manually:
+
+```bash
+npm run setup                # Node/dependencies/build/tests plus non-secret preflight
+npm run preflight:hybrid     # local + Firebase/Google Cloud readiness report
+npm run configure:hybrid     # consume exported credentials without writing them to disk
+npm run dry-run:hybrid       # validate the targeted Firebase deployment without changes
+npm run bootstrap:sideband   # create a scale-to-zero URL before the OpenAI webhook exists
+npm run deploy:hybrid        # gated deploy after preflight and validation pass
+```
+
+`configure:hybrid` reads the secret names listed below from the current process environment, sends populated values directly to Firebase Secret Manager over stdin, and never prints or writes those values. It also generates `AI_MEDIA_WEBHOOK_SECRET` when that shared secret does not exist. Set `OPENAI_PROJECT_ID` in the same process; the script writes only that public identifier and `PUBLIC_APP_URL` to the ignored Functions parameter file.
+
+When `TWILIO_ACCOUNT_SID` and `TWILIO_AUTH_TOKEN` are supplied and no browser key or TwiML App is stored yet, the command verifies the Twilio account, creates/reuses the `BiteSites Hybrid Voice` TwiML App with the production callback, creates the browser Voice API key, and stores the returned one-time key secret directly in Secret Manager.
+
+For example, export the values in your current terminal (do not save this command in shell history), run `npm run configure:hybrid`, and then unset them. The command is incremental: existing secrets remain in place and only supplied values receive a new version.
+
+The deploy command targets only the Hybrid V2 Functions plus Hosting and Firestore. It does not redeploy unrelated legacy Kixie, discovery, email, or lifecycle functions, so those providers do not need to be reconfigured for this release.
+During Firebase analysis, the command temporarily selects `functions/hybrid-index.js` and always restores the normal package entrypoint in a `finally` block.
+The Cloud Run phase creates or reuses a dedicated `bitesites-sideband` service account and grants it access only to the three sideband secrets.
+
+OpenAI webhook setup is intentionally two-phase. After the initial credentials are configured, `bootstrap:sideband` deploys the service with a nonfunctional placeholder webhook secret and `min=0`, verifies `/health`, and prints the webhook URL. Create the `realtime.call.incoming` webhook at that URL, store its real signing secret with `configure:hybrid`, and only then run the final deploy. The final deploy replaces the placeholder with the Secret Manager binding and sets `min=1` for persistent sideband sockets.
+
 ## 1. Production architecture
 
 - **Firebase Functions + Firestore** are the control plane: authentication, call ownership, DNC, call state, AI profiles, prompt compilation, transcripts, audit events, voicemail policy, and carrier control.

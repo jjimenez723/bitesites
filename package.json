@@ -3,7 +3,17 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": "22"
+  },
   "scripts": {
+    "setup": "node scripts/hybrid.mjs setup",
+    "preflight:hybrid": "node scripts/hybrid.mjs preflight",
+    "configure:hybrid": "node scripts/hybrid.mjs configure",
+    "validate:hybrid": "node scripts/hybrid.mjs validate",
+    "dry-run:hybrid": "node scripts/hybrid.mjs dry-run",
+    "bootstrap:sideband": "node scripts/hybrid.mjs bootstrap-sideband",
+    "deploy:hybrid": "node scripts/hybrid.mjs deploy",
     "dev": "vite",
     "build": "vite build",
     "check": "npm run build",
@@ -31,7 +41,8 @@
     "test:enrichment": "firebase emulators:exec --only firestore --project demo-bitesites \"node functions/lead-enrichment.test.mjs\"",
     "test:hybrid-dialer": "node --test functions/hybrid-call-orchestration.test.mjs",
     "test:agent-runtime": "node --test functions/agent-runtime.test.mjs",
-    "test:all": "npm run build && npm run test:prospects && npm run test:dedupe && npm run test:migration && npm run test:email && npm run test:rules && npm run test:voice && npm run test:import && npm run test:lifecycle && npm run test:discovery && npm run test:conversion && npm run test:outbound && npm run test:outbound-webhook && npm run test:enrichment && npm run test:hybrid-dialer && npm run test:agent-runtime",
+    "test:all": "node scripts/hybrid.mjs test-all",
+    "test:all:raw": "npm run build && npm run test:prospects && npm run test:dedupe && npm run test:migration && npm run test:email && npm run test:rules && npm run test:voice && npm run test:import && npm run test:lifecycle && npm run test:discovery && npm run test:conversion && npm run test:outbound && npm run test:outbound-webhook && npm run test:enrichment && npm run test:hybrid-dialer && npm run test:agent-runtime",
     "role": "node scripts/set-role.mjs",
     "ship": "sh scripts/ship.sh",
     "start": "node server.js",

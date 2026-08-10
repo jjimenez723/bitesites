@@ -5,14 +5,14 @@
   "type": "module",
   "main": "v2-index.js",
   "scripts": {
-    "check": "node --check v2-index.js && node --check hybrid-dialer-api.js && node --check hybrid-session-api.js && node --check hybrid-call-orchestration.js && node --check hybrid-ai-sip-dispatch.js && node --check hybrid-sideband-control.js && node --check hybrid-ai-carrier-control.js && node --check hybrid-voicemail.js && node --check agent-runtime.js"
+    "check": "node --check v2-index.js && node --check hybrid-index.js && node --check hybrid-dialer-api.js && node --check hybrid-session-api.js && node --check hybrid-call-orchestration.js && node --check hybrid-ai-sip-dispatch.js && node --check hybrid-sideband-control.js && node --check hybrid-ai-carrier-control.js && node --check hybrid-voicemail.js && node --check agent-runtime.js"
   },
   "engines": {
     "node": "22"
   },
   "dependencies": {
-    "firebase-admin": "^13.0.0",
-    "firebase-functions": "^6.1.0",
+    "firebase-admin": "^14.2.0",
+    "firebase-functions": "^7.3.2",
     "google-auth-library": "^10.9.1"
   }
 }

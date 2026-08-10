@@ -18,8 +18,11 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Install root dependencies and refresh lockfile
-        run: npm install
+      - name: Install all dependencies from lockfiles
+        run: |
+          npm ci
+          npm --prefix functions ci
+          npm --prefix services/realtime-sideband ci
 
       - name: Secret scan
         run: npm run secrets:check
@@ -33,24 +36,8 @@ jobs:
       - name: Agent runtime tests
         run: npm run test:agent-runtime
 
-      - name: Install and check Firebase Functions
-        working-directory: functions
-        run: |
-          npm install
-          npm run check
+      - name: Check Firebase Functions
+        run: npm --prefix functions run check
 
-      - name: Install and check Realtime sideband
-        working-directory: services/realtime-sideband
-        run: |
-          npm install
-          npm run check
-
-      - name: Upload generated lockfiles
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: hybrid-v2-lockfiles
-          if-no-files-found: warn
-          path: |
-            package-lock.json
-            services/realtime-sideband/package-lock.json
+      - name: Check Realtime sideband
+        run: npm --prefix services/realtime-sideband run check
