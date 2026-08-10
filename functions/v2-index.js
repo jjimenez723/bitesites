@@ -4,3 +4,4 @@
 
 export * from './index.js';
 export * from './hybrid-dialer-api.js';
+export * from './hybrid-session-api.js';
