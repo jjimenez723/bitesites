@@ -1,6 +1,6 @@
 import React, { Suspense, lazy, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Link, useNavigate } from 'react-router-dom';
 import { submitLead } from './lib/leads';
 import { analyticsDuration, startAnalytics, trackEvent } from './lib/analytics';
 import { finishChat, logChatMessage, startChat } from './lib/conversations';
@@ -8,6 +8,7 @@ import Terms from './pages/Terms';
 import Privacy from './pages/Privacy';
 import Feedback from './pages/Feedback';
 import EmailPreferences from './pages/EmailPreferences';
+import ThankYou from './pages/ThankYou';
 import { BitMascot } from './components/BitMascot';
 import { InteractiveNebulaShader } from './components/InteractiveNebulaShader';
 import { MeshFieldBackdrop } from './components/MeshFieldBackdrop';
@@ -69,6 +70,7 @@ import './team.css';
 import './voice-receptionist.css';
 import './agent-duo.css';
 import './legal.css';
+import './thank-you.css';
 
 const aiSolutions = [
   ['✦', 'AI Receptionists', 'A voice or chat agent that answers every call and message, books appointments, and routes real leads to your team — even after hours.'],
@@ -476,6 +478,7 @@ const thinkingLines = [
 ];
 
 function AiReceptionist({ onClose, origin, initialAnswer }) {
+  const navigate = useNavigate();
   const [step, setStep] = useState(initialAnswer ? 1 : -1);
   const [answers, setAnswers] = useState(() => initialAnswer ? { services: initialAnswer.value } : {});
   const [status, setStatus] = useState({ text: '', kind: '' });
@@ -617,6 +620,7 @@ function AiReceptionist({ onClose, origin, initialAnswer }) {
       trackEvent('lead_created', { label: 'Bit chat — project notes', leadId: leadIdRef.current, source: 'bit_chat' });
       trackEvent('form_submit', { label: 'Bit chat — project notes', leadId: leadIdRef.current, source: 'bit_chat' });
       setStatus({ text: 'You’re all set. Our team will follow up shortly.', kind: 'success' });
+      navigate('/thank-you?source=bit', { replace: true });
     } catch (error) {
       outcomeRef.current = 'failed';
       trackEvent('form_error', { label: 'Bit chat — project notes', step: 'submit', reason: String(error?.code || 'submission_failed').slice(0, 200) });
@@ -650,6 +654,7 @@ function AiReceptionist({ onClose, origin, initialAnswer }) {
 }
 
 function App() {
+  const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
   const [tab, setTab] = useState('web');
   const [modal, setModal] = useState(null);
@@ -1631,6 +1636,7 @@ function App() {
       trackEvent('lead_created', { label: 'Start your project', leadId, source: 'intake_form' });
       trackEvent('form_submit', { label: 'Start your project', leadId, source: 'intake_form' });
       setStatus({ text: 'Thanks — your project request has been received. We’ll be in touch soon.', kind: 'success' });
+      navigate('/thank-you?source=form', { replace: true });
     } catch (error) {
       trackEvent('form_error', { label: 'Start your project', step: 'submit', reason: String(error?.code || 'submission_failed').slice(0, 200) });
       setStatus({ text: error.message || 'Unable to submit the form. Please try again.', kind: 'error' });
@@ -1918,7 +1924,7 @@ function App() {
     </main>
     <footer className="site-footer"><div className="wrap footer-inner"><div className="footer-links footer-links-left"><a href="#services">Services</a><a href="#about">About</a><a href="#team">Team</a><a href="#pricing">Pricing</a></div><MorphingLogo location="footer" /><div className="footer-links footer-links-right"><a href="#start">Start a Project</a><Link to="/terms">Terms</Link><Link to="/privacy">Privacy</Link></div><div className="footer-copy">© 2026 BiteSites. All rights reserved.</div></div></footer>
     {modal && <div className="modal-backdrop" onClick={() => setModal(null)}><div className="detail-panel" role="dialog" aria-modal="true" onClick={event => event.stopPropagation()}><button className="close" onClick={() => setModal(null)} aria-label="Close">×</button><div className="detail-hero"><Eyebrow gradient={modal === 'ai'}>Services</Eyebrow><h2>{detailCopy[modal][0]}</h2><p>{detailCopy[modal][1]}</p></div><div className="detail-content"><h3>What’s included</h3><ul className="detail-list">{detailCopy[modal][2].map(item => <li key={item}>{item}</li>)}</ul><div className="hero-actions"><Button href="#start" variant="ai" onClick={() => { setSelectedServices([serviceFormValues[modal]]); setModal(null); }}>Start Your Project</Button><Button href="#pricing" variant="ghost" onClick={() => { setTab(modal); setModal(null); }}>See pricing</Button></div></div></div></div>}
-    <VoiceAIReceptionist open={voiceAgentOpen} onClose={() => setVoiceAgentOpen(false)} />
+    <VoiceAIReceptionist open={voiceAgentOpen} onClose={() => setVoiceAgentOpen(false)} onComplete={() => navigate('/thank-you?source=byte', { replace: true })} />
     {receptionistOpen && <AiReceptionist origin={chatOrigin} initialAnswer={receptionistInitialAnswer} onClose={closeReceptionist} />}
     {!receptionistOpen && !voiceAgentOpen && !voiceSectionVisible && <div className={`chat-launcher ${receptionistNudge ? 'nudged' : ''}`}><p>Need help scoping a project?</p><button type="button" onClick={openReceptionist} aria-label="Open Bit, the AI receptionist"><BitMascot className="bit-launcher-avatar" /><em>Chat with Bit</em></button></div>}
   </>;
@@ -1938,6 +1944,7 @@ createRoot(document.getElementById('root')).render(
       <Route path="/privacy" element={<Privacy />} />
       <Route path="/feedback" element={<Feedback />} />
       <Route path="/email-preferences" element={<EmailPreferences />} />
+      <Route path="/thank-you" element={<ThankYou />} />
       <Route
         path="/admin/*"
         element={<Suspense fallback={<div className="admin-boot">Loading dashboard…</div>}><AdminApp /></Suspense>}

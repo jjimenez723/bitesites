@@ -124,6 +124,7 @@ export const startHybridDialerSession = onCall({ ...callOptions, secrets: HYBRID
     rep: { state: 'available', activeCallId: '', listeningCallId: '' },
     takeover: { autoEnabled: request.data?.autoTakeover === true },
     agentProfileId: requestedProfileId,
+    agentProfileName: clean(profileSnapshot.get('name'), 120),
     agentProfileVersion: Math.max(1, Number(profileSnapshot.get('version')) || 1),
     agentSessionOverride: sessionOverride,
     updatedAt: FieldValue.serverTimestamp()
@@ -195,6 +196,7 @@ export const dialHybridTargets = onCall({ ...callOptions, timeoutSeconds: 180, s
       },
       agent: {
         profileId,
+        profileName: clean(session.agentProfileName, 120),
         profileVersion: Math.max(1, Number(session.agentProfileVersion) || 1),
         effectiveConfigHash: '', model: '', voice: ''
       },

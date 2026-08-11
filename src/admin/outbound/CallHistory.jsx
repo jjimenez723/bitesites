@@ -1,6 +1,6 @@
 // Outbound call history.
 //
-// Reads the same `calls` collection the inbound Byte calls live in — there is
+// Reads the same `calls` collection the inbound voice AI calls live in — there is
 // deliberately no second call-history system. Transcripts stay in
 // `calls/{id}/turns`, so the existing Transcript component renders them without
 // modification.
@@ -10,6 +10,7 @@ import { useOutboundCalls, LIST_CAP } from './data';
 import { Panel, DetailRows } from '../Panel';
 import Transcript from '../Transcript';
 import { StatusPill, formatWhen, formatDuration, providerLabel, Empty, QueryState } from './SourceBadge';
+import { receivingAgent, receivingAgentLabel } from '../voice-attribution';
 
 export default function CallHistory({ campaignId, campaigns = [], onSelectCampaign }) {
   const [openId, setOpenId] = useState(null);
@@ -22,7 +23,7 @@ export default function CallHistory({ campaignId, campaigns = [], onSelectCampai
         <div className="card-head">
           <div>
             <h3>Outbound call history</h3>
-            <p>Stored in the same collection as inbound Byte calls, with a direction of “outbound”.</p>
+            <p>Stored in the same collection as inbound voice AI calls, with a direction of “outbound”.</p>
           </div>
           <div className="card-head-actions">
             <select className="admin-select" value={campaignId || 'all'} onChange={event => onSelectCampaign?.(event.target.value === 'all' ? '' : event.target.value)}>
@@ -42,7 +43,7 @@ export default function CallHistory({ campaignId, campaigns = [], onSelectCampai
             <table className="admin-table">
               <thead>
                 <tr>
-                  <th>Started</th><th>Contact</th><th>Operator</th><th>Mode</th>
+                  <th>Started</th><th>Contact</th><th>Agent</th><th>Operator</th><th>Mode</th>
                   <th>Provider</th><th>Status</th><th>Disposition</th>
                   <th className="num">Duration</th><th className="num">Attempt</th><th>Recording</th>
                 </tr>
@@ -52,6 +53,7 @@ export default function CallHistory({ campaignId, campaigns = [], onSelectCampai
                   <tr key={row.id} className={`clickable ${openId === row.id ? 'selected' : ''}`} onClick={() => setOpenId(row.id)}>
                     <td className="cell-strong">{formatWhen(row.startedAt)}</td>
                     <td className="cell-dim cell-wrap">{(row.prospectId || row.leadId || row.targetId || '').slice(0, 24)}</td>
+                    <td className="cell-dim cell-wrap">{receivingAgentLabel(row)}</td>
                     <td className="cell-dim">{row.operator || '—'}</td>
                     <td className="cell-dim">{row.dialerMode || '—'}</td>
                     <td className="cell-dim">{providerLabel(row.provider)}</td>
@@ -82,6 +84,8 @@ export default function CallHistory({ campaignId, campaigns = [], onSelectCampai
             rows={[
               ['Status', <StatusPill status={open.status} />],
               ['Disposition', open.disposition],
+              ['Agent', receivingAgent(open).agentName],
+              ['Client', receivingAgent(open).clientName],
               ['Operator', open.operator],
               ['Dialer mode', open.dialerMode],
               ['Provider', providerLabel(open.provider)],
@@ -109,7 +113,7 @@ export default function CallHistory({ campaignId, campaigns = [], onSelectCampai
             <div style={{ marginTop: 16 }}>
               <div className="panel-section-label">Transcript</div>
               <div style={{ marginTop: 12 }}>
-                <Transcript collection="calls" sub="turns" agent="Byte" id={open.id} />
+                <Transcript collection="calls" sub="turns" agent={receivingAgent(open).agentName} id={open.id} />
               </div>
             </div>
           )}

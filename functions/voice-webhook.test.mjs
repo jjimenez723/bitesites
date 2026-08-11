@@ -60,6 +60,9 @@ const browserCall = await db.collection('calls').add({
 
 const payload = {
   callId: 'ghl-call-0001',
+  agentId: 'bella-agent-001',
+  agentName: 'Bella',
+  agentBusinessName: 'Stone Bellismo',
   sid: 'sid-abc123',
   duration: '3:42',
   contact: {
@@ -96,6 +99,9 @@ check('service read from tag', JSON.stringify(lead?.services) === '["ai_automati
 check('duration parsed from mm:ss', lead?.voice?.durationSec === 222, String(lead?.voice?.durationSec));
 check('summary carried', Boolean(lead?.voice?.summary));
 check('recording carried', lead?.voice?.recordingUrl === 'https://example.com/rec/1.mp3');
+check('receiving agent carried to lead',
+  lead?.voice?.receivingAgent?.agentName === 'Bella'
+  && lead?.voice?.receivingAgent?.clientName === 'Stone Bellisimo');
 check('email key always present', 'email' in (lead || {}));
 check('crm marked as origin', lead?.crm?.reason === 'origin-gohighlevel');
 check('status is new', lead?.status === 'new', lead?.status);
@@ -104,6 +110,9 @@ const callAfter = await db.collection('calls').doc(first.body.callId).get();
 check('call links back to the lead', callAfter.get('leadId') === first.body.leadId);
 check('call closed as completed', callAfter.get('status') === 'completed', callAfter.get('status'));
 check('call carries the provider id', callAfter.get('providerCallId') === 'ghl-call-0001');
+check('receiving agent carried to call',
+  callAfter.get('receivingAgent.agentName') === 'Bella'
+  && callAfter.get('receivingAgent.clientName') === 'Stone Bellisimo');
 
 const turns = await db.collection('calls').doc(first.body.callId).collection('turns').orderBy('at').get();
 check('3 transcript turns written', turns.size === 3, String(turns.size));

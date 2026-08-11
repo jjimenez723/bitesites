@@ -9,3 +9,4 @@ export * from './hybrid-ai-sip-dispatch.js';
 export * from './hybrid-sideband-control.js';
 export * from './hybrid-ai-carrier-control.js';
 export * from './hybrid-voicemail.js';
+export * from './twilio-compliance.js';

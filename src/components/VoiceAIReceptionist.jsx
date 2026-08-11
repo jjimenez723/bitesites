@@ -166,7 +166,7 @@ const STATUS_TEXT = {
   unavailable: 'Voice agent unavailable',
 };
 
-export function VoiceAIReceptionist({ open, onClose }) {
+export function VoiceAIReceptionist({ open, onClose, onComplete }) {
   const [callState, setCallState] = useState('loading');
   const [starting, setStarting] = useState(false);
   const [elapsed, setElapsed] = useState(0);
@@ -202,7 +202,10 @@ export function VoiceAIReceptionist({ open, onClose }) {
       reason: message ? String(message).slice(0, 200) : undefined,
       value: Math.max(0, Math.round(durationSec))
     });
-    if (resolvedOutcome === 'completed' && durationSec >= 10) setCompletedCallId(callId);
+    if (resolvedOutcome === 'completed' && durationSec >= 10) {
+      setCompletedCallId(callId);
+      onComplete?.();
+    }
     callStartRef.current = 0;
     callConnectedRef.current = false;
   };
@@ -307,6 +310,12 @@ export function VoiceAIReceptionist({ open, onClose }) {
       closeCallRecord('blocked', 'call did not connect — microphone likely denied');
     }
   }, [callState, connected, starting]);
+
+  // A remote hang-up reaches the widget as `ended` without pressing our local
+  // button, so close the record and continue into the same thank-you flow.
+  useEffect(() => {
+    if (callState === 'ended') closeCallRecord('auto');
+  }, [callState]);
 
   useEffect(() => {
     if (!connected) return undefined;

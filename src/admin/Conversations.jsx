@@ -12,10 +12,11 @@ import React, { useState } from 'react';
 import { useConversations, toDate } from './data';
 import { Panel, DetailRows, Pill } from './Panel';
 import Transcript from './Transcript';
+import { receivingAgent, receivingAgentLabel } from './voice-attribution';
 
 const TABS = [
   { key: 'chats', label: 'Bit · chat', sub: 'messages', agent: 'Bit' },
-  { key: 'calls', label: 'Byte · voice', sub: 'turns', agent: 'Byte' }
+  { key: 'calls', label: 'Voice calls', sub: 'turns', agent: 'Voice agent' }
 ];
 
 // Direction filter for the voice tab. Applied client-side over the page we
@@ -122,6 +123,7 @@ export default function Conversations() {
                   <tr>
                     <th>Started</th>
                     {isVoice && <th>Direction</th>}
+                    <th>Received by</th>
                     <th>Page</th>
                     <th className="num">{tab.key === 'chats' ? 'Messages' : 'Duration'}</th>
                     <th>Outcome</th>
@@ -143,6 +145,7 @@ export default function Conversations() {
                           {row.operator ? ` · ${row.operator}` : ''}
                         </td>
                       )}
+                      <td className="cell-dim cell-wrap">{receivingAgentLabel(row)}</td>
                       {/* An outbound call has no page — it did not start on the site. */}
                       <td className="cell-dim cell-wrap">{row.path || (directionOf(row) === 'outbound' ? '—' : '/')}</td>
                       <td className="num">
@@ -162,13 +165,15 @@ export default function Conversations() {
 
       {open && (
         <Panel
-          title={`${tab.agent} · ${when(open.startedAt)}`}
+          title={`${receivingAgent(open).agentName} · ${when(open.startedAt)}`}
           subtitle={open.path || '/'}
           onClose={() => setOpenId(null)}
         >
           <DetailRows
             rows={[
               ['Status', <Pill kind={open.status}>{open.status}</Pill>],
+              ['Received by', receivingAgent(open).agentName],
+              ['Client', receivingAgent(open).clientName],
               ...(isVoice ? [
                 ['Direction', directionOf(open)],
                 ['Operator', open.operator],
@@ -211,7 +216,7 @@ export default function Conversations() {
           <div>
             <div className="panel-section-label">Transcript</div>
             <div style={{ marginTop: 12 }}>
-              <Transcript collection={tab.key} sub={tab.sub} agent={tab.agent} id={open.id} />
+              <Transcript collection={tab.key} sub={tab.sub} agent={receivingAgent(open).agentName} id={open.id} />
             </div>
           </div>
         </Panel>

@@ -186,7 +186,7 @@ outboundCallEvents/{id}         Webhook idempotency ledger. Unreadable and unwri
 ```
 
 **Why `prospects` is not `leads`.** A `lead` is someone who engaged with
-BiteSites — a form, a Bit chat, a Byte call — and the Overview and Performance
+BiteSites — a form, a Bit chat, or a Voice AI call — and the Overview and Performance
 screens count it as a website conversion. A scraped business engaged with
 nothing. Importing 40,000 of them into `leads` would destroy the funnel numbers,
 the response-time metrics and the conversion reporting all at once.
@@ -362,7 +362,7 @@ firebase functions:secrets:set VOICE_WEBHOOK_SECRET
 npm run deploy:functions                  # secrets bind at deploy time
 ```
 
-2. In the GoHighLevel workflow that runs when a Byte call ends, add a **Custom Webhook**
+2. In the GoHighLevel workflow that runs when a Voice AI call ends, add a **Custom Webhook**
    action:
 
 ```
@@ -384,7 +384,9 @@ Field names are flexible — `call_id`, `contact.email`, `first_name` + `last_na
 `recording_url`, `call_duration` and several other spellings are all understood, and
 anything nested under `contact` or `customData` is read too. Only two things matter:
 `callId` (or `call_id`) makes redelivery safe, and at least one of `email` / `phone` is
-what turns a call into a lead.
+what turns a call into a lead. The webhook also accepts `agentId`, `agentName`, and
+`agentBusinessName` when those values are available in the workflow; the scheduled
+call-log import resolves them directly from GHL's `agentId` either way.
 
 **Behaviour worth knowing:**
 
@@ -427,11 +429,17 @@ GET services.leadconnectorhq.com/voice-ai/dashboard/call-logs
 → { callLogs[], total, page, pageSize }
 ```
 
-A call log carries `id`, `contactId`, `createdAt`, `duration` (seconds), `summary`,
+A call log carries `id`, `agentId`, `contactId`, `createdAt`, `duration` (seconds), `summary`,
 `transcript` (`bot:` / `human:` lines), `trialCall`, `fromNumber` (real calls only), and
 `extractedData { name, email, otherDetails, address }`. Contact details come from
 `extractedData` — the agent pulls them out during the conversation — so no
 `contacts.readonly` scope is needed.
+
+The importer also reads `GET /voice-ai/agents` and resolves each call's `agentId` to
+the receiving agent and client. Both `calls.receivingAgent` and
+`leads.voice.receivingAgent` retain `{ agentId, agentName, clientName }`, which keeps
+Bella / Stone Bellisimo separate from Byte / Bite Sites throughout the dashboard and
+post-conversation email flow.
 
 **Three API traps, all of them silent:**
 
@@ -600,7 +608,7 @@ request, previews HTML in a sandboxed iframe and records outcomes in `emailDeliv
 System templates can be edited but not deleted. Password-reset requests return the same
 response for existing and unknown addresses and are rate-limited per normalized email.
 
-Feedback requests are queued once per Bit chat or Byte call, sent after roughly 30 minutes,
+Feedback requests are queued once per Bit chat or Voice AI call, sent after roughly 30 minutes,
 and expire after 30 days. A rating link opens `/feedback` and never records a score from the
 initial GET, so mailbox security scanners cannot submit feedback. Ratings of 1 or 2 create a
 throttled internal operational alert. The on-page rating uses the same callable and stores the

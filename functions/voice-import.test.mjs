@@ -129,6 +129,10 @@ check('created leads', leads.size > 0, `${leads.size} leads`);
 check('one lead per contact', leads.size === dry.body.distinctContacts,
   `${leads.size} leads vs ${dry.body.distinctContacts} contacts`);
 check('every lead is byte_voice', leads.docs.every(d => d.get('source') === 'byte_voice'));
+check('every lead identifies its receiving agent and client', leads.docs.every(d =>
+  d.get('voice.receivingAgent.agentId')
+  && d.get('voice.receivingAgent.agentName')
+  && d.get('voice.receivingAgent.clientName')));
 check('every lead is reachable', leads.docs.every(d => d.get('email') || d.get('phone')));
 check('no demo leads imported', leads.docs.every(d => d.get('voice.demo') === false));
 check('email key always present', leads.docs.every(d => 'email' in d.data()));
@@ -157,6 +161,12 @@ check('transcripts stored against the calls', withTranscript.length > 0,
   `${withTranscript.length} leads have a transcript`);
 
 const turnsSnap = await db.collectionGroup('turns').get();
+const allCalls = await db.collection('calls').get();
+const importedCalls = allCalls.docs.filter(d => d.get('providerCallId'));
+check('every imported call identifies its receiving agent and client', importedCalls.every(d =>
+  d.get('receivingAgent.agentId')
+  && d.get('receivingAgent.agentName')
+  && d.get('receivingAgent.clientName')));
 const transcriptRoles = new Set(
   turnsSnap.docs.filter(d => d.get('kind') === 'transcript').map(d => d.get('role'))
 );

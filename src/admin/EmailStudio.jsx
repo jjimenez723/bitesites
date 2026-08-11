@@ -25,7 +25,7 @@ const VARIABLE_LIBRARY = {
   company: { label: 'Company', hint: 'The recipient’s company name.' },
   admin_url: { label: 'Admin URL', hint: 'A link back to the admin dashboard.' },
   preference_url: { label: 'Email preferences URL', hint: 'A unique recipient link added automatically to broadcasts and feedback requests.', automatic: true },
-  agent_name: { label: 'Agent name', hint: 'Bit or Byte, based on the completed conversation.', automatic: true },
+  agent_name: { label: 'Agent name', hint: 'The agent who handled the completed conversation.', automatic: true },
   source_label: { label: 'Inquiry source', hint: 'The form or agent that created the inquiry.', automatic: true },
   service_names: { label: 'Services', hint: 'A readable list of services from the inquiry.', automatic: true },
   consultation_url: { label: 'Consultation URL', hint: 'The BiteSites consultation booking link.', automatic: true },

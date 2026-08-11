@@ -10,6 +10,7 @@ import { Link } from 'react-router-dom';
 import { useLeads, setLeadStatus, saveLeadCommercial, loadLeadActivities, toDate } from './data';
 import { Panel, DetailRows, Pill } from './Panel';
 import Transcript from './Transcript';
+import { receivingAgent, receivingAgentLabel } from './voice-attribution';
 
 const STATUSES = ['new', 'contacted', 'qualified', 'booked', 'proposal', 'won', 'lost'];
 const firstWord = value => String(value || '').trim().split(/\s+/)[0] || '';
@@ -25,7 +26,7 @@ const firstWord = value => String(value || '').trim().split(/\s+/)[0] || '';
 const SOURCE_LABELS = {
   intake_form: 'Intake form',
   bit_chat: 'Bit chat',
-  byte_voice: 'Byte call',
+  byte_voice: 'Voice AI call',
   cold_call: 'Cold call',
   outbound: 'Outbound campaign'
 };
@@ -341,6 +342,7 @@ export default function Leads() {
                     <th>Name</th>
                     <th>Services</th>
                     <th>Source</th>
+                    <th>Received by</th>
                     <th>Status</th>
                     <th>CRM</th>
                     <th>Received</th>
@@ -363,6 +365,9 @@ export default function Leads() {
                         {/* A website-demo caller is still a lead, but worth
                             telling apart from someone who dialled the number. */}
                         {lead.voice?.demo && <span className="chip" style={{ marginLeft: 6 }}>demo</span>}
+                      </td>
+                      <td className="cell-dim cell-wrap">
+                        {lead.source === 'byte_voice' ? receivingAgentLabel(lead) : '—'}
                       </td>
                       <td><Pill kind={lead.status || 'new'}>{lead.status || 'new'}</Pill></td>
                       <td className="cell-dim">
@@ -407,6 +412,10 @@ export default function Leads() {
               ['Email', open.email ? <a href={`mailto:${open.email}`}>{open.email}</a> : ''],
               ['Phone', open.phone ? <a href={`tel:${open.phone}`}>{open.phone}</a> : ''],
               ['Company', open.businessName],
+              ...(open.source === 'byte_voice' ? [
+                ['Received by', receivingAgent(open).agentName],
+                ['Client', receivingAgent(open).clientName]
+              ] : []),
               ['Role', open.roleInCompany],
               ['Business size', SIZE_LABELS[open.businessSize] || open.businessSize],
               ['Timeline', URGENCY_LABELS[open.urgencyTag] || open.urgencyTag],
@@ -442,6 +451,8 @@ export default function Leads() {
                 rows={[
                   // Only meaningful once someone has rung more than once.
                   ['Calls', open.voice.callCount > 1 ? `${open.voice.callCount} calls` : ''],
+                  ['Received by', receivingAgent(open).agentName],
+                  ['Client', receivingAgent(open).clientName],
                   ['Last call', open.voice.lastCallAt ? when(open.voice.lastCallAt) : ''],
                   ['Length', callLength(open.voice.durationSec)],
                   ['Placed from', open.voice.demo ? 'Website demo' : open.phone ? 'Phone' : ''],
@@ -456,7 +467,7 @@ export default function Leads() {
               )}
               {open.voice.callId && (
                 <div style={{ marginTop: 12 }}>
-                  <Transcript collection="calls" sub="turns" agent="Byte" id={open.voice.callId} />
+                  <Transcript collection="calls" sub="turns" agent={receivingAgent(open).agentName} id={open.voice.callId} />
                 </div>
               )}
             </div>

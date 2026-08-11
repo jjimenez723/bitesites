@@ -289,7 +289,7 @@ export const syncLeadToGoHighLevel = onDocumentCreated(
     // it is already a contact over there. Pushing it back would duplicate it —
     // and, since that workflow posts to us, could bounce between the two.
     if (lead.source === 'byte_voice') {
-      console.log(`[lead ${leadId}] originated in GoHighLevel (Byte call) — not syncing back`);
+      console.log(`[lead ${leadId}] originated in GoHighLevel (Voice AI call) — not syncing back`);
       return;
     }
 
@@ -344,7 +344,7 @@ export const syncLeadToGoHighLevel = onDocumentCreated(
 // audio, the transcript, and the contact it captures — and none of that reaches
 // Firestore on its own. The browser only records the *shape* of the session (see
 // src/lib/conversations.js), so `leads` never received anything from a voice
-// call and the dashboard had no Byte leads to show.
+// call and the dashboard had no voice leads to show.
 //
 // This endpoint is the missing return path. Point a **Custom Webhook** action at
 // it from the GHL workflow that runs when a call ends, and it will:
@@ -392,7 +392,10 @@ const ALIASES = {
   sid: ['sid', 'sessionId', 'session_id', 'siteSessionId'],
   siteCallId: ['siteCallId', 'site_call_id', 'callDocId'],
   startedAt: ['startedAt', 'started_at', 'startTime', 'start_time', 'dateAdded'],
-  outcome: ['outcome', 'call_status', 'callStatus', 'disposition']
+  outcome: ['outcome', 'call_status', 'callStatus', 'disposition'],
+  agentId: ['agentId', 'agent_id', 'voiceAgentId', 'voice_agent_id'],
+  agentName: ['agentName', 'agent_name', 'voiceAgentName', 'voice_agent_name'],
+  agentBusinessName: ['agentBusinessName', 'agent_business_name', 'voiceAgentBusinessName', 'voice_agent_business_name', 'clientName', 'client_name']
 };
 
 const SERVICE_TAGS = {
@@ -451,6 +454,24 @@ function parseDate(value) {
   if (!value) return null;
   const parsed = new Date(typeof value === 'number' && value < 1e12 ? value * 1000 : value);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function canonicalClientName(agentName, businessName) {
+  const agent = str(agentName, 120).toLowerCase();
+  const business = str(businessName, 200);
+  const comparable = business.toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (agent === 'byte') return 'Bite Sites';
+  if (agent === 'bella' || comparable.includes('stonebellis')) return 'Stone Bellisimo';
+  if (comparable === 'bitesites') return 'Bite Sites';
+  return business;
+}
+
+function normalizeReceivingAgent({ agentId = '', agentName = '', businessName = '' } = {}) {
+  const id = str(agentId, 200);
+  const name = str(agentName, 120);
+  const clientName = canonicalClientName(name, businessName);
+  if (!id && !name && !clientName) return null;
+  return { agentId: id, agentName: name || 'Unidentified voice agent', clientName };
 }
 
 // ---------------------------------------------------------- lead lifecycle
@@ -775,6 +796,11 @@ export const recordVoiceCall = onRequest(
     const summary = pick(flat, ALIASES.summary, 5000);
     const recordingUrl = pick(flat, ALIASES.recordingUrl, 500);
     const turns = parseTranscript(pickRaw(flat, ALIASES.transcript));
+    const receivingAgent = normalizeReceivingAgent({
+      agentId: pick(flat, ALIASES.agentId, 200),
+      agentName: pick(flat, ALIASES.agentName, 120),
+      businessName: pick(flat, ALIASES.agentBusinessName, 200)
+    });
 
     const first = pick(flat, ALIASES.firstName, 60);
     const last = pick(flat, ALIASES.lastName, 60);
@@ -800,6 +826,7 @@ export const recordVoiceCall = onRequest(
       if (durationSec) callUpdate.durationSec = durationSec;
       if (summary) callUpdate.summary = summary;
       if (recordingUrl) callUpdate.recordingUrl = recordingUrl;
+      if (receivingAgent) callUpdate.receivingAgent = receivingAgent;
 
       if (callDoc) {
         await callDoc.ref.set(callUpdate, { merge: true });
@@ -845,7 +872,7 @@ export const recordVoiceCall = onRequest(
       }
 
       const lead = {
-        name: name || 'Byte caller',
+        name: name || 'Voice caller',
         // Always present, even when empty: firestore.rules holds `email`
         // immutable on update by comparing it against the stored value, and a
         // missing key there fails the whole rule, making the lead un-triageable.
@@ -863,7 +890,8 @@ export const recordVoiceCall = onRequest(
           providerCallId,
           durationSec,
           summary,
-          recordingUrl
+          recordingUrl,
+          ...(receivingAgent ? { receivingAgent } : {})
         },
         // It came from GoHighLevel, so it is already in the CRM. Saying so keeps
         // the dashboard's CRM column honest and matches the sync trigger's skip.
@@ -912,7 +940,7 @@ export const recordVoiceCall = onRequest(
 // read-only over the API, so that step cannot be automated.
 //
 // This is the path that needs no GHL configuration at all: the Voice AI call-log
-// API, polled on a schedule. GoHighLevel keeps every Byte call with a summary,
+// API, polled on a schedule. GoHighLevel keeps every Voice AI call with a summary,
 // a transcript and the fields the agent extracted during the conversation, so
 // everything a lead needs is already sitting there to be read.
 //
@@ -995,6 +1023,39 @@ async function fetchCallLogs({ token, locationId, since, until }) {
   return logs;
 }
 
+/** Resolves call-log agent ids to the human-readable agent and client names. */
+async function fetchVoiceAgents({ token, locationId }) {
+  const agents = [];
+  const pageSize = 20;
+  for (let page = 1; page <= 20; page += 1) {
+    const response = await fetch(
+      `${GHL_API}/voice-ai/agents?locationId=${encodeURIComponent(locationId)}&page=${page}&pageSize=${pageSize}`,
+      {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Version: 'v3',
+        Accept: 'application/json'
+      }
+      }
+    );
+    if (!response.ok) {
+      throw new Error(`voice agents ${response.status}: ${(await response.text()).slice(0, 300)}`);
+    }
+    const body = await response.json();
+    const batch = Array.isArray(body?.agents) ? body.agents : [];
+    agents.push(...batch);
+    if (!batch.length || agents.length >= Number(body?.total || 0) || batch.length < pageSize) break;
+  }
+  return new Map(agents.map(agent => {
+    const receivingAgent = normalizeReceivingAgent({
+      agentId: agent.id,
+      agentName: agent.agentName,
+      businessName: agent.businessName
+    });
+    return [receivingAgent?.agentId, receivingAgent];
+  }).filter(([id]) => id));
+}
+
 /**
  * One lead per *person*, not per call. A prospect who rings four times is one
  * lead with four calls against it, not four rows to work through — so the
@@ -1009,9 +1070,13 @@ const leadKeyFor = log => {
 };
 
 /** Everything the dashboard needs, pulled out of one call log. */
-function readCallLog(log) {
+function readCallLog(log, agentsById = new Map()) {
   const extracted = log.extractedData && typeof log.extractedData === 'object' ? log.extractedData : {};
   const at = parseDate(log.createdAt);
+  const agentId = str(log.agentId, 200);
+  const agentCatalog = agentsById instanceof Map ? agentsById : new Map();
+  const receivingAgent = agentCatalog.get(agentId)
+    || normalizeReceivingAgent({ agentId });
   return {
     providerCallId: str(log.id, 200),
     contactId: str(log.contactId, 100),
@@ -1025,7 +1090,8 @@ function readCallLog(log) {
     phone: str(log.fromNumber, 40),
     details: str(extracted.otherDetails, 5000),
     address: str(extracted.address, 300),
-    demo: Boolean(log.trialCall)
+    demo: Boolean(log.trialCall),
+    receivingAgent
   };
 }
 
@@ -1088,7 +1154,8 @@ async function storeCall(db, call) {
     durationSec: call.durationSec,
     providerCallId: call.providerCallId,
     summary: call.summary,
-    demo: call.demo
+    demo: call.demo,
+    ...(call.receivingAgent ? { receivingAgent: call.receivingAgent } : {})
   };
   // Preserve browser metadata and exact lifecycle timestamps when they exist,
   // but close out old records whose page disappeared before `finishCall` ran.
@@ -1117,7 +1184,7 @@ async function storeCall(db, call) {
     await batch.commit();
   }
 
-  return { id: callRef.id, ref: callRef, alreadyLinked };
+  return { id: callRef.id, ref: callRef, alreadyLinked, leadId: str(existing.get('leadId'), 200) };
 }
 
 /**
@@ -1146,12 +1213,13 @@ async function upsertVoiceLead(db, { call, callDocId }) {
       summary: call.summary,
       demo: call.demo,
       lastCallAt: Timestamp.fromDate(call.at),
-      callCount: (previous?.voice?.callCount || 0) + 1
+      callCount: (previous?.voice?.callCount || 0) + 1,
+      ...(call.receivingAgent ? { receivingAgent: call.receivingAgent } : {})
     };
 
     if (!previous) {
       tx.set(ref, {
-        name: call.name || 'Byte caller',
+        name: call.name || 'Voice caller',
         email: call.email,
         phone: call.phone,
         businessSize: '',
@@ -1173,7 +1241,7 @@ async function upsertVoiceLead(db, { call, callDocId }) {
 
     // A later call may be the one that finally got their email out of them.
     const update = { voice };
-    if (!previous.name || previous.name === 'Byte caller') update.name = call.name || previous.name;
+    if (!previous.name || ['Byte caller', 'Voice caller'].includes(previous.name)) update.name = call.name || previous.name;
     if (!previous.email && call.email) update.email = call.email;
     if (!previous.phone && call.phone) update.phone = call.phone;
     if (!previous.projectDetails && call.details) update.projectDetails = call.details;
@@ -1194,7 +1262,15 @@ async function upsertVoiceLead(db, { call, callDocId }) {
 /** Shared by the schedule and the one-off import endpoint. */
 async function importVoiceCalls({ token, locationId, since, until, includeDemo }) {
   const db = getFirestore();
-  const logs = await fetchCallLogs({ token, locationId, since, until });
+  const [logs, agentsById] = await Promise.all([
+    fetchCallLogs({ token, locationId, since, until }),
+    fetchVoiceAgents({ token, locationId }).catch(error => {
+      // Agent attribution should recover on the next poll, but a temporary
+      // metadata failure must not hold up transcripts or reachable leads.
+      console.warn('[voice-poll] could not resolve agent names:', error.message);
+      return new Map();
+    })
+  ]);
 
   const stats = {
     scanned: logs.length,
@@ -1211,7 +1287,7 @@ async function importVoiceCalls({ token, locationId, since, until, includeDemo }
   const ordered = [...logs].sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
 
   for (const log of ordered) {
-    const call = readCallLog(log);
+    const call = readCallLog(log, agentsById);
 
     if (!call.providerCallId) { stats.skipped += 1; continue; }
     if (call.demo && !includeDemo) { stats.skipped += 1; continue; }
@@ -1228,7 +1304,17 @@ async function importVoiceCalls({ token, locationId, since, until, includeDemo }
 
     // Already counted against its lead on an earlier pass — the transcript and
     // summary above are still refreshed, but it must not be counted twice.
-    if (stored.alreadyLinked) { stats.alreadyImported += 1; continue; }
+    if (stored.alreadyLinked) {
+      // Re-polls also repair agent attribution on calls/leads imported before
+      // GHL's agentId was retained.
+      if (stored.leadId && call.receivingAgent) {
+        await db.doc(`leads/${stored.leadId}`).update({
+          'voice.receivingAgent': call.receivingAgent
+        }).catch(error => console.warn(`[voice-poll] could not backfill lead ${stored.leadId}:`, error.message));
+      }
+      stats.alreadyImported += 1;
+      continue;
+    }
 
     const result = await upsertVoiceLead(db, { call, callDocId: stored.id });
     if (!result) { stats.skipped += 1; continue; }
@@ -1237,7 +1323,8 @@ async function importVoiceCalls({ token, locationId, since, until, includeDemo }
     if (call.email) {
       await queueFeedbackEmail(db, {
         sourceId: stored.id, sourceType: 'call', leadId: result.leadId,
-        email: call.email, name: call.name, agent: 'byte'
+        email: call.email, name: call.name, agent: 'byte',
+        agentName: call.receivingAgent?.agentName
       });
     }
     if (result.created) stats.leadsCreated += 1;
@@ -1409,7 +1496,7 @@ const FEEDBACK_EXPIRY_MS = 30 * 24 * 60 * 60 * 1000;
 const EMAIL_SOURCE_LABELS = {
   intake_form: 'the project intake form',
   bit_chat: 'Bit',
-  byte_voice: 'Byte'
+  byte_voice: 'a Voice AI call'
 };
 
 const emailServiceNames = services => {
@@ -1514,7 +1601,7 @@ async function createOperationalAlert(db, { key, title, message, component, refe
   }
 }
 
-async function queueFeedbackEmail(db, { sourceId, sourceType, leadId = '', email, name, agent }) {
+async function queueFeedbackEmail(db, { sourceId, sourceType, leadId = '', email, name, agent, agentName = '' }) {
   const address = normalizedEmail(email);
   if (!sourceId || !EMAIL_PATTERN.test(address)) return false;
   const jobId = `${sourceType}_${sourceId}`.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 400);
@@ -1533,7 +1620,7 @@ async function queueFeedbackEmail(db, { sourceId, sourceType, leadId = '', email
   batch.create(jobRef, {
     requestId, token, sourceId: str(sourceId, 200), sourceType: str(sourceType, 30),
     leadId: str(leadId, 200), recipient: address, firstName: str(name, 120).split(/\s+/)[0] || address.split('@')[0],
-    agent: agent === 'byte' ? 'byte' : 'bit', status: 'pending', attempts: 0,
+    agent: agent === 'byte' ? 'byte' : 'bit', agentName: str(agentName, 120), status: 'pending', attempts: 0,
     sendAt: Timestamp.fromMillis(Date.now() + FEEDBACK_DELAY_MS), createdAt: FieldValue.serverTimestamp()
   });
   try {
@@ -1577,7 +1664,9 @@ export const sendLeadLifecycleEmails = onDocumentCreated(
     const db = getFirestore();
     const env = emailEnvironment();
     const leadId = event.params.leadId;
-    const sourceLabel = EMAIL_SOURCE_LABELS[lead.source] || lead.source || 'BiteSites';
+    const sourceLabel = lead.source === 'byte_voice'
+      ? (lead.voice?.receivingAgent?.agentName || EMAIL_SOURCE_LABELS.byte_voice)
+      : EMAIL_SOURCE_LABELS[lead.source] || lead.source || 'BiteSites';
     const services = emailServiceNames(lead.services);
     const tasks = [];
 
@@ -1626,7 +1715,8 @@ export const sendLeadLifecycleEmails = onDocumentCreated(
     if (lead.email && lead.source === 'byte_voice' && lead.voice?.callId) {
       await queueFeedbackEmail(db, {
         sourceId: lead.voice.callId, sourceType: 'call', leadId,
-        email: lead.email, name: lead.name, agent: 'byte'
+        email: lead.email, name: lead.name, agent: 'byte',
+        agentName: lead.voice.receivingAgent?.agentName
       });
     }
   }
@@ -2073,7 +2163,7 @@ export const sendQueuedFeedbackEmails = onSchedule(
         const result = await sendPostmark(POSTMARK_SERVER_TOKEN.value(), buildMessage({
           from: env.from, to: job.recipient, template,
           variables: {
-            first_name: job.firstName || 'there', agent_name: job.agent === 'byte' ? 'Byte' : 'Bit',
+            first_name: job.firstName || 'there', agent_name: job.agentName || (job.agent === 'byte' ? 'Voice AI agent' : 'Bit'),
             feedback_url: feedbackUrl, preference_url: links.preferenceUrl,
             rating_1_url: `${feedbackUrl}&rating=1`, rating_2_url: `${feedbackUrl}&rating=2`,
             rating_3_url: `${feedbackUrl}&rating=3`, rating_4_url: `${feedbackUrl}&rating=4`,
@@ -2323,7 +2413,7 @@ export const monitorOperations = onSchedule(
     const lastRun = health.get('lastRunAt')?.toMillis?.() || 0;
     if (!lastRun || Date.now() - lastRun > 20 * 60 * 1000) {
       await createOperationalAlert(db, {
-        key: 'voice-poll-stale', title: 'Byte call import has stopped reporting',
+        key: 'voice-poll-stale', title: 'Voice AI call import has stopped reporting',
         message: lastRun
           ? 'The voice-call poll heartbeat is more than 20 minutes old.'
           : 'No voice-call poll heartbeat has been recorded.',
@@ -2353,6 +2443,53 @@ export const monitorOperations = onSchedule(
 );
 
 // ---------------------------------------------------------------------------
+
+export {
+  // Configuration and capability reporting.
+  getOutboundConfig,
+
+  // Lead discovery.
+  createLeadDiscoveryJob,
+  runLeadDiscoveryJob,
+  pauseLeadDiscoveryJob,
+  cancelLeadDiscoveryJob,
+  discoveryWorker,
+
+  // Prospects.
+  importProspectCsv,
+  resolveProspectDuplicate,
+  promoteProspectToLead,
+
+  // Campaigns.
+  createOutboundCampaign,
+  updateOutboundCampaign,
+  startOutboundCampaign,
+  pauseOutboundCampaign,
+  resumeOutboundCampaign,
+  cancelOutboundCampaign,
+  importOutboundTargets,
+
+  // Research.
+  researchOutboundContact,
+  approveLeadResearch,
+  prepareTargetForDialing,
+
+  // Dialing.
+  startPowerDialerSession,
+  startParallelDialerSession,
+  dialNextTargets,
+  heartbeatDialerSession,
+  stopDialerSessionCall,
+  submitCallDisposition,
+  moveTargetToCallLater,
+  markTargetDoNotCall,
+
+  // Provider webhooks and scheduled maintenance.
+  recordOutboundCallEvent,
+  reconcileOutbound,
+  runAICampaigns,
+  outboundNightlyMaintenance
+} from './outbound-api.js';
 // Role management — the only place a role may change from the browser
 // ---------------------------------------------------------------------------
 //
@@ -2480,50 +2617,3 @@ export const setUserRole = onCall(
 // the lead sync sitting above it. Firebase only deploys what this file exports,
 // so the re-export is what makes them real functions.
 // ---------------------------------------------------------------------------
-
-export {
-  // Configuration and capability reporting.
-  getOutboundConfig,
-
-  // Lead discovery.
-  createLeadDiscoveryJob,
-  runLeadDiscoveryJob,
-  pauseLeadDiscoveryJob,
-  cancelLeadDiscoveryJob,
-  discoveryWorker,
-
-  // Prospects.
-  importProspectCsv,
-  resolveProspectDuplicate,
-  promoteProspectToLead,
-
-  // Campaigns.
-  createOutboundCampaign,
-  updateOutboundCampaign,
-  startOutboundCampaign,
-  pauseOutboundCampaign,
-  resumeOutboundCampaign,
-  cancelOutboundCampaign,
-  importOutboundTargets,
-
-  // Research.
-  researchOutboundContact,
-  approveLeadResearch,
-  prepareTargetForDialing,
-
-  // Dialing.
-  startPowerDialerSession,
-  startParallelDialerSession,
-  dialNextTargets,
-  heartbeatDialerSession,
-  stopDialerSessionCall,
-  submitCallDisposition,
-  moveTargetToCallLater,
-  markTargetDoNotCall,
-
-  // Provider webhooks and scheduled maintenance.
-  recordOutboundCallEvent,
-  reconcileOutbound,
-  runAICampaigns,
-  outboundNightlyMaintenance
-} from './outbound-api.js';

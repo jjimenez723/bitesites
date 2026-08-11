@@ -14,6 +14,7 @@
       { "source": "/api/visit-location", "function": { "functionId": "recordVisitLocation", "region": "us-central1" } },
       { "source": "/api/email-preferences", "function": { "functionId": "unsubscribeEmail", "region": "us-central1" } },
       { "source": "/api/postmark-events", "function": { "functionId": "recordPostmarkEvent", "region": "us-central1" } },
+      { "source": "/api/twilio-compliance-status", "function": { "functionId": "recordTwilioComplianceStatus", "region": "us-central1" } },
       { "source": "/api/lead-lifecycle", "function": { "functionId": "recordLeadLifecycle", "region": "us-central1" } },
       { "source": "/api/hybrid-outbound-events", "function": { "functionId": "recordHybridCallEvent", "region": "us-central1" } },
       { "source": "/api/twilio-prospect-twiml", "function": { "functionId": "twilioHybridProspectTwiML", "region": "us-central1" } },
