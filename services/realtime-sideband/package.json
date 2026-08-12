@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js"
+    "check": "node --check server.js && node --test realtime-audio-lifecycle.test.mjs"
   },
   "engines": {
     "node": "22"

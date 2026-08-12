@@ -2,6 +2,13 @@ import express from 'express';
 import OpenAI from 'openai';
 import WebSocket from 'ws';
 
+import {
+  CONTINUE_TRUNCATED_RESPONSE_INSTRUCTION,
+  MAX_RESPONSE_CONTINUATIONS,
+  isOutputAudioDrained,
+  realtimeResponseOutcome
+} from './realtime-audio-lifecycle.js';
+
 const PORT = Number(process.env.PORT) || 8080;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 const OPENAI_WEBHOOK_SECRET = process.env.OPENAI_WEBHOOK_SECRET || '';
@@ -169,6 +176,7 @@ async function executeTool(session, event) {
       realtimeCallId: session.realtimeCallId
     });
   } else if (name === 'mark_do_not_call') {
+    session.pendingContinuationResponseId = '';
     output = await control(session.callId, 'do_not_call', {
       realtimeCallId: session.realtimeCallId,
       reason: clean(args.reason, 300)
@@ -232,6 +240,7 @@ async function pollControl(session) {
     if (controller === 'transitioning' && handoffState === 'announcing'
         && !session.handoffResponseId && !session.handoffRequested) {
       session.handoffRequested = true;
+      session.pendingContinuationResponseId = '';
       send(session.ws, { type: 'response.cancel' });
       send(session.ws, { type: 'output_audio_buffer.clear' });
       send(session.ws, {
@@ -256,7 +265,8 @@ function startSidebandSocket({ callId, realtimeCallId, runtime }) {
   const session = {
     callId, realtimeCallId, runtime, ws, sequence: Date.now(),
     toolNames: new Map(), handoffRequested: false, handoffResponseId: '',
-    closed: false, polling: false, endAfterTool: false, pollTimer: null
+    closed: false, polling: false, endAfterTool: false, pollTimer: null,
+    pendingContinuationResponseId: '', continuationAttempts: 0
   };
   sessions.set(callId, session);
 
@@ -281,6 +291,11 @@ function startSidebandSocket({ callId, realtimeCallId, runtime }) {
 
     if (event.type === 'conversation.item.input_audio_transcription.completed') {
       void writeTranscript(session, 'prospect', event.transcript, event);
+    } else if (event.type === 'input_audio_buffer.speech_started') {
+      // Caller barge-in is intentional. Never resume a token-limited response
+      // over a person who has started speaking.
+      session.pendingContinuationResponseId = '';
+      session.continuationAttempts = 0;
     } else if (event.type === 'response.output_audio_transcript.done') {
       void writeTranscript(session, 'ai', event.transcript, event);
     } else if (event.type === 'response.output_item.added' && event.item?.type === 'function_call') {
@@ -297,6 +312,21 @@ function startSidebandSocket({ callId, realtimeCallId, runtime }) {
     } else if (event.type === 'response.created'
         && event.response?.metadata?.response_purpose === 'bitesites_handoff') {
       session.handoffResponseId = clean(event.response.id, 200);
+    } else if (event.type === 'response.done') {
+      const outcome = realtimeResponseOutcome(event);
+      if (outcome?.truncatedByTokenLimit
+          && outcome.responseId
+          && session.continuationAttempts < MAX_RESPONSE_CONTINUATIONS
+          && !session.handoffRequested
+          && !session.endAfterTool) {
+        session.continuationAttempts += 1;
+        session.pendingContinuationResponseId = outcome.responseId;
+        console.warn('[sideband] response hit output token limit; continuation queued', callId, outcome.responseId);
+      } else if (outcome?.status === 'completed') {
+        session.continuationAttempts = 0;
+      } else if (outcome && outcome.status !== 'cancelled') {
+        console.warn('[sideband] realtime response ended early', callId, outcome.status, outcome.reason);
+      }
     } else if (event.type === 'output_audio_buffer.stopped'
         && session.handoffResponseId && event.response_id === session.handoffResponseId) {
       void control(callId, 'handoff_phrase_spoken', { realtimeCallId })
@@ -305,6 +335,15 @@ function startSidebandSocket({ callId, realtimeCallId, runtime }) {
     } else if (event.type === 'output_audio_buffer.stopped' && session.endAfterTool) {
       void hangupRealtimeCall(realtimeCallId);
       session.endAfterTool = false;
+    } else if (isOutputAudioDrained(event, session.pendingContinuationResponseId)) {
+      session.pendingContinuationResponseId = '';
+      send(ws, {
+        type: 'response.create',
+        response: {
+          instructions: CONTINUE_TRUNCATED_RESPONSE_INSTRUCTION,
+          metadata: { response_purpose: 'max_tokens_continuation' }
+        }
+      });
     } else if (event.type === 'error') {
       console.warn('[sideband] OpenAI realtime error', event.error?.code || '', event.error?.message || '');
     }

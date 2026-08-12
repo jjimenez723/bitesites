@@ -29,7 +29,8 @@ npm run test:lifecycle             # CRM/calendar stage + economics webhook
 npm run test:analytics             # durable, session-deduplicated funnel totals
 npm run role -- you@example.com admin   # grant portal access
 npm run deploy                     # build + deploy site and Firestore rules
-npm run deploy:functions           # deploy the GoHighLevel lead sync
+npm run deploy:functions           # deploy all Firebase Functions
+npm run ship                       # commit/push, then deploy Functions, Hosting, and optional Firestore config
 ```
 
 ## Brand consistency

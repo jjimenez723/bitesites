@@ -278,9 +278,9 @@ touches a real Firebase project.
 10. `npm run deploy:hosting`
 11. Production migration — **only after separate approval**
 
-> `npm run ship` runs `git add .` and deploys hosting and rules but **not**
-> functions. Do not use it for this feature; the rules above depend on functions
-> being live first.
+> `npm run ship` now deploys Functions first, followed by Hosting and, when you
+> answer `Y`, Firestore rules and indexes. This preserves the required deployment
+> order for this feature.
 
 ## Compliance checklist for legal review
 

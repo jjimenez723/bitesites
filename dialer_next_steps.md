@@ -76,9 +76,9 @@ gated on human approval.
 > 3. Confirm the 27 new exports at the bottom of `functions/index.js` are all
 >    re-exported from `functions/outbound-api.js` and none is missing.
 >
-> Deploy with `npm run deploy:functions`. **Do not use `npm run ship`** — it runs
-> `git add .` and deploys hosting and rules but not functions, which is exactly
-> the wrong order here.
+> Deploy with `npm run ship`, or use `npm run deploy:functions` for a
+> functions-only deployment. `npm run ship` now deploys Functions before Hosting
+> and optional Firestore rules and indexes.
 >
 > After deploying, run `firebase functions:list` and record the deployed URLs for
 > `recordOutboundCallEvent` and `discoveryWorker`. Add both as Hosting rewrites

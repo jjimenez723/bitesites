@@ -4,6 +4,12 @@
 // draft. The standard OpenAI API key never exists in this bundle.
 
 import { outbound } from './data';
+import {
+  CONTINUE_TRUNCATED_RESPONSE_INSTRUCTION,
+  MAX_RESPONSE_CONTINUATIONS,
+  isOutputAudioDrained,
+  realtimeResponseOutcome
+} from './realtime-audio-lifecycle';
 
 const SAMPLE_INSTRUCTION = 'Deliver the configured voice sample now. Follow the preview sandbox instructions exactly.';
 const CONVERSATION_INSTRUCTION = 'Begin the configured test conversation now with a brief greeting. The operator will role-play as the prospect.';
@@ -80,6 +86,10 @@ export async function startAgentPreview({
   let completeTimer = null;
   let sessionTimer = null;
   let stopped = false;
+  let pendingContinuationResponseId = '';
+  let continuationAttempts = 0;
+  let sampleEndAfterDrainId = '';
+  let sampleCompleted = false;
 
   const controller = {
     mode,
@@ -125,14 +135,52 @@ export async function startAgentPreview({
     const transcript = previewTranscriptEvent(event);
     if (transcript?.text) onTranscript(transcript);
     if (event.type === 'error') onError(errorMessage(event.error));
-    if (mode === 'sample' && event.type === 'response.done') {
-      onComplete();
+
+    if (event.type === 'input_audio_buffer.speech_started') {
+      // A real operator barge-in always wins over a queued token-limit
+      // continuation from the previous agent turn.
+      pendingContinuationResponseId = '';
+      continuationAttempts = 0;
+    }
+
+    const outcome = realtimeResponseOutcome(event);
+    if (outcome?.truncatedByTokenLimit
+        && outcome.responseId
+        && continuationAttempts < MAX_RESPONSE_CONTINUATIONS) {
+      continuationAttempts += 1;
+      pendingContinuationResponseId = outcome.responseId;
+    } else if (outcome) {
+      if (mode === 'sample') {
+        sampleEndAfterDrainId = outcome.responseId;
+        sampleCompleted = outcome.status === 'completed';
+      }
+      if (!['completed', 'cancelled'].includes(outcome.status)) {
+        onError(outcome.reason === 'max_output_tokens'
+          ? 'The agent reached its response limit before it could finish speaking.'
+          : `The realtime response ended early${outcome.reason ? `: ${outcome.reason}` : '.'}`);
+      }
+    }
+
+    if (isOutputAudioDrained(event, pendingContinuationResponseId)) {
+      pendingContinuationResponseId = '';
+      channel.send(JSON.stringify({
+        type: 'response.create',
+        response: {
+          instructions: CONTINUE_TRUNCATED_RESPONSE_INSTRUCTION,
+          metadata: { response_purpose: 'max_tokens_continuation' }
+        }
+      }));
+    } else if (mode === 'sample' && isOutputAudioDrained(event, sampleEndAfterDrainId)) {
+      if (sampleCompleted) onComplete();
+      sampleEndAfterDrainId = '';
+      // `output_audio_buffer.stopped` is the authoritative server-side drain
+      // signal. Keep a small grace period for the browser's RTP jitter buffer.
       completeTimer = setTimeout(() => {
         if (activePreview === controller) {
           activePreview = null;
           controller.stop();
         }
-      }, 1200);
+      }, 1000);
     }
   });
 

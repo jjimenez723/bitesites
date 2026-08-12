@@ -5,7 +5,7 @@ printf "Commit message [Ship latest changes]: "
 IFS= read -r message
 message=${message:-Ship latest changes}
 
-printf "Deploy Firestore rules & indexes? [Y/n]: "
+printf "Deploy Firestore rules & indexes too? [Y/n] (Functions and Hosting always deploy): "
 IFS= read -r rules
 case "${rules:-y}" in
   [Nn]*) deploy_script="deploy:hosting" ;;
@@ -16,4 +16,5 @@ git add .
 npm run secrets:check
 git commit -m "$message"
 git push
+npm run deploy:functions
 npm run "$deploy_script"
