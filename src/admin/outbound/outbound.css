@@ -189,6 +189,18 @@
   border-radius: 11px; font-size: 12.5px;
 }
 
+.bs-admin .outbound-action-notice {
+  border: 1px solid var(--line); border-radius: 11px;
+  padding: 11px 14px; margin: 0 0 12px;
+  font-size: 12.5px; line-height: 1.5;
+}
+.bs-admin .outbound-action-notice.success {
+  color: #a8e6a8; border-color: rgba(12, 163, 12, .38); background: rgba(12, 163, 12, .1);
+}
+.bs-admin .outbound-action-notice.warning {
+  color: #f3cf88; border-color: rgba(250, 178, 25, .32); background: rgba(250, 178, 25, .07);
+}
+
 .bs-admin .outbound-capability-grid {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 7px 18px;
   font-size: 12px;

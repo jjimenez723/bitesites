@@ -22,12 +22,49 @@ const SYSTEM_FILTERS = [
   ['watcher_leads', 'Watcher'], ['bitesites_leads', 'BiteSites-Leads'], ['manual', 'Manual']
 ];
 
-export default function ProspectList({ campaigns = [], onOpen }) {
+const SKIP_LABELS = {
+  already_in_campaign: 'already in the campaign',
+  confirmed_duplicate: 'confirmed duplicate',
+  do_not_call: 'on the Do Not Call list',
+  no_phone: 'missing a phone number',
+  not_found: 'no longer found'
+};
+
+const importNotice = (result, campaignName) => {
+  const added = Number(result?.added) || 0;
+  const skipped = Array.isArray(result?.skipped) ? result.skipped : [];
+  const reasons = skipped.reduce((counts, entry) => {
+    const reason = String(entry?.reason || 'not eligible');
+    const label = reason.startsWith('prospect_not_ready_')
+      ? 'not ready'
+      : SKIP_LABELS[reason] || reason.replace(/_/g, ' ');
+    counts[label] = (counts[label] || 0) + 1;
+    return counts;
+  }, {});
+  const skippedDetail = Object.entries(reasons)
+    .map(([reason, count]) => `${count} ${reason}`)
+    .join(', ');
+  const destination = campaignName || 'the campaign';
+
+  if (added > 0) {
+    return {
+      kind: 'success',
+      text: `Added ${added} prospect${added === 1 ? '' : 's'} to ${destination}.${skipped.length ? ` Skipped ${skippedDetail}.` : ''}`
+    };
+  }
+  return {
+    kind: 'warning',
+    text: `No prospects were added to ${destination}.${skipped.length ? ` Skipped ${skippedDetail}.` : ''}`
+  };
+};
+
+export default function ProspectList({ campaigns = [], onOpen, onTargetsAdded }) {
   const [status, setStatus] = useState('ready');
   const [system, setSystem] = useState('all');
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState(() => new Set());
   const [campaignId, setCampaignId] = useState('');
+  const [notice, setNotice] = useState(null);
   const action = useAction();
 
   const { rows, loading, error, capped, refresh } = useProspects({ status, system });
@@ -55,13 +92,17 @@ export default function ProspectList({ campaigns = [], onOpen }) {
 
   const addToCampaign = async () => {
     if (!campaignId || !selected.size) return;
+    setNotice(null);
     const result = await action.run(
       () => outbound.addTargets(campaignId, { prospectIds: [...selected], priority: 50 }),
       ''
     );
     if (result) {
+      const campaign = campaigns.find(entry => entry.id === campaignId);
+      setNotice(importNotice(result, campaign?.name));
       setSelected(new Set());
       refresh();
+      onTargetsAdded?.(campaignId, result);
     }
   };
 
@@ -90,6 +131,13 @@ export default function ProspectList({ campaigns = [], onOpen }) {
         <button className="btn-admin" type="button" onClick={refresh}>Refresh</button>
       </div>
 
+      {action.error && <p className="admin-error" role="alert">{action.error}</p>}
+      {notice && (
+        <p className={`outbound-action-notice ${notice.kind}`} role="status" aria-live="polite">
+          {notice.text}
+        </p>
+      )}
+
       {selected.size > 0 && (
         <div className="outbound-select-bar">
           <strong>{selected.size} selected</strong>
@@ -103,7 +151,6 @@ export default function ProspectList({ campaigns = [], onOpen }) {
             {action.busy ? 'Adding…' : 'Add to campaign'}
           </button>
           <button className="btn-admin" type="button" onClick={() => setSelected(new Set())}>Clear</button>
-          {action.error && <span className="admin-error" style={{ padding: '4px 9px' }}>{action.error}</span>}
         </div>
       )}
 

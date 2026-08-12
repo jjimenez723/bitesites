@@ -131,7 +131,16 @@ export default function OutboundCalls() {
             />
           )}
           {tab === 'discovery' && <LeadDiscovery sources={sources} />}
-          {tab === 'prospects' && <ProspectList campaigns={campaigns.rows} onOpen={setProspectId} />}
+          {tab === 'prospects' && (
+            <ProspectList
+              campaigns={campaigns.rows}
+              onOpen={setProspectId}
+              onTargetsAdded={id => {
+                setCampaignId(id);
+                campaigns.refresh();
+              }}
+            />
+          )}
           {tab === 'review' && <ImportReview onOpen={setProspectId} />}
           {tab === 'queue' && (
             <LeadQueue campaignId={campaignId} campaigns={campaigns.rows}
