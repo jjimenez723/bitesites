@@ -17,11 +17,12 @@ initializeApp({ projectId: 'demo-bitesites' });
 const db = getFirestore();
 
 const {
-  createCampaign, setCampaignStatus, importTargets,
+  createCampaign, updateCampaign, setCampaignStatus, importTargets,
   startDialerSession, dialNext, stopDialerSession, claimWinningCall,
   cancelLosingLegs, recordCallEvent, applyDisposition,
   markDoNotCall, reconcileSessions, releaseDueTargets, refreshCampaignCounts,
-  sanitizeCampaign, outboundCallId
+  sanitizeCampaign, outboundCallId, findActiveDialerSession,
+  releaseTargetsForApprovedResearch
 } = await import('./outbound-calls.js');
 const { importProspects } = await import('./prospect-import.js');
 const { assertSupports } = await import('./providers/calling/index.js');
@@ -136,6 +137,9 @@ const { sessionId } = await startDialerSession(db, {
   campaignId, userUid: 'rep-1', mode: 'parallel', concurrency: 3, now: NOW
 });
 check('the session started', Boolean(sessionId));
+await db.doc(`dialerSessions/${sessionId}`).set({ hybridV2: true }, { merge: true });
+const resumed = await findActiveDialerSession(db, 'rep-1', { hybridOnly: true });
+check('the active hybrid session can be recovered after client state is lost', resumed?.id === sessionId);
 
 // Script the outcomes so the race is deterministic: two of the three answer.
 const dialed = await dialNext(db, sessionId, { now: NOW, providerConfig: { scriptedOutcomes: { 0: 'no_answer', 1: 'human_answered', 2: 'human_answered' } } });
@@ -354,6 +358,10 @@ const nightDial = await dialNext(db, nightSession.sessionId, { now: new Date('20
 check('nothing is dialled outside the calling window', nightDial.started.length === 0, JSON.stringify(nightDial));
 check('and the reason is recorded',
   /outside_/.test(nightDial.rejected?.[0]?.reason || ''), JSON.stringify(nightDial.rejected));
+check('and the response summarizes the eligibility blockers',
+  nightDial.availability?.scanned === 1
+    && Object.keys(nightDial.availability?.rejectedByReason || {}).some(reason => reason.startsWith('outside_')),
+  JSON.stringify(nightDial.availability));
 const nightTarget = await db.doc(`outboundTargets/${(await db.collection('outboundTargets').where('campaignId', '==', nightCampaign).get()).docs[0].id}`).get();
 check('the target is rescheduled rather than failed', nightTarget.get('state') === 'call_later');
 
@@ -381,12 +389,29 @@ check('an unapproved brief blocks the call', gatedDial.started.length === 0, JSO
 check('and the target waits for approval',
   (await db.doc(`outboundTargets/${gatedTargetId}`).get()).get('state') === 'awaiting_approval');
 
-await approveResearch(db, contactKey({ contactType: 'prospect', prospectId: gatedProspect }), { approvedBy: 'admin', now: NOW });
-await db.doc(`outboundTargets/${gatedTargetId}`).set({ state: 'ready' }, { merge: true });
+const gatedResearchKey = contactKey({ contactType: 'prospect', prospectId: gatedProspect });
+await approveResearch(db, gatedResearchKey, { approvedBy: 'admin', now: NOW });
+const releasedAfterApproval = await releaseTargetsForApprovedResearch(db, gatedResearchKey);
+check('approving a brief automatically releases its waiting target',
+  releasedAfterApproval === 1 && (await db.doc(`outboundTargets/${gatedTargetId}`).get()).get('state') === 'ready');
 const afterApproval = await dialNext(db, gatedSession.sessionId, { now: NOW, fetchImpl: async () => ({ ok: false, status: 0 }) });
 check('once approved, the call proceeds', afterApproval.started.length === 1, JSON.stringify(afterApproval));
 
 await stopDialerSession(db, gatedSession.sessionId, { reason: 'test', now: NOW });
+
+const toggledCampaign = await createCampaign(db, {
+  name: 'Approval switched off', mode: 'power', provider: 'mock',
+  callerId: '+15551234567', requireResearchApproval: true
+}, { createdBy: 'test' });
+const [toggledProspect] = (await importProspects(db, [
+  { name: 'Toggle Co', phone: '2015557272', address: 'Ridgewood, NJ' }
+], { source: { system: 'csv', provider: 'csv' } })).written;
+await importTargets(db, toggledCampaign, { prospectIds: [toggledProspect], now: NOW });
+const toggledTarget = (await db.collection('outboundTargets').where('campaignId', '==', toggledCampaign).get()).docs[0];
+check('approval-required imports begin pending', toggledTarget.get('state') === 'pending');
+await updateCampaign(db, toggledCampaign, { requireResearchApproval: false });
+check('turning approval off releases existing pending targets',
+  (await toggledTarget.ref.get()).get('state') === 'ready');
 
 // ---------------------------------------------------------------------------
 console.log('\nan abandoned session releases its locks');

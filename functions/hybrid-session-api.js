@@ -10,6 +10,7 @@ import { FieldValue, getFirestore } from 'firebase-admin/firestore';
 
 import {
   startDialerSession,
+  findActiveDialerSession,
   heartbeatSession,
   dialNext,
   stopDialerSession,
@@ -80,6 +81,24 @@ function twilioConfig() {
     hybridV2: true
   };
 }
+
+/** Restore the active server session after a tab switch, navigation or reload. */
+export const getActiveHybridDialerSession = onCall(callOptions, async request => {
+  const { db, uid } = await requireDialer(request);
+  const session = await findActiveDialerSession(db, uid, { hybridOnly: true });
+  if (!session) return { session: null };
+  return {
+    session: {
+      sessionId: session.id,
+      campaignId: clean(session.campaignId, 200),
+      status: clean(session.status, 40),
+      concurrency: Math.max(1, Number(session.concurrency) || 3),
+      autoTakeover: session.takeover?.autoEnabled === true,
+      agentProfileId: clean(session.agentProfileId, 200),
+      agentProfileName: clean(session.agentProfileName, 120)
+    }
+  };
+});
 
 /** Current product default is three simultaneous outbound legs per rep. */
 export const startHybridDialerSession = onCall({ ...callOptions, secrets: HYBRID_SECRETS }, async request => {

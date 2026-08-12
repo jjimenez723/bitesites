@@ -82,6 +82,12 @@ export default function LeadQueue({ campaignId, campaigns = [], onSelectCampaign
       <div className="admin-card">
         <QueryState loading={loading} error={error} capped={capped} cap={TARGET_CAP} />
         {action.error && <p className="admin-error">{action.error}</p>}
+        {action.message && <p className="admin-note">{action.message}</p>}
+        {group === 'pending' && (
+          <p className="admin-note" style={{ marginBottom: 12 }}>
+            Prepare generates the call brief. If this campaign requires human approval, review and approve that brief before the target becomes ready to dial.
+          </p>
+        )}
 
         {!loading && !filtered.length ? (
           <Empty title="Nothing in this view">Add prospects from the Prospects tab, or widen the filter.</Empty>
@@ -133,10 +139,24 @@ export default function LeadQueue({ campaignId, campaigns = [], onSelectCampaign
                       <td className="cell-dim">{locked ? 'held' : '—'}</td>
                       <td>
                         <div className="admin-filters">
-                          <button className="btn-admin" type="button" disabled={action.busy}
-                            onClick={() => act(() => outbound.callLater(row.id, 1440, 'manual'), 'Rescheduled.')}>
-                            Later
-                          </button>
+                          {['pending', 'researching'].includes(row.state) && (
+                            <button className="btn-admin primary" type="button" disabled={action.busy}
+                              onClick={() => act(() => outbound.prepareTarget(row.id), 'Research prepared. Review and approve the brief if required.')}>
+                              Prepare
+                            </button>
+                          )}
+                          {row.state === 'awaiting_approval' && row.prospectId && (
+                            <button className="btn-admin primary" type="button" disabled={action.busy}
+                              onClick={() => onOpenProspect?.(row.prospectId)}>
+                              Review brief
+                            </button>
+                          )}
+                          {!['pending', 'researching', 'awaiting_approval'].includes(row.state) && (
+                            <button className="btn-admin" type="button" disabled={action.busy}
+                              onClick={() => act(() => outbound.callLater(row.id, 1440, 'manual'), 'Rescheduled.')}>
+                              Later
+                            </button>
+                          )}
                           <button className="btn-admin danger" type="button" disabled={action.busy}
                             onClick={() => act(() => outbound.doNotCall(row.id), 'Marked do not call.')}>
                             DNC

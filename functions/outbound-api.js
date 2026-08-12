@@ -34,7 +34,7 @@ import {
   startDialerSession, heartbeatSession, dialNext, stopDialerSession,
   runAICampaignSlice, recordCallEvent, applyDisposition, moveToCallLater,
   markDoNotCall, reconcileSessions, releaseDueTargets, refreshCampaignCounts,
-  ensureResearch
+  ensureResearch, releaseTargetsForApprovedResearch
 } from './outbound-calls.js';
 import { contactKey, approveResearch, loadResearch, researchContact, saveResearch } from './lead-enrichment.js';
 import { loadContactForTarget } from './outbound-contacts.js';
@@ -408,8 +408,13 @@ export const approveLeadResearch = onCall(callOptions, async request => {
   const { db, email } = await requireAdmin(request);
   const key = str(request.data?.key, 200);
   if (!/^(?:lead|prospect)_[A-Za-z0-9_-]+$/.test(key)) throw new HttpsError('invalid-argument', 'A valid research key is required.');
-  return approveResearch(db, key, { approvedBy: email, edits: request.data?.edits || null })
-    .catch(error => { throw new HttpsError('not-found', clean(error?.message, 300)); });
+  try {
+    await approveResearch(db, key, { approvedBy: email, edits: request.data?.edits || null });
+    const releasedTargets = await releaseTargetsForApprovedResearch(db, key);
+    return { ok: true, releasedTargets };
+  } catch (error) {
+    throw new HttpsError('not-found', clean(error?.message, 300));
+  }
 });
 
 export const prepareTargetForDialing = onCall({ ...callOptions, timeoutSeconds: 120 }, async request => {
@@ -421,6 +426,7 @@ export const prepareTargetForDialing = onCall({ ...callOptions, timeoutSeconds: 
   const campaignSnapshot = await db.doc(`outboundCampaigns/${target.campaignId}`).get();
   const campaign = { id: target.campaignId, ...(campaignSnapshot.data() || {}) };
   const result = await ensureResearch(db, target, campaign);
+  await refreshCampaignCounts(db, target.campaignId);
   return { ok: result.ok, reason: result.reason || '', research: result.research || null };
 });
 

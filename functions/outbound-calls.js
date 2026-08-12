@@ -122,6 +122,33 @@ export async function updateCampaign(db, campaignId, input) {
     throw new Error(`Provider "${campaign.provider}" cannot run a ${campaign.mode} campaign: missing ${support.missing.join(', ')}`);
   }
   await ref.set({ ...campaign, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+
+  // Targets imported while approval was required intentionally start in a
+  // preparation state. If an operator later turns that gate off, leaving those
+  // targets there forever makes the campaign setting look saved while the
+  // dialer still reports an empty queue. Release them in bounded batches.
+  if (existing.requireResearchApproval !== false && campaign.requireResearchApproval === false) {
+    let released = 0;
+    while (true) {
+      const waiting = await db.collection('outboundTargets')
+        .where('campaignId', '==', campaignId)
+        .where('state', 'in', ['pending', 'researching', 'awaiting_approval'])
+        .limit(400)
+        .get();
+      if (waiting.empty) break;
+      const batch = db.batch();
+      for (const entry of waiting.docs) {
+        batch.set(entry.ref, {
+          state: 'ready',
+          updatedAt: FieldValue.serverTimestamp()
+        }, { merge: true });
+      }
+      await batch.commit();
+      released += waiting.size;
+      if (waiting.size < 400) break;
+    }
+    if (released) await refreshCampaignCounts(db, campaignId);
+  }
   return { ok: true };
 }
 
@@ -304,11 +331,45 @@ export async function ensureResearch(db, target, campaign, { fetchImpl, now = ne
     return { ok: false, reason: 'awaiting_approval', research, contact };
   }
 
-  await db.doc(`outboundTargets/${target.id}`).set({
-    researchStatus: research.status, researchApproved: Boolean(research.approved), updatedAt: FieldValue.serverTimestamp()
-  }, { merge: true });
+  const update = {
+    researchStatus: research.status,
+    researchApproved: Boolean(research.approved),
+    updatedAt: FieldValue.serverTimestamp()
+  };
+  // prepareTargetForDialing operates on pending targets, while dialNext calls
+  // this after a target has already been claimed and changed to `dialing`.
+  // Only the preparation states should be released here; resetting a claimed
+  // target to ready would make it available to a second session.
+  if (['pending', 'researching', 'awaiting_approval'].includes(target.state)) update.state = 'ready';
+  await db.doc(`outboundTargets/${target.id}`).set(update, { merge: true });
 
   return { ok: true, research, contact };
+}
+
+/** Release every queued target backed by a newly approved research brief. */
+export async function releaseTargetsForApprovedResearch(db, key) {
+  const match = /^(lead|prospect)_([A-Za-z0-9_-]+)$/.exec(clean(key, 200));
+  if (!match) throw new Error('A valid research key is required');
+  const [, contactType, contactId] = match;
+  const field = contactType === 'lead' ? 'leadId' : 'prospectId';
+  const snapshot = await db.collection('outboundTargets').where(field, '==', contactId).limit(500).get();
+  const waiting = snapshot.docs.filter(entry =>
+    ['pending', 'researching', 'awaiting_approval'].includes(entry.get('state')));
+  if (!waiting.length) return 0;
+
+  const batch = db.batch();
+  for (const entry of waiting) {
+    batch.set(entry.ref, {
+      state: 'ready',
+      researchStatus: 'ready',
+      researchApproved: true,
+      updatedAt: FieldValue.serverTimestamp()
+    }, { merge: true });
+  }
+  await batch.commit();
+  await Promise.all([...new Set(waiting.map(entry => entry.get('campaignId')).filter(Boolean))]
+    .map(id => refreshCampaignCounts(db, id)));
+  return waiting.length;
 }
 
 // ------------------------------------------------------------------ call docs
@@ -361,6 +422,18 @@ async function createCallDoc(db, { target, campaign, session, providerCallId, at
 }
 
 // ------------------------------------------------------------------- sessions
+
+/** Find the server-authoritative session a rep should resume after navigation/reload. */
+export async function findActiveDialerSession(db, userUid, { hybridOnly = false } = {}) {
+  const snapshot = await db.collection('dialerSessions')
+    .where('userUid', '==', clean(userUid, 128))
+    .where('status', '==', 'active')
+    .orderBy('startedAt', 'desc')
+    .limit(10)
+    .get();
+  const entry = snapshot.docs.find(doc => !hybridOnly || doc.get('hybridV2') === true);
+  return entry ? { id: entry.id, ...entry.data() } : null;
+}
 
 export async function startDialerSession(db, { campaignId, userUid, mode, concurrency = 1, now = new Date() }) {
   const campaignSnapshot = await db.doc(`outboundCampaigns/${campaignId}`).get();
@@ -440,7 +513,12 @@ export async function dialNext(db, sessionId, { now = new Date(), providerConfig
   const wanted = session.mode === 'parallel' ? Math.max(1, Math.min(5, Number(session.concurrency) || 1)) : 1;
   // Over-fetch: compliance will reject some of them, and a session that dials
   // three of five wanted legs is a slower session, not a broken one.
-  const candidates = await eligibleTargets(db, session.campaignId, { limit: wanted * 3, now });
+  // Looking at only nine records made a 500-target queue appear empty whenever
+  // its first few entries were outside their local calling windows. Scan a
+  // bounded but useful slice; research still runs only until enough eligible
+  // legs have been claimed.
+  const scanLimit = Math.max(60, wanted * 20);
+  const candidates = await eligibleTargets(db, session.campaignId, { limit: scanLimit, now });
 
   const provider = getCallingProvider(campaign.provider, providerConfig);
   const started = [];
@@ -499,7 +577,26 @@ export async function dialNext(db, sessionId, { now = new Date(), providerConfig
     claimedTargets.push({ ...target, compliance, research: briefResult.research });
   }
 
-  if (!claimedTargets.length) return { started: [], rejected, reason: 'no_eligible_targets' };
+  if (!claimedTargets.length) {
+    const liveCounts = rejected.length
+      ? await refreshCampaignCounts(db, session.campaignId)
+      : (campaign.counts || emptyCampaignCounts());
+    const rejectedByReason = rejected.reduce((summary, entry) => {
+      const reason = clean(entry.reason, 100) || 'unknown';
+      summary[reason] = (summary[reason] || 0) + 1;
+      return summary;
+    }, {});
+    return {
+      started: [],
+      rejected,
+      reason: 'no_eligible_targets',
+      availability: {
+        counts: liveCounts,
+        scanned: candidates.length,
+        rejectedByReason
+      }
+    };
+  }
 
   // Dial. A provider failure releases the legs it did claim — a locked target
   // with no call attached is a target nobody can reach.
@@ -546,7 +643,22 @@ export async function dialNext(db, sessionId, { now = new Date(), providerConfig
     lastHeartbeatAt: Timestamp.fromDate(now)
   }, { merge: true });
 
-  return { started, rejected, requiresAgentAction: legs.some(leg => !leg.providerCallId) };
+  const liveCounts = await refreshCampaignCounts(db, session.campaignId);
+
+  return {
+    started,
+    rejected,
+    requiresAgentAction: legs.some(leg => !leg.providerCallId),
+    availability: {
+      counts: liveCounts,
+      scanned: candidates.length,
+      rejectedByReason: rejected.reduce((summary, entry) => {
+        const reason = clean(entry.reason, 100) || 'unknown';
+        summary[reason] = (summary[reason] || 0) + 1;
+        return summary;
+      }, {})
+    }
+  };
 }
 
 /**
@@ -1022,6 +1134,7 @@ export async function moveToCallLater(db, id, { minutes = 1440, reason = 'reques
     nextAttemptAt,
     extra: { requeueReason: clean(reason, 60), lastDisposition: 'call_later' }
   });
+  if (target.campaignId) await refreshCampaignCounts(db, target.campaignId);
   return { ok: true, nextAttemptAt };
 }
 

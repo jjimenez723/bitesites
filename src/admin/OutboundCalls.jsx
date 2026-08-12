@@ -147,7 +147,12 @@ export default function OutboundCalls() {
               onSelectCampaign={setCampaignId} onOpenProspect={setProspectId} />
           )}
           {tab === 'dialer' && (
-            <DialerControls campaignId={campaignId} campaigns={campaigns.rows} onSelectCampaign={setCampaignId} />
+            <DialerControls
+              campaignId={campaignId}
+              campaigns={campaigns.rows}
+              onSelectCampaign={setCampaignId}
+              onOpenQueue={() => setTab('queue')}
+            />
           )}
           {tab === 'agents' && <AgentProfiles />}
           {tab === 'later' && (

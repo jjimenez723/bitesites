@@ -47,6 +47,47 @@ export function useOutboundQuery(build, deps = []) {
   return { ...state, refresh: run };
 }
 
+/**
+ * A query that stays subscribed after its first result. Operational dialer
+ * data uses this hook so provider webhooks and another admin tab are reflected
+ * without a manual Refresh click.
+ */
+export function useLiveOutboundQuery(build, deps = []) {
+  const [state, setState] = useState({ rows: [], loading: true, error: null, capped: false });
+  const [revision, setRevision] = useState(0);
+  const refresh = useCallback(() => setRevision(value => value + 1), []);
+
+  useEffect(() => {
+    let built;
+    try {
+      built = build();
+    } catch (error) {
+      setState({ rows: [], loading: false, capped: false, error: friendlyError(error) });
+      return undefined;
+    }
+    if (!built) {
+      setState({ rows: [], loading: false, error: null, capped: false });
+      return undefined;
+    }
+
+    setState(current => ({ ...current, loading: true, error: null }));
+    return onSnapshot(
+      built.q,
+      snapshot => {
+        const list = rows(snapshot);
+        setState({ rows: list, loading: false, error: null, capped: built.cap ? list.length >= built.cap : false });
+      },
+      error => {
+        console.error('[outbound] live query failed', error);
+        setState({ rows: [], loading: false, capped: false, error: friendlyError(error) });
+      }
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [...deps, revision]);
+
+  return { ...state, refresh };
+}
+
 export function useLiveDoc(path) {
   const [state, setState] = useState({ data: null, loading: true, error: null });
   useEffect(() => {
@@ -74,13 +115,14 @@ export function useLiveCalls(callIds = []) {
     const ids = (callIds || []).filter(Boolean).slice(-20);
     if (!ids.length) { setState({ rows: [], loading: false, error: null }); return undefined; }
     const values = new Map();
-    let remaining = ids.length;
+    const initialized = new Set();
+    setState({ rows: [], loading: true, error: null });
     const unsubscribers = ids.map(callId => onSnapshot(
       doc(db, 'calls', callId),
       snapshot => {
         values.set(callId, snapshot.exists() ? { id: snapshot.id, ...snapshot.data() } : null);
-        remaining = Math.max(0, remaining - 1);
-        setState({ rows: ids.map(id => values.get(id)).filter(Boolean), loading: remaining > 0, error: null });
+        initialized.add(callId);
+        setState({ rows: ids.map(id => values.get(id)).filter(Boolean), loading: initialized.size < ids.length, error: null });
       },
       error => setState(current => ({ ...current, loading: false, error: friendlyError(error) }))
     ));
@@ -110,7 +152,7 @@ export function useCallTurns(callId) {
 }
 
 export const useCampaigns = () =>
-  useOutboundQuery(() => ({
+  useLiveOutboundQuery(() => ({
     cap: LIST_CAP,
     q: query(collection(db, 'outboundCampaigns'), orderBy('createdAt', 'desc'), limit(LIST_CAP))
   }), []);
@@ -155,7 +197,7 @@ export const useScrapeJobs = () =>
   }), []);
 
 export const useTargets = (campaignId, { states = null } = {}) =>
-  useOutboundQuery(() => {
+  useLiveOutboundQuery(() => {
     if (!campaignId) return null;
     const clauses = [where('campaignId', '==', campaignId)];
     if (states?.length) clauses.push(where('state', 'in', states.slice(0, 10)));
@@ -253,6 +295,7 @@ export const outbound = {
   doNotCall: targetId => callable('markTargetDoNotCall', { targetId }),
 
   // Hybrid Dialer V2.
+  getActiveHybridSession: () => callable('getActiveHybridDialerSession'),
   startHybridSession: (campaignId, { agentProfileId, sessionOverride = {}, autoTakeover = false } = {}) =>
     callable('startHybridDialerSession', { campaignId, agentProfileId, sessionOverride, autoTakeover }),
   dialHybrid: sessionId => callable('dialHybridTargets', { sessionId }),

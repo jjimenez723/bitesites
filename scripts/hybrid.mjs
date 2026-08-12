@@ -74,6 +74,7 @@ const HYBRID_FUNCTIONS = [
   'recordHybridCallEvent',
   'hybridAIMediaControl',
   'openAIRealtimeIncomingCall',
+  'getActiveHybridDialerSession',
   'startHybridDialerSession',
   'heartbeatHybridDialerSession',
   'dialHybridTargets',
