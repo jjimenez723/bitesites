@@ -39,6 +39,7 @@ import {
 import { contactKey, approveResearch, loadResearch, researchContact, saveResearch } from './lead-enrichment.js';
 import { loadContactForTarget } from './outbound-contacts.js';
 import { clean } from './prospect-normalization.js';
+import { hybridOutboundEventsUrl } from './hybrid-urls.js';
 
 // ------------------------------------------------------------------- secrets
 
@@ -156,7 +157,15 @@ export const getOutboundConfig = onCall({ ...callOptions, secrets: OUTBOUND_CONF
   const providers = await Promise.all(describeCallingProviders().map(async provider => {
     let health = { ok: false, missing: provider.requiredSecrets };
     try {
-      health = await getCallingProvider(provider.id, providerConfigFor(provider.id)).healthCheck();
+      const providerConfig = providerConfigFor(provider.id);
+      // The dashboard describes the Hybrid V2 dialer. Its Twilio callbacks use
+      // the deployed Hybrid endpoint, which is derived from PUBLIC_APP_URL;
+      // OUTBOUND_WEBHOOK_URL belongs only to the retained legacy dialer.
+      if (provider.id === 'twilio') {
+        providerConfig.statusCallbackUrl = hybridOutboundEventsUrl();
+        providerConfig.hybridV2 = true;
+      }
+      health = await getCallingProvider(provider.id, providerConfig).healthCheck();
     } catch { /* keep the pessimistic default */ }
     return { ...provider, configured: health.ok, missingSecrets: health.missing || [] };
   }));
@@ -172,12 +181,13 @@ export const getOutboundConfig = onCall({ ...callOptions, secrets: OUTBOUND_CONF
 
 // -------------------------------------------------------------- discovery
 
-export const createLeadDiscoveryJob = onCall(callOptions, async request => {
+export const createLeadDiscoveryJob = onCall({ ...callOptions, secrets: [LEAD_SOURCE_API_KEY] }, async request => {
   const { db, email } = await requireAdmin(request);
   const jobId = await createDiscoveryJob(db, {
     provider: str(request.data?.provider, 40),
     criteria: request.data?.criteria || {},
-    createdBy: email
+    createdBy: email,
+    sourceOptions: { apiKey: secretValue(LEAD_SOURCE_API_KEY) }
   }).catch(error => { throw new HttpsError('invalid-argument', clean(error?.message, 300)); });
   return { jobId };
 });

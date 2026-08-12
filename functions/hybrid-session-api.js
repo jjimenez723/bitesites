@@ -19,6 +19,7 @@ import {
 import { getCallingProvider, assertSupports } from './providers/calling/index.js';
 import { clean } from './prospect-normalization.js';
 import { recordCallAuditEvent } from './hybrid-call-orchestration.js';
+import { hybridOutboundEventsUrl } from './hybrid-urls.js';
 
 const TWILIO_ACCOUNT_SID = defineSecret('TWILIO_ACCOUNT_SID');
 const TWILIO_AUTH_TOKEN = defineSecret('TWILIO_AUTH_TOKEN');
@@ -69,14 +70,13 @@ async function requireOwnedSession(db, sessionId, uid) {
 }
 
 function twilioConfig() {
-  const publicUrl = (process.env.PUBLIC_APP_URL || 'https://bitesites.org').replace(/\/$/, '');
   return {
     accountSid: secretValue(TWILIO_ACCOUNT_SID),
     authToken: secretValue(TWILIO_AUTH_TOKEN),
     twimlAppSid: secretValue(TWILIO_TWIML_APP_SID),
     apiKeySid: secretValue(TWILIO_API_KEY_SID),
     apiKeySecret: secretValue(TWILIO_API_KEY_SECRET),
-    statusCallbackUrl: `${publicUrl}/api/hybrid-outbound-events`,
+    statusCallbackUrl: hybridOutboundEventsUrl(),
     hybridV2: true
   };
 }

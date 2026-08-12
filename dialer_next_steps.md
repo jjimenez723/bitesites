@@ -25,13 +25,11 @@ gated on human approval.
 
 ## Phase 1 — Get it running (blocking, in order)
 
-### Step 1 — Inspect the source Firebase project
+### Step 1 — Inspect the source Firebase project — completed 2026-08-12
 
-> The Watcher migration tool (`scripts/migrate-watcher-leads.mjs`) was written
-> against a schema derived from the source repository's code
-> (`~/Dialer/executions/_firebase.py`), because live Firestore in
-> `watcher-leads-89349` was never queried — no credentials were available.
-> `CAPABILITY_INVENTORY.md` marks every count in it as unverified.
+> Completed against live Firestore. The source remained read-only; the verified
+> collection map and exact counts are recorded in `WATCHER_MIGRATION.md` and
+> `CAPABILITY_INVENTORY.md`.
 >
 > Authenticate and close that gap:
 >
@@ -337,7 +335,7 @@ gated on human approval.
 
 ## Phase 4 — Approval gates (sequential, human-blocked)
 
-### Step 10 — Migration dry run and review
+### Step 10 — Migration dry run and review — completed 2026-08-12
 
 > With Step 1 done and credentials in place, rehearse the Watcher migration.
 > Read `WATCHER_MIGRATION.md` first.
@@ -469,7 +467,7 @@ gated on human approval.
 > Done when: `/admin/outbound` loads on the live domain, the public marketing
 > site is byte-identical in behaviour, and both API rewrites respond.
 
-### Step 14 — Production migration
+### Step 14 — Production migration — completed 2026-08-12
 
 > **This requires separate, explicit written approval from the repository owner.**
 > Do not run it on the strength of this document.

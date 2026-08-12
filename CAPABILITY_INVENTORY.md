@@ -26,27 +26,23 @@ into BiteSites, which is Node 22 / React 19.
 
 | Role | Project | How it was inspected |
 |---|---|---|
-| Source | `watcher-leads-89349` | **Schema only, from code.** No live connection was made — see the limitation below. |
+| Source | `watcher-leads-89349` | Live Firestore inspection completed 2026-08-12; production source remained read-only. |
 | Destination | `bitesites-org` | `.firebaserc`, `firestore.rules`, `firestore.indexes.json`, `functions/index.js` |
 
-> **Not verified.** Live Firestore in `watcher-leads-89349` was never queried.
-> `firebase`/`gcloud` authentication was not available in the session that
-> produced this work, so document counts, real field distributions and the
-> destination collision count are unknown. The collection names, field names and
-> ICP routing rule below are derived from the source project's own schema
-> definitions (`executions/_firebase.py`) and `firestore.rules`, which are
-> authoritative for what the pipeline writes but cannot tell you how much of it
-> there is. **Run `node scripts/migrate-watcher-leads.mjs --inspect` before
-> trusting any count**; it produces the §16 source-data report against the live
-> project.
+Live inspection on 2026-08-12 verified the code-derived schema against Firestore.
+It also found the legacy `leads` duplicate and proved the Phase-4 `companies` /
+`smb_contacts` joins before production migration. The source was backed up and
+remained read-only throughout the BiteSites transfer; see `WATCHER_MIGRATION.md`
+for exact counts and the run record.
 
 ## Source Firestore collections (from code)
 
 | Collection | Sample field names | Timestamp fields | Personal data | Likely duplicate keys | Airbnb? | Proposed destination | Transformation | Safe to migrate? |
 |---|---|---|---|---|---|---|---|---|
 | `smb_leads` | link, name, source, sources[], source_count, industry, field, location, review_count, score, reason, services, ingest_status, phone, website, email, email_domain_type, google_rating, google_review_count, contact_first_name, contact_last_name, additional_contacts[], enrichment_*, verification_*, descriptor, status, assigned_to, notes | verification_checked_at, created_at, updated_at | name, phone, email, contact names, address-in-`location` | `link` (doc id is its hash), `website`, `phone`, `email` | No | `prospects` | normalise + dedupe + source attribution | Yes, after review |
-| `companies` | Phase-4 company grain: link, name, source, sources[], industry, field, descriptor, location, review_count, score, reason, services, phone, website, google_rating, google_review_count, enrichment_*, is_airbnb + Airbnb-only columns | created_at, updated_at | name, phone | `link` | Carries `is_airbnb` — rows with it set are excluded | `prospects` | same | Yes, after review |
-| `smb_contacts` | Phase-4 person grain: company_id, link, email, first_name, last_name, persona_role, email_domain_type, email_source, email_confidence, email_type, verification_status, descriptor, is_primary | verification_checked_at | email, person names | `email`, `company_id` | No | `prospects` | same | Yes, after review |
+| `companies` | Phase-4 company grain: link, name, source, sources[], industry, field, descriptor, location, review_count, score, reason, services, phone, website, google_rating, google_review_count, enrichment_*, is_airbnb + Airbnb-only columns | created_at, updated_at | name, phone | `link` | Carries `is_airbnb` — rows with it set are excluded | dedupe verification | Projection of authoritative lead rows; scan and reconcile only | Yes, but never create a second prospect |
+| `smb_contacts` | Phase-4 person grain: company_id, link, email, first_name, last_name, persona_role, email_domain_type, email_source, email_confidence, email_type, verification_status, descriptor, is_primary | verification_checked_at | email, person names | `email`, `company_id` | No | `prospects.contacts[]` | Join by `company_id`, union by normalized email | Yes, when the parent has a valid canonical prospect |
+| `leads` | Legacy pre-split company grain | mixed | name, phone, email | doc id / link | Mixed | — | — | No — every live id duplicates `smb_leads` or `airbnb_leads` |
 | `airbnb_leads` | Everything above plus signals{}, host_name, host_listings_count, is_superhost, room_type, price, rating, photo_count, max_photo_width, photos[], external_links[], needs_photo_review, photo_quality, photo_issues, photo_reason | — | host names | `link` | **Yes** | — | — | **No — Airbnb ICP** |
 | `airbnb_contacts` | person grain for the Airbnb ICP (expected ~empty) | — | email | `email` | **Yes** | — | — | **No — Airbnb ICP** |
 | `content` | lead_id, hook, point, example, format, post | — | — | `lead_id` | Shared | — | — | No — outreach copy, not a contact |
@@ -57,6 +53,7 @@ into BiteSites, which is Node 22 / React 19.
 | `kixie_sessions` | lead ids, consent, per-lead results, status | — | — | — | No | — | — | No — the other dashboard's session log |
 | `access` / `access_requests` | email, scopes[] | — | email | — | No | — | — | No — the other dashboard's access control |
 | `spend` / `run_requests` / `video_requests` | operational job queues and cost accounting | — | — | — | Mixed | — | — | No |
+| `mcp_oauth` | OAuth clients, authorization codes, tokens and redirect metadata | mixed | client names, contacts | client id | No | — | — | No — credentials for the other application |
 
 The ICP routing rule in the source is `is_airbnb_lead(row)`: `source == 'airbnb'`
 or `'airbnb' in sources`. BiteSites re-implements it in
@@ -82,7 +79,7 @@ further** — see the Airbnb boundary section.
 | **Idempotency** | doc id = hash of `link`; upsert |
 | **Reusable as-is?** | No — Python, and coupled to the `runs/` file protocol |
 | **Needs refactoring?** | Yes — rebuilt as a provider-neutral adapter interface |
-| **BiteSites destination** | `functions/providers/lead-sources/` (`adapter.js`, `google-places.js`, `mock-source.js`, `csv-source.js`) |
+| **BiteSites destination** | `functions/providers/lead-sources/` (`adapter.js`, `google-places.js`, `mock-source.js`, `csv-source.js`); Google Places credential and both callables live-verified/deployed 2026-08-12 |
 | **Airbnb dependency?** | No, but shares `_store.py` with `discover_airbnb.py` — the generic parts were extracted, the Airbnb adapter left behind |
 | **Security** | Provider keys must be server-side only; Google Places' caching/redistribution terms are stricter than most and are **unverified** |
 

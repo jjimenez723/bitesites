@@ -53,12 +53,18 @@ export function sanitizeCriteria(input = {}) {
   return criteria;
 }
 
-export async function createDiscoveryJob(db, { provider, criteria, createdBy, executionMode = '' }) {
+export async function createDiscoveryJob(db, {
+  provider, criteria, createdBy, executionMode = '', sourceOptions = {}
+}) {
   const clean_ = sanitizeCriteria(criteria);
   const validity = validateCriteria(clean_);
   if (!validity.valid) throw new Error(validity.errors.join(' '));
 
-  const source = getLeadSource(provider);
+  // Configuration is injected by the callable from Secret Manager. Keeping it
+  // out of the job document means provider credentials never reach Firestore or
+  // the browser, while still letting validateConfig fail before a queued job
+  // burns a function invocation.
+  const source = getLeadSource(provider, sourceOptions);
   const config = await source.validateConfig(clean_);
   if (!config.valid) throw new Error(config.errors.join(' '));
 

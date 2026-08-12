@@ -60,6 +60,12 @@ export function isAirbnbRecord(raw = {}) {
 
   for (const key of Object.keys(raw)) {
     const lower = key.toLowerCase();
+    // `companies` and `*_contacts` are projections of both ICPs and therefore
+    // store `is_airbnb: false` on every SMB row. The false discriminator is
+    // evidence that the row is *not* Airbnb, while `is_airbnb: true` was
+    // handled above. Other listing-only fields remain suspicious even when
+    // their value is false (for example `is_superhost: false`).
+    if (lower === 'is_airbnb') continue;
     if (AIRBNB_FIELD_MARKERS.some(marker => lower.includes(marker))) return true;
   }
   for (const key of ['link', 'website', 'industry', 'field', 'category']) {

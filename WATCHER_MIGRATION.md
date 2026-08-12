@@ -2,9 +2,10 @@
 
 Source: `watcher-leads-89349` (read-only) → Destination: `bitesites-org`
 
-> **No production migration has been run.** Creating and testing the tool was
-> the assignment; executing it needs separate explicit approval. Everything
-> below defaults to a dry run.
+> **Production migration completed 2026-08-12.** Import run
+> `v5fDnObrQFYOLgWHTIgt` completed with zero failures. Its source backup is
+> `gs://watcher-leads-89349-firestore-backups/pre-bitesites-migration-20260812T165228Z`.
+> Re-runs remain idempotent and still default to dry-run.
 
 ## What is being migrated, and what a prospect is
 
@@ -69,19 +70,27 @@ passed.
 | Source collection | Destination | Notes |
 |---|---|---|
 | `smb_leads` | `prospects` | The main company-grained corpus |
-| `companies` | `prospects` | Phase-4 company grain; same id as its lead doc |
-| `smb_contacts` | `prospects` | Phase-4 person grain; joins to a company by `company_id` |
+| `companies` | dedupe verification only | Phase-4 projection of `smb_leads`/`airbnb_leads`; every live id overlaps an authoritative lead row, so it is scanned to prove the duplicate or Airbnb verdict but never creates a second prospect |
+| `smb_contacts` | `prospects.contacts[]` | Phase-4 person projection; joined to the canonical prospect by `company_id`, preserving primary and additional people without creating company-less prospect duplicates |
 
 Everything else is excluded, with the reason recorded in `EXCLUDED_COLLECTIONS`:
 
 | Excluded | Why |
 |---|---|
+| `leads` | Legacy pre-split duplicate; all 1,248 live ids already exist in `smb_leads` or `airbnb_leads` |
 | `airbnb_leads`, `airbnb_contacts` | **Airbnb ICP — stays in its own application** |
 | `content`, `videos` | Outreach copy and video assets, not contact records |
 | `lead_generation_log`, `smartlead_*`, `campaign_health_snapshot`, `inbox_health_snapshot`, `subject_variant_performance` | Email-channel telemetry and configuration |
 | `access`, `access_requests` | Access control for the other dashboard |
 | `spend`, `run_requests`, `video_requests` | The other pipeline's job queues and cost accounting |
 | `outreach_requests`, `kixie_sessions` | The other dashboard's request and session logs |
+| `mcp_oauth` | OAuth clients and tokens for the other application |
+
+Live inspection on 2026-08-12 found 34,838 `smb_leads`, 6,835
+`airbnb_leads`, 17,349 `companies`, and 1,485 `smb_contacts`. Every company
+projection overlaps an authoritative lead id (16,117 SMB, 1,232 Airbnb), and
+all 1,485 contact rows join to a company. That is why the projections are
+reconciled into the canonical prospect rather than independently inserted.
 
 > The map was derived from the source project's own schema definitions
 > (`executions/_firebase.py`), not guessed — but **`--inspect` re-derives it from
@@ -105,6 +114,7 @@ Everything else is excluded, with the reason recorded in `EXCLUDED_COLLECTIONS`:
 | `reason` / `notes` | `notes` | preserved |
 | `sources[]` | `tags[]` | deduplicated |
 | `contact_first_name` | `firstName` | role-inbox names rejected (`info`, `admin`, …) |
+| `smb_contacts` person fields | `contacts[]` | joined by `company_id`; email/name/role/verification provenance and source contact id preserved |
 | `link` | `source.sourceUrl` | preserved |
 | doc id | `source.sourceDocumentId`, `source.providerRecordId` | preserved |
 | `ghl_contact_id` (fork only) | `providerContactId` | so the CRM contact is reused rather than duplicated |
@@ -222,6 +232,35 @@ Every migrated prospect carries `importRunId`. To archive a batch, query
 `prospects` by that field and set `lifecycle.status: 'archived'` — a soft
 archive rather than a delete, so the source attribution survives for audit.
 There is no automatic rollback; a batch archive is the strategy.
+
+## Production run record — 2026-08-12
+
+| Count | Value |
+|---|---:|
+| scanned | 52,187 |
+| mapped | 17,013 |
+| created | 12,695 |
+| updated | 0 |
+| skipped | 1,234 |
+| duplicates | 20,435 |
+| invalid | 17,823 |
+| failed | 0 |
+| airbnbExcluded | 1,232 |
+
+The live run matched the full dry run exactly. Post-write verification found
+12,695 documents carrying the run id, 20/20 source-to-destination spot checks
+matched for normalized phone, email, and source attribution, and each sampled
+prospect had an import activity. `leads` remained 15 documents and campaigns /
+targets remained 2 / 1, proving the migration did not create inbound conversions
+or enroll prospects in campaigns.
+
+Of 1,485 `smb_contacts` rows, 1,243 source rows from 771 valid companies were
+attached to canonical prospects. Duplicate email addresses were unioned with
+all source contact ids retained, producing 1,161 unique embedded contact entries.
+That includes 59 company duplicates whose people were redirected to the
+surviving prospect. The remaining 242 contact rows belong to 242 source
+companies with no usable company name and no confirmed canonical match; they
+were deliberately not attached to an unrelated company.
 
 ## Tests
 

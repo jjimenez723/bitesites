@@ -43,9 +43,11 @@ const { initializeApp, cert, applicationDefault } = require_('firebase-admin/app
 const { getFirestore, Timestamp, FieldValue } = require_('firebase-admin/firestore');
 
 const {
-  buildProspect, validateProspect, deterministicId, clean
+  buildProspect, validateProspect, deterministicId, clean,
+  normalizeCompanyKey, normalizeDomain, normalizeEmail, normalizeFirstName,
+  normalizePhone
 } = await import('../functions/prospect-normalization.js');
-const { findDuplicates, duplicateVerdict, dedupeWithinBatch } = await import('../functions/prospect-deduplication.js');
+const { classifyMatch, duplicateVerdict, dedupeWithinBatch } = await import('../functions/prospect-deduplication.js');
 const {
   isAirbnbRecord, classifyWatcherRecord, WatcherWorkflowSource
 } = await import('../functions/providers/lead-sources/existing-watcher-source.js');
@@ -70,11 +72,22 @@ const DEST_PROJECT = process.env.BITESITES_DEST_PROJECT || 'bitesites-org';
 // ---------------------------------------------------------------------------
 const COLLECTION_MAP = {
   smb_leads: { destination: 'prospects', system: 'watcher_leads', grain: 'company' },
-  companies: { destination: 'prospects', system: 'watcher_leads', grain: 'company' },
-  smb_contacts: { destination: 'prospects', system: 'watcher_leads', grain: 'person' }
+  // `companies` is a Phase-4 projection of smb_leads/airbnb_leads. Keeping it
+  // in the scan is intentional: the in-run deduper proves every SMB projection
+  // resolves to the canonical smb_leads record, while the Airbnb projection is
+  // independently caught and counted by the row-level boundary.
+  companies: { destination: 'prospects', system: 'watcher_leads', grain: 'company_projection' }
+};
+
+const SUPPLEMENTAL_COLLECTIONS = {
+  // This is another Phase-4 projection, derived from the primary email and
+  // `additional_contacts` on smb_leads. It enriches the parent prospect's
+  // `contacts[]` array instead of becoming a second, company-less prospect.
+  smb_contacts: { destination: 'prospects.contacts', joinField: 'company_id' }
 };
 
 const EXCLUDED_COLLECTIONS = {
+  leads: 'Legacy pre-split duplicate — authoritative rows are in smb_leads / airbnb_leads',
   airbnb_leads: 'Airbnb ICP — stays in its own application',
   airbnb_contacts: 'Airbnb ICP — stays in its own application',
   content: 'Outreach copy, not a contact record',
@@ -92,7 +105,8 @@ const EXCLUDED_COLLECTIONS = {
   video_requests: 'Job queue for the other pipeline',
   outreach_requests: 'HighLevel SMS/Voice-AI request log',
   kixie_sessions: 'Kixie PowerList session log',
-  kixie_call_events: 'Kixie webhook events for the other dashboard'
+  kixie_call_events: 'Kixie webhook events for the other dashboard',
+  mcp_oauth: 'OAuth clients and tokens for the other application'
 };
 
 const BATCH_SIZE = 200;
@@ -157,6 +171,7 @@ async function inspectSource(source, dest, args) {
 
     const excluded = EXCLUDED_COLLECTIONS[name];
     const mapping = COLLECTION_MAP[name];
+    const supplemental = SUPPLEMENTAL_COLLECTIONS[name];
     const sample = await source.collection(name).limit(5).get();
 
     // Firestore has no cheap exact count for a large collection; a bounded
@@ -187,9 +202,14 @@ async function inspectSource(source, dest, args) {
       piiFields: [...piiFields].sort(),
       likelyDuplicateKeys: ['link', 'website', 'phone', 'email'].filter(key => fields.has(key)),
       airbnbRelated: Boolean(excluded?.includes('Airbnb')) || airbnbHits > 0,
-      proposedDestination: mapping?.destination || '(not migrated)',
-      transformationRequired: mapping ? 'normalise + dedupe + source attribution' : 'n/a',
-      safeToMigrate: mapping ? 'yes, after review' : `no — ${excluded || 'not in the collection map'}`
+      proposedDestination: mapping?.destination || supplemental?.destination || '(not migrated)',
+      transformationRequired: mapping
+        ? 'normalise + dedupe + source attribution'
+        : supplemental ? `join to parent by ${supplemental.joinField}` : 'n/a',
+      safeToMigrate: mapping
+        ? 'yes, after review'
+        : supplemental ? 'yes — supplemental read only; embedded on its parent prospect'
+          : `no — ${excluded || 'not in the collection map'}`
     });
   }
 
@@ -231,6 +251,177 @@ async function inspectSource(source, dest, args) {
 /** Deterministic destination id — the whole idempotency guarantee (§18). */
 const destinationId = (collection, sourceDocId) => deterministicId('watcher', collection, sourceDocId);
 
+const addToIndex = (index, key, entryKey, entry) => {
+  if (!key) return;
+  const bucket = index.get(key) || new Map();
+  bucket.set(entryKey, entry);
+  index.set(key, bucket);
+};
+
+/**
+ * In-memory equivalent of findDuplicates for a one-off large migration.
+ *
+ * Loading the small destination once avoids issuing up to seven Firestore
+ * queries for each of ~50k source/projection rows. New accepted prospects are
+ * added immediately in both dry-run and execute modes, so duplicates across
+ * pages and across smb_leads/companies are reported identically in rehearsal
+ * and production.
+ */
+class MigrationDedupeIndex {
+  constructor() {
+    this.byCanonical = new Map();
+    this.byPhone = new Map();
+    this.byEmail = new Map();
+    this.byWebsite = new Map();
+    this.byCompany = new Map();
+    this.entries = new Map();
+    this.keysByEntry = new Map();
+    this.prospectById = new Map();
+  }
+
+  add(type, id, data) {
+    const entryKey = `${type}:${id}`;
+    const previousKeys = this.keysByEntry.get(entryKey);
+    if (previousKeys) {
+      for (const [index, key] of previousKeys) {
+        const bucket = index.get(key);
+        bucket?.delete(entryKey);
+        if (bucket && !bucket.size) index.delete(key);
+      }
+    }
+
+    const entry = { type, id, data };
+    const canonical = clean(data.dedupe?.canonicalKey, 500);
+    const phone = normalizePhone(data.phoneE164 || data.phone);
+    const email = normalizeEmail(data.email);
+    const website = normalizeDomain(data.website || data.dedupe?.normalizedWebsite);
+    const company = data.dedupe?.normalizedCompany
+      || normalizeCompanyKey(data.companyName || data.name);
+    const keys = [
+      [this.byCanonical, canonical], [this.byPhone, phone],
+      [this.byEmail, email], [this.byWebsite, website],
+      [this.byCompany, company]
+    ].filter(([, key]) => key);
+
+    for (const [index, key] of keys) addToIndex(index, key, entryKey, entry);
+    this.entries.set(entryKey, entry);
+    this.keysByEntry.set(entryKey, keys);
+    if (type === 'prospect') this.prospectById.set(id, data);
+  }
+
+  matches(prospect, { excludeId = '' } = {}) {
+    const canonical = clean(prospect.dedupe?.canonicalKey, 500);
+    const phone = normalizePhone(prospect.phoneE164 || prospect.phone);
+    const email = normalizeEmail(prospect.email);
+    const website = normalizeDomain(prospect.website || prospect.dedupe?.normalizedWebsite);
+    const company = prospect.dedupe?.normalizedCompany
+      || normalizeCompanyKey(prospect.companyName || prospect.name);
+    const lookups = [
+      [this.byCanonical, canonical], [this.byPhone, phone],
+      [this.byEmail, email], [this.byWebsite, website],
+      [this.byCompany, company]
+    ];
+    const candidates = new Map();
+    for (const [index, key] of lookups) {
+      if (!key) continue;
+      for (const [entryKey, entry] of index.get(key) || []) candidates.set(entryKey, entry);
+    }
+
+    const results = [];
+    for (const [entryKey, entry] of candidates) {
+      if (entry.type === 'prospect' && entry.id === excludeId) continue;
+      const sameCanonical = canonical
+        && canonical === clean(entry.data.dedupe?.canonicalKey, 500);
+      const verdict = sameCanonical
+        ? { status: 'confirmed', confidence: 1, reasons: ['canonical_key'] }
+        : classifyMatch(prospect, entry.data);
+      if (verdict.status !== 'unique') results.push({ type: entry.type, id: entry.id, ...verdict });
+    }
+    results.sort((a, b) => b.confidence - a.confidence);
+    return results;
+  }
+}
+
+async function loadDestinationIndex(dest) {
+  const index = new MigrationDedupeIndex();
+  const [prospects, leads] = await Promise.all([
+    dest.collection('prospects').get(),
+    dest.collection('leads').get()
+  ]);
+  for (const doc of prospects.docs) index.add('prospect', doc.id, doc.data());
+  for (const doc of leads.docs) index.add('lead', doc.id, doc.data());
+  console.log(`Destination dedupe index: ${prospects.size} prospects, ${leads.size} inbound leads.`);
+  return index;
+}
+
+const normalizeSupplementalContact = (id, raw = {}) => ({
+  email: normalizeEmail(raw.email),
+  firstName: normalizeFirstName(raw.first_name),
+  lastName: clean(raw.last_name, 80),
+  role: clean(raw.persona_role, 80),
+  emailDomainType: clean(raw.email_domain_type, 40),
+  emailSource: clean(raw.email_source, 60),
+  emailConfidence: Number.isFinite(Number(raw.email_confidence)) ? Number(raw.email_confidence) : null,
+  emailType: clean(raw.email_type, 40),
+  verificationStatus: clean(raw.verification_status, 40),
+  verificationCheckedAt: raw.verification_checked_at || null,
+  isPrimary: raw.is_primary === true,
+  sourceCollection: 'smb_contacts',
+  sourceDocumentId: id
+});
+
+const mergeSupplementalContacts = (...groups) => {
+  const byEmail = new Map();
+  for (const contact of groups.flat()) {
+    const email = normalizeEmail(contact?.email);
+    if (!email) continue;
+    const previous = byEmail.get(email) || {};
+    byEmail.set(email, stripUndefined({
+      ...previous,
+      ...contact,
+      email,
+      isPrimary: previous.isPrimary === true || contact.isPrimary === true,
+      sourceDocumentIds: [...new Set([
+        ...(previous.sourceDocumentIds || []), previous.sourceDocumentId,
+        ...(contact.sourceDocumentIds || []), contact.sourceDocumentId
+      ].filter(Boolean))]
+    }));
+  }
+  return [...byEmail.values()]
+    .sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary) || a.email.localeCompare(b.email));
+};
+
+async function loadSupplementalContacts(source) {
+  const snapshot = await source.collection('smb_contacts').orderBy('__name__').get();
+  const byCompany = new Map();
+  let accepted = 0;
+  for (const doc of snapshot.docs) {
+    const raw = doc.data();
+    if (isAirbnbRecord(raw)) continue;
+    const companyId = clean(raw.company_id, 200);
+    const contact = normalizeSupplementalContact(doc.id, raw);
+    if (!companyId || !contact.email) continue;
+    byCompany.set(companyId, [...(byCompany.get(companyId) || []), contact]);
+    accepted += 1;
+  }
+  for (const contacts of byCompany.values()) {
+    contacts.sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary) || a.email.localeCompare(b.email));
+  }
+  console.log(`Supplemental contacts: ${accepted} people joined to ${byCompany.size} companies.`);
+  return byCompany;
+}
+
+async function loadAuthoritativeSourceIds(source) {
+  const [smb, airbnb] = await Promise.all([
+    source.collection('smb_leads').select().get(),
+    source.collection('airbnb_leads').select().get()
+  ]);
+  return {
+    smb: new Set(smb.docs.map(doc => doc.id)),
+    airbnb: new Set(airbnb.docs.map(doc => doc.id))
+  };
+}
+
 function adapterFor(collection) {
   // The BiteSites-Leads fork adds `ghl_contact_id` and consent fields to the
   // same documents; using its adapter for every collection preserves them when
@@ -244,7 +435,9 @@ async function migrateCollection({ source, dest, collection, mapping, args, run,
   let processed = 0;
 
   for (;;) {
-    let query = source.collection(collection).orderBy('__name__').limit(BATCH_SIZE);
+    const remaining = args.limit ? args.limit - processed : BATCH_SIZE;
+    if (remaining <= 0) break;
+    let query = source.collection(collection).orderBy('__name__').limit(Math.min(BATCH_SIZE, remaining));
     if (cursor) query = query.startAfter(cursor);
     const snapshot = await query.get();
     if (snapshot.empty) break;
@@ -255,7 +448,28 @@ async function migrateCollection({ source, dest, collection, mapping, args, run,
       processed += 1;
       const data = doc.data();
 
-      const classification = classifyWatcherRecord(data);
+      if (mapping.grain === 'company_projection') {
+        if (run.authoritativeSourceIds.airbnb.has(doc.id) || isAirbnbRecord(data)) {
+          counters.airbnbExcluded += 1;
+          counters.skipped += 1;
+        } else if (run.authoritativeSourceIds.smb.has(doc.id)) {
+          counters.duplicates += 1;
+        } else {
+          counters.failed += 1;
+          run.errors.push({
+            sourceDocumentId: doc.id,
+            reason: 'orphaned_company_projection',
+            detail: 'Company projection has no authoritative smb_leads or airbnb_leads row.'
+          });
+        }
+        continue;
+      }
+
+      const contacts = run.contactsByCompany.get(doc.id) || [];
+      const rawClassification = classifyWatcherRecord(data);
+      const classification = rawClassification === 'invalid_record' && contacts.length
+        ? 'cold_prospect'
+        : rawClassification;
       if (classification === 'airbnb_record') {
         counters.airbnbExcluded += 1;
         counters.skipped += 1;
@@ -266,7 +480,14 @@ async function migrateCollection({ source, dest, collection, mapping, args, run,
 
       let normalized;
       try {
-        normalized = adapter.normalize({ ...data, __docId: doc.id });
+        const primary = contacts.find(contact => contact.isPrimary) || contacts[0];
+        normalized = adapter.normalize({
+          ...data,
+          email: data.email || primary?.email,
+          contact_first_name: data.contact_first_name || primary?.firstName,
+          contact_last_name: data.contact_last_name || primary?.lastName,
+          __docId: doc.id
+        });
       } catch (error) {
         counters.failed += 1;
         run.errors.push({ sourceDocumentId: doc.id, reason: 'normalization_failed', detail: String(error?.message || error).slice(0, 300) });
@@ -286,6 +507,7 @@ async function migrateCollection({ source, dest, collection, mapping, args, run,
         },
         importRunId: run.id
       });
+      if (contacts.length) prospect.contacts = contacts;
 
       const validity = validateProspect(prospect);
       if (!validity.valid) {
@@ -300,13 +522,14 @@ async function migrateCollection({ source, dest, collection, mapping, args, run,
       counters.mapped += 1;
     }
 
-    // Same-batch duplicates first — a company and its contact row describe one
-    // business, and the person-grained collection routinely repeats a company.
+    // Same-page duplicates first. Cross-page and cross-collection duplicates
+    // are caught immediately afterwards by the run-wide destination index.
     const { unique, duplicates } = dedupeWithinBatch(built);
     counters.duplicates += duplicates.length;
 
     let batch = args.mode === 'execute' ? dest.batch() : null;
     let pending = 0;
+    const supplementalUpdates = new Map();
 
     for (const prospect of unique) {
       const id = prospect.__destinationId;
@@ -315,11 +538,18 @@ async function migrateCollection({ source, dest, collection, mapping, args, run,
       delete prospect.__classification;
       delete prospect.__batchId;
 
-      const matches = await findDuplicates(dest, prospect, { excludeId: id });
+      const matches = run.destinationIndex.matches(prospect, { excludeId: id });
       const verdict = duplicateVerdict(matches);
       const blocking = matches.find(match => match.status === 'confirmed' && !(match.type === 'prospect' && match.id === id));
       if (blocking) {
         counters.duplicates += 1;
+        if (blocking.type === 'prospect' && prospect.contacts?.length) {
+          const target = run.destinationIndex.prospectById.get(blocking.id) || {};
+          const contacts = mergeSupplementalContacts(target.contacts || [], prospect.contacts);
+          const merged = { ...target, contacts, updatedAt: Timestamp.now() };
+          run.destinationIndex.add('prospect', blocking.id, merged);
+          supplementalUpdates.set(blocking.id, contacts);
+        }
         if (run.samples.length < 25) run.samples.push({ id, name: prospect.name, action: 'skipped_duplicate', duplicateOf: `${blocking.type}:${blocking.id}` });
         continue;
       }
@@ -333,8 +563,8 @@ async function migrateCollection({ source, dest, collection, mapping, args, run,
             : prospect.contactability.complianceStatus === 'blocked' ? 'needs_review'
               : 'ready';
 
-      const existing = await dest.doc(`prospects/${id}`).get();
-      const isUpdate = existing.exists;
+      const existing = run.destinationIndex.prospectById.get(id) || null;
+      const isUpdate = Boolean(existing);
 
       if (run.samples.length < 25) {
         run.samples.push({
@@ -346,19 +576,20 @@ async function migrateCollection({ source, dest, collection, mapping, args, run,
 
       if (args.mode !== 'execute') {
         counters[isUpdate ? 'updated' : 'created'] += 1;
+        run.destinationIndex.add('prospect', id, prospect);
         continue;
       }
 
       const payload = stripUndefined({
         ...prospect,
-        createdAt: isUpdate ? (existing.get('createdAt') || Timestamp.now()) : Timestamp.now(),
+        createdAt: isUpdate ? (existing.createdAt || Timestamp.now()) : Timestamp.now(),
         updatedAt: Timestamp.now(),
         // A human decision in the destination always wins over a re-import.
         lifecycle: isUpdate
-          ? { ...prospect.lifecycle, ...(existing.get('lifecycle') || {}) }
+          ? { ...prospect.lifecycle, ...(existing.lifecycle || {}) }
           : prospect.lifecycle,
-        duplicate: isUpdate && existing.get('duplicate')?.reviewedBy
-          ? existing.get('duplicate')
+        duplicate: isUpdate && existing.duplicate?.reviewedBy
+          ? existing.duplicate
           : prospect.duplicate
       });
 
@@ -386,11 +617,29 @@ async function migrateCollection({ source, dest, collection, mapping, args, run,
       }
 
       counters[isUpdate ? 'updated' : 'created'] += 1;
+      run.destinationIndex.add('prospect', id, payload);
       pending += 2;
       if (pending >= WRITE_CHUNK) { await batch.commit(); batch = dest.batch(); pending = 0; }
     }
 
     if (args.mode === 'execute' && pending) await batch.commit();
+    if (args.mode === 'execute' && supplementalUpdates.size) {
+      let contactBatch = dest.batch();
+      let contactWrites = 0;
+      for (const [prospectId, contacts] of supplementalUpdates) {
+        contactBatch.set(dest.doc(`prospects/${prospectId}`), {
+          contacts,
+          updatedAt: Timestamp.now()
+        }, { merge: true });
+        contactWrites += 1;
+        if (contactWrites >= WRITE_CHUNK) {
+          await contactBatch.commit();
+          contactBatch = dest.batch();
+          contactWrites = 0;
+        }
+      }
+      if (contactWrites) await contactBatch.commit();
+    }
 
     cursor = snapshot.docs[snapshot.docs.length - 1];
     run.cursor[collection] = cursor.id;
@@ -495,8 +744,11 @@ async function main() {
     completedAt: null,
     cursor: {},
     errors: [],
-    samples: []
+    samples: [],
+    destinationIndex: await loadDestinationIndex(dest),
+    contactsByCompany: await loadSupplementalContacts(source)
   };
+  run.authoritativeSourceIds = await loadAuthoritativeSourceIds(source);
 
   if (args.resume) {
     const previous = await dest.doc(`importRuns/${run.id}`).get();
@@ -544,7 +796,11 @@ async function main() {
 }
 
 // Exported for the test, which drives the pure halves without a live project.
-export { parseArgs, destinationId, COLLECTION_MAP, EXCLUDED_COLLECTIONS, stripUndefined };
+export {
+  parseArgs, destinationId, COLLECTION_MAP, SUPPLEMENTAL_COLLECTIONS,
+  EXCLUDED_COLLECTIONS, MigrationDedupeIndex, mergeSupplementalContacts,
+  stripUndefined
+};
 
 if (process.argv[1] && process.argv[1].endsWith('migrate-watcher-leads.mjs')) {
   main().catch(error => { console.error(error); process.exit(1); });

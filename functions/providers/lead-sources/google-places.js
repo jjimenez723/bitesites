@@ -1,11 +1,10 @@
 // Google Places (New) Text Search as a lead source.
 //
-// UNVERIFIED AGAINST A LIVE ACCOUNT. The request/response shape below follows
-// the Places API (New) `places:searchText` contract, but nothing here has been
-// run against a real key in this repository — no key exists yet. Before
-// enabling it in production, confirm the current field mask, pricing tier and
-// Terms of Service (in particular the caching and redistribution limits, which
-// are stricter than most APIs) as LEAD_DISCOVERY_SETUP.md sets out.
+// The credential, endpoint and field mask were verified against the live
+// Places API on 2026-08-12. Before broad production use, confirm the current
+// pricing tier and Terms of Service (in particular the caching and
+// redistribution limits, which are stricter than most APIs) as
+// LEAD_DISCOVERY_SETUP.md sets out.
 //
 // The adapter is written anyway because the seam is the deliverable: the job
 // runner, dedupe and Import Review are exercised end to end by the mock source,
@@ -142,7 +141,7 @@ export class GooglePlacesLeadSource extends LeadSourceAdapter {
 
   async healthCheck() {
     return this.apiKey
-      ? { ok: true, detail: 'Key present; live behaviour unverified in this repository.' }
+      ? { ok: true, detail: 'Key present; endpoint and field mask live-verified 2026-08-12.' }
       : { ok: false, detail: 'LEAD_SOURCE_API_KEY is not configured.' };
   }
 }

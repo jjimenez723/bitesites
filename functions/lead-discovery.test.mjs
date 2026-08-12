@@ -72,6 +72,26 @@ check('the migrated sources cannot start a job',
   getLeadSource('watcher_workflow').supports({}) === false
   && getLeadSource('bitesites_leads').supports({}) === false);
 
+let missingPlacesKeyRejected = false;
+try {
+  await createDiscoveryJob(db, {
+    provider: 'google_places',
+    criteria: { keywords: ['plumber'], location: 'Ridgewood, NJ', maximumResults: 1 },
+    createdBy: 'test@bitesites.org'
+  });
+} catch { missingPlacesKeyRejected = true; }
+check('Google Places jobs fail before queueing when the secret is absent', missingPlacesKeyRejected);
+
+const configuredPlacesJob = await createDiscoveryJob(db, {
+  provider: 'google_places',
+  criteria: { keywords: ['plumber'], location: 'Ridgewood, NJ', maximumResults: 1 },
+  createdBy: 'test@bitesites.org',
+  sourceOptions: { apiKey: 'test-key-is-never-used' }
+});
+check('Google Places validation receives its server-side secret',
+  (await db.doc(`scrapeJobs/${configuredPlacesJob}`).get()).get('status') === 'queued');
+await db.doc(`scrapeJobs/${configuredPlacesJob}`).delete();
+
 let refusedAirbnb = false;
 try {
   getLeadSource('watcher_workflow').normalize({ name: 'A Listing', source: 'airbnb', host_name: 'Dana' });

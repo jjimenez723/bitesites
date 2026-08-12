@@ -24,7 +24,7 @@ through a callable; the server runs it.
 |---|---|:--:|:--:|---|---|
 | `mock` | Cloud Function | ✅ | ✅ | none | Fully working — the default |
 | `csv` | Cloud Function | ❌ | ❌ | none | Fully working |
-| `google_places` | Cloud Function | ✅ | ✅ | `LEAD_SOURCE_API_KEY` | Implemented, **unverified** |
+| `google_places` | Cloud Function | ✅ | ✅ | `LEAD_SOURCE_API_KEY` | Live-verified and deployed 2026-08-12 |
 | `watcher_workflow` | Migration script | — | — | none | Field mapping only |
 | `bitesites_leads` | Migration script | — | — | none | Field mapping only |
 
@@ -38,9 +38,12 @@ catch.
 
 ### Google Places (New)
 
-**Unverified against a live account.** The request shape follows the
-`places:searchText` contract, but nothing here has been run with a real key.
-Before enabling it:
+The request shape and stored Watcher credential were live-verified against
+`places:searchText` on 2026-08-12, then installed as Secret Manager version 2
+and bound to both discovery callables. The job-creation callable now receives
+the secret server-side for configuration validation; no key is stored in a job
+document or returned to the browser. Before changing the field mask or widening
+usage:
 
 - Confirm the current field mask and its pricing tier — Places bills per field,
   and an unfocused mask is a recurring cost for data nobody reads. The mask here

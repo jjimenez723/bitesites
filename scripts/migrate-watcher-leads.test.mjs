@@ -12,7 +12,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  parseArgs, destinationId, COLLECTION_MAP, EXCLUDED_COLLECTIONS, stripUndefined
+  parseArgs, destinationId, COLLECTION_MAP, SUPPLEMENTAL_COLLECTIONS,
+  EXCLUDED_COLLECTIONS, MigrationDedupeIndex, mergeSupplementalContacts,
+  stripUndefined
 } from './migrate-watcher-leads.mjs';
 import {
   isAirbnbRecord, classifyWatcherRecord, WatcherWorkflowSource
@@ -40,8 +42,9 @@ test('arguments parse into bounded values', () => {
 });
 
 test('the collection map covers only contact-bearing collections', () => {
-  assert.deepEqual(Object.keys(COLLECTION_MAP).sort(), ['companies', 'smb_contacts', 'smb_leads']);
+  assert.deepEqual(Object.keys(COLLECTION_MAP).sort(), ['companies', 'smb_leads']);
   assert.ok(Object.values(COLLECTION_MAP).every(entry => entry.destination === 'prospects'));
+  assert.equal(SUPPLEMENTAL_COLLECTIONS.smb_contacts.destination, 'prospects.contacts');
 });
 
 test('every Airbnb collection is explicitly excluded, with a reason', () => {
@@ -54,7 +57,8 @@ test('every Airbnb collection is explicitly excluded, with a reason', () => {
 
 test('the email-outreach and operational collections are excluded too', () => {
   for (const name of ['content', 'videos', 'lead_generation_log', 'smartlead_events',
-    'access', 'spend', 'run_requests', 'outreach_requests', 'kixie_sessions']) {
+    'access', 'spend', 'run_requests', 'outreach_requests', 'kixie_sessions',
+    'leads', 'mcp_oauth']) {
     assert.ok(EXCLUDED_COLLECTIONS[name], `${name} should be listed with a reason`);
     assert.ok(!COLLECTION_MAP[name]);
   }
@@ -164,6 +168,41 @@ test('an Airbnb row hiding in an SMB collection is still caught', () => {
   const smuggled = { __docId: 'd', name: 'A Business', phone: '2015550142', is_superhost: true };
   assert.ok(isAirbnbRecord(smuggled));
   assert.equal(classifyWatcherRecord(smuggled), 'airbnb_record');
+});
+
+test('the false Phase-4 ICP discriminator does not exclude an SMB', () => {
+  const smbProjection = { name: 'A Business', phone: '2015550142', is_airbnb: false };
+  assert.equal(isAirbnbRecord(smbProjection), false);
+  assert.equal(classifyWatcherRecord(smbProjection), 'cold_prospect');
+});
+
+test('the migration index catches the companies projection across batches', () => {
+  const index = new MigrationDedupeIndex();
+  const primary = buildProspect({ name: 'A Business', phone: '2015550142' }, {
+    source: { provider: 'bitesites_leads', providerRecordId: 'same-source-id', sourceCollection: 'smb_leads' }
+  });
+  index.add('prospect', 'watcher_smb_leads_same-source-id', primary);
+
+  const projection = buildProspect({ name: 'A Business', phone: '2015550142' }, {
+    source: { provider: 'bitesites_leads', providerRecordId: 'same-source-id', sourceCollection: 'companies' }
+  });
+  const matches = index.matches(projection, { excludeId: 'watcher_companies_same-source-id' });
+  assert.equal(matches[0]?.status, 'confirmed');
+  assert.deepEqual(matches[0]?.reasons, ['canonical_key']);
+});
+
+test('supplemental people from duplicate companies merge without losing provenance', () => {
+  const contacts = mergeSupplementalContacts(
+    [{ email: 'Owner@a.example', firstName: 'A', isPrimary: true, sourceDocumentId: 'c1' }],
+    [
+      { email: 'owner@a.example', lastName: 'Owner', isPrimary: false, sourceDocumentId: 'c2' },
+      { email: 'sales@a.example', role: 'sales', sourceDocumentId: 'c3' }
+    ]
+  );
+  assert.equal(contacts.length, 2);
+  assert.equal(contacts[0].email, 'owner@a.example');
+  assert.equal(contacts[0].isPrimary, true);
+  assert.deepEqual(contacts[0].sourceDocumentIds.sort(), ['c1', 'c2']);
 });
 
 test('records classify into buckets that decide migration behaviour', () => {
