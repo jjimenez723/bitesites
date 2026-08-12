@@ -22,6 +22,7 @@ import {
   recordCallAuditEvent
 } from './hybrid-call-orchestration.js';
 import { compileAgentRuntime, runtimePreview, sanitizeRealtimeSessionConfig } from './agent-runtime.js';
+import { buildAgentPreviewRuntime, mintAgentPreviewClientSecret } from './agent-preview.js';
 import { applyDisposition, markDoNotCall } from './outbound-calls.js';
 import { getCallingProvider } from './providers/calling/index.js';
 import { clean } from './prospect-normalization.js';
@@ -142,6 +143,21 @@ async function findCallByProviderSid(db, providerCallId) {
   return snapshot.empty ? null : { id: snapshot.docs[0].id, ...snapshot.docs[0].data() };
 }
 
+async function loadKnowledgeChunks(db, knowledgeBaseIds = []) {
+  const chunks = [];
+  for (const kbId of knowledgeBaseIds.slice(0, 8)) {
+    const kbSnapshot = await db.doc(`knowledgeBases/${kbId}`).get();
+    if (!kbSnapshot.exists || kbSnapshot.get('status') !== 'active') continue;
+    const docs = await db.collection(`knowledgeBases/${kbId}/documents`).where('status', '==', 'active').limit(8).get();
+    for (const entry of docs.docs) {
+      chunks.push({ sourceId: `${kbId}/${entry.id}`, title: entry.get('title'), text: entry.get('text'), version: entry.get('version') });
+      if (chunks.length >= 8) break;
+    }
+    if (chunks.length >= 8) break;
+  }
+  return chunks;
+}
+
 async function loadEffectiveRuntime(db, call) {
   const campaignSnapshot = await db.doc(`outboundCampaigns/${call.campaignId}`).get();
   const campaign = campaignSnapshot.exists ? { id: campaignSnapshot.id, ...campaignSnapshot.data() } : {};
@@ -156,17 +172,7 @@ async function loadEffectiveRuntime(db, call) {
   const contactSnapshot = contactId ? await db.doc(`${contactCollection}/${contactId}`).get() : null;
   const contact = contactSnapshot?.exists ? { id: contactSnapshot.id, ...contactSnapshot.data() } : {};
 
-  const chunks = [];
-  for (const kbId of (profile.knowledgeBaseIds || []).slice(0, 8)) {
-    const kbSnapshot = await db.doc(`knowledgeBases/${kbId}`).get();
-    if (!kbSnapshot.exists || kbSnapshot.get('status') !== 'active') continue;
-    const docs = await db.collection(`knowledgeBases/${kbId}/documents`).where('status', '==', 'active').limit(8).get();
-    for (const entry of docs.docs) {
-      chunks.push({ sourceId: `${kbId}/${entry.id}`, title: entry.get('title'), text: entry.get('text'), version: entry.get('version') });
-      if (chunks.length >= 8) break;
-    }
-    if (chunks.length >= 8) break;
-  }
+  const chunks = await loadKnowledgeChunks(db, profile.knowledgeBaseIds || []);
 
   const compiled = compileAgentRuntime({
     profile,
@@ -376,6 +382,45 @@ export const previewAIAgentRuntime = onCall(callOptions, async request => {
   });
   return runtimePreview(compiled);
 });
+
+/** Mint one short-lived OpenAI credential for a browser-only draft preview. */
+export const createAIAgentPreviewSession = onCall(
+  { ...callOptions, secrets: [HYBRID_OPENAI_API_KEY] },
+  async request => {
+    const { db, uid } = await requireDialer(request, { manageAgents: true });
+    const apiKey = secretValue(HYBRID_OPENAI_API_KEY);
+    if (!apiKey) throw new HttpsError('failed-precondition', 'OpenAI is not configured for agent previews.');
+
+    const mode = clean(request.data?.mode, 20) || 'conversation';
+    let profile;
+    let preview;
+    try {
+      profile = validateProfileInput(normalizeProfileInput(request.data?.profile || {}));
+      profile.id = clean(request.data?.profile?.id, 200) || 'preview';
+      profile.version = Math.max(1, Number(request.data?.profile?.version) || 1);
+      const knowledgeChunks = await loadKnowledgeChunks(db, profile.knowledgeBaseIds || []);
+      preview = buildAgentPreviewRuntime({ profile, knowledgeChunks, mode });
+    } catch (error) {
+      throw new HttpsError('invalid-argument', clean(error?.message, 400) || 'The agent preview configuration is invalid.');
+    }
+
+    let secret;
+    try {
+      secret = await mintAgentPreviewClientSecret({ apiKey, uid, session: preview.session });
+    } catch (error) {
+      throw new HttpsError('internal', clean(error?.message, 400) || 'Could not start the agent preview.');
+    }
+
+    return {
+      clientSecret: secret.value,
+      expiresAt: secret.expiresAt,
+      mode,
+      model: preview.compiled.model,
+      voice: preview.compiled.voice,
+      effectiveConfigHash: preview.compiled.effectiveConfigHash
+    };
+  }
+);
 
 // ------------------------------------------------------------- knowledge KB
 

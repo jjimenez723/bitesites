@@ -272,6 +272,7 @@ export const outbound = {
   updateAgentProfile: (profileId, profile) => callable('updateAIAgentProfile', { profileId, profile }),
   archiveAgentProfile: profileId => callable('archiveAIAgentProfile', { profileId }),
   previewAgentRuntime: payload => callable('previewAIAgentRuntime', payload),
+  createAgentPreviewSession: (profile, mode) => callable('createAIAgentPreviewSession', { profile, mode }),
   listKnowledgeBases: () => callable('listAIKnowledgeBases'),
   createKnowledgeBase: payload => callable('createAIKnowledgeBase', payload),
   upsertKnowledgeDocument: payload => callable('upsertAIKnowledgeDocument', payload)

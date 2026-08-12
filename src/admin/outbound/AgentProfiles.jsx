@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { outbound, useAction } from './data';
+import AgentPreviewControls from './AgentPreviewControls';
 
 const EMPTY = {
   name: '',
@@ -405,6 +406,11 @@ export default function AgentProfiles() {
             </div>
           </fieldset>
         </div>
+
+        <AgentPreviewControls
+          profile={{ id: selectedId || 'preview', version: selected?.version || 1, ...draft }}
+          disabled={!draft.name.trim() || customVoiceInvalid}
+        />
 
         <div className="hybrid-agent-actions">
           <button className="btn-admin" type="button" disabled={action.busy || customVoiceInvalid} onClick={runPreview}>Validate live configuration</button>

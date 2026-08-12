@@ -64,6 +64,7 @@ const HYBRID_FUNCTIONS = [
   'updateAIAgentProfile',
   'archiveAIAgentProfile',
   'previewAIAgentRuntime',
+  'createAIAgentPreviewSession',
   'listAIKnowledgeBases',
   'createAIKnowledgeBase',
   'upsertAIKnowledgeDocument',
