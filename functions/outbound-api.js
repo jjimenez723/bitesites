@@ -60,8 +60,22 @@ const OUTBOUND_SECRETS = [
   OUTBOUND_WEBHOOK_SECRET, GHL_OUTBOUND_WORKFLOW_ID
 ];
 
+// Provider credentials are optional on the settings screen. Binding every
+// possible provider secret here prevents this read-only callable from being
+// deployed until Kixie and GoHighLevel have also been configured. Twilio is
+// the active provider for this project; the unbound adapters still report
+// their missing secret names through `healthCheck()` below.
+const OUTBOUND_CONFIG_SECRETS = [
+  TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_TWIML_APP_SID
+];
+
 const secretValue = secret => {
-  try { return secret.value() || ''; } catch { return ''; }
+  try {
+    const value = secret.value() || '';
+    return value === 'unset' ? '' : value;
+  } catch {
+    return '';
+  }
 };
 
 /**
@@ -136,7 +150,7 @@ const callOptions = { enforceAppCheck: false, maxInstances: 10 };
 // ------------------------------------------------------------ configuration
 
 /** What the dashboard can offer. Capability flags and secret NAMES only. */
-export const getOutboundConfig = onCall({ ...callOptions, secrets: OUTBOUND_SECRETS }, async request => {
+export const getOutboundConfig = onCall({ ...callOptions, secrets: OUTBOUND_CONFIG_SECRETS }, async request => {
   await requireAdmin(request);
 
   const providers = await Promise.all(describeCallingProviders().map(async provider => {
@@ -639,4 +653,3 @@ export const outboundNightlyMaintenance = onSchedule(
     console.log(`[outbound] nightly: pruned ${pruned} raw results, recounted ${campaigns.size} campaigns`);
   }
 );
-

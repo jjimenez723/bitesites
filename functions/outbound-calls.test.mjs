@@ -78,11 +78,15 @@ check('a campaign cannot be created on a provider that cannot run its mode', ref
 // ---------------------------------------------------------------------------
 console.log('\ncampaign validation');
 
-const sanitized = sanitizeCampaign({ mode: 'power', concurrency: 5, maxAttempts: 99, retryDelayMinutes: 1, callerId: '2015550000' });
+const sanitized = sanitizeCampaign({
+  mode: 'power', concurrency: 5, maxAttempts: 99, retryDelayMinutes: 1,
+  callerId: '2015550000', agentProfileId: 'website-growth-consultant'
+});
 check('power mode is forced to one line', sanitized.concurrency === 1);
 check('max attempts is capped', sanitized.maxAttempts === 10);
 check('retry delay has a floor', sanitized.retryDelayMinutes === 15);
 check('caller id is normalised to E.164', sanitized.callerId === '+12015550000');
+check('the campaign keeps its default Hybrid agent profile', sanitized.agentProfileId === 'website-growth-consultant');
 
 // ---------------------------------------------------------------------------
 console.log('\nbuilding a parallel campaign');

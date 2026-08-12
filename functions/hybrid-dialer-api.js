@@ -21,7 +21,7 @@ import {
   attachAIController,
   recordCallAuditEvent
 } from './hybrid-call-orchestration.js';
-import { compileAgentRuntime, runtimePreview } from './agent-runtime.js';
+import { compileAgentRuntime, runtimePreview, sanitizeRealtimeSessionConfig } from './agent-runtime.js';
 import { applyDisposition, markDoNotCall } from './outbound-calls.js';
 import { getCallingProvider } from './providers/calling/index.js';
 import { clean } from './prospect-normalization.js';
@@ -242,6 +242,12 @@ export const getHybridVoiceAccessToken = onCall({ ...callOptions, secrets: TWILI
 
 // ---------------------------------------------------------- agent profiles
 
+const profileChoice = (value, choices, fallback) => choices.includes(value) ? value : fallback;
+const profileNumber = (value, minimum, maximum, fallback) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.max(minimum, Math.min(maximum, number)) : fallback;
+};
+
 const normalizeProfileInput = (input = {}, existing = {}) => ({
   name: clean(input.name ?? existing.name, 120) || 'Untitled agent',
   description: clean(input.description ?? existing.description, 1000),
@@ -249,9 +255,30 @@ const normalizeProfileInput = (input = {}, existing = {}) => ({
   personality: {
     preset: clean(input.personality?.preset ?? existing.personality?.preset, 80),
     tone: clean(input.personality?.tone ?? existing.personality?.tone, 500),
-    pacing: clean(input.personality?.pacing ?? existing.personality?.pacing, 100),
-    formality: clean(input.personality?.formality ?? existing.personality?.formality, 100),
-    languagePolicy: clean(input.personality?.languagePolicy ?? existing.personality?.languagePolicy, 500)
+    pacing: profileChoice(input.personality?.pacing ?? existing.personality?.pacing, ['measured', 'natural', 'brisk', 'fast'], 'natural'),
+    formality: profileChoice(input.personality?.formality ?? existing.personality?.formality, ['casual', 'professional', 'formal'], 'professional'),
+    languagePolicy: clean(input.personality?.languagePolicy ?? existing.personality?.languagePolicy, 500),
+    energy: profileChoice(input.personality?.energy ?? existing.personality?.energy, ['low', 'balanced', 'high'], 'balanced'),
+    emotion: profileChoice(input.personality?.emotion ?? existing.personality?.emotion, ['neutral', 'warm', 'enthusiastic', 'empathetic', 'calm'], 'warm'),
+    accent: clean(input.personality?.accent ?? existing.personality?.accent, 300),
+    pauseStyle: profileChoice(input.personality?.pauseStyle ?? existing.personality?.pauseStyle, ['minimal', 'natural', 'deliberate'], 'natural'),
+    fillerWords: profileChoice(input.personality?.fillerWords ?? existing.personality?.fillerWords, ['none', 'minimal', 'natural'], 'minimal'),
+    responseLength: profileChoice(input.personality?.responseLength ?? existing.personality?.responseLength, ['brief', 'concise', 'balanced', 'detailed'], 'concise'),
+    pronunciationGuidance: clean(input.personality?.pronunciationGuidance ?? existing.personality?.pronunciationGuidance, 1000)
+  },
+  turnTaking: {
+    mode: profileChoice(input.turnTaking?.mode ?? existing.turnTaking?.mode, ['semantic_vad', 'server_vad'], 'semantic_vad'),
+    eagerness: profileChoice(input.turnTaking?.eagerness ?? existing.turnTaking?.eagerness, ['low', 'medium', 'high', 'auto'], 'medium'),
+    allowInterruptions: input.turnTaking?.allowInterruptions ?? existing.turnTaking?.allowInterruptions ?? true,
+    noiseReduction: profileChoice(input.turnTaking?.noiseReduction ?? existing.turnTaking?.noiseReduction, ['off', 'near_field', 'far_field'], 'far_field'),
+    threshold: profileNumber(input.turnTaking?.threshold ?? existing.turnTaking?.threshold, 0, 1, 0.5),
+    prefixPaddingMs: Math.round(profileNumber(input.turnTaking?.prefixPaddingMs ?? existing.turnTaking?.prefixPaddingMs, 0, 2000, 300)),
+    silenceDurationMs: Math.round(profileNumber(input.turnTaking?.silenceDurationMs ?? existing.turnTaking?.silenceDurationMs, 100, 5000, 500)),
+    idleTimeoutMs: Math.round(profileNumber(input.turnTaking?.idleTimeoutMs ?? existing.turnTaking?.idleTimeoutMs, 0, 120000, 10000))
+  },
+  responseSettings: {
+    maxOutputTokens: Math.round(profileNumber(input.responseSettings?.maxOutputTokens ?? existing.responseSettings?.maxOutputTokens, 64, 4096, 512)),
+    reasoningEffort: profileChoice(input.responseSettings?.reasoningEffort ?? existing.responseSettings?.reasoningEffort, ['minimal', 'low', 'medium', 'high', 'xhigh'], 'low')
   },
   objective: {
     mode: ['qualify', 'sell', 'book', 'support', 'custom'].includes(input.objective?.mode)
@@ -278,9 +305,23 @@ const normalizeProfileInput = (input = {}, existing = {}) => ({
   handoffPhrase: clean(input.handoffPhrase ?? existing.handoffPhrase, 500) || 'I’m going to bring a member of our team into the conversation now.',
   advancedInstructions: clean(input.advancedInstructions ?? existing.advancedInstructions, 5000),
   knowledgeBaseIds: (input.knowledgeBaseIds ?? existing.knowledgeBaseIds ?? []).slice(0, 20).map(value => clean(value, 200)).filter(Boolean),
-  model: clean(input.model ?? existing.model, 120) || 'gpt-realtime',
-  voice: clean(input.voice ?? existing.voice, 120) || 'marin'
+  model: clean(input.model ?? existing.model, 120) || 'gpt-realtime-2.1',
+  voice: profileChoice(input.voiceSettings?.builtInVoice ?? input.voice ?? existing.voiceSettings?.builtInVoice ?? existing.voice, ['alloy', 'ash', 'ballad', 'coral', 'echo', 'sage', 'shimmer', 'verse', 'marin', 'cedar'], 'marin'),
+  voiceSettings: {
+    source: (input.voiceSettings?.source ?? existing.voiceSettings?.source) === 'custom' ? 'custom' : 'built_in',
+    builtInVoice: profileChoice(input.voiceSettings?.builtInVoice ?? input.voice ?? existing.voiceSettings?.builtInVoice ?? existing.voice, ['alloy', 'ash', 'ballad', 'coral', 'echo', 'sage', 'shimmer', 'verse', 'marin', 'cedar'], 'marin'),
+    customVoiceId: clean(input.voiceSettings?.customVoiceId ?? existing.voiceSettings?.customVoiceId, 160),
+    playbackSpeed: profileNumber(input.voiceSettings?.playbackSpeed ?? existing.voiceSettings?.playbackSpeed, 0.25, 1.5, 1)
+  }
 });
+
+function validateProfileInput(profile) {
+  if (profile.voiceSettings?.source === 'custom'
+    && !/^voice_[A-Za-z0-9_-]+$/.test(profile.voiceSettings?.customVoiceId || '')) {
+    throw new HttpsError('invalid-argument', 'Enter a valid custom voice ID beginning with voice_.');
+  }
+  return profile;
+}
 
 export const listAIAgentProfiles = onCall(callOptions, async request => {
   const { db } = await requireDialer(request);
@@ -291,7 +332,7 @@ export const listAIAgentProfiles = onCall(callOptions, async request => {
 export const createAIAgentProfile = onCall(callOptions, async request => {
   const { db, uid, email } = await requireDialer(request, { manageAgents: true });
   const ref = db.collection('aiAgentProfiles').doc();
-  const profile = normalizeProfileInput(request.data || {});
+  const profile = validateProfileInput(normalizeProfileInput(request.data || {}));
   await ref.set({
     ...profile, version: 1, createdBy: email || uid, updatedBy: email || uid,
     createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp()
@@ -306,7 +347,7 @@ export const updateAIAgentProfile = onCall(callOptions, async request => {
   const snapshot = await ref.get();
   if (!snapshot.exists) throw new HttpsError('not-found', 'Agent profile not found.');
   const version = Math.max(1, Number(snapshot.get('version')) || 1) + 1;
-  const profile = normalizeProfileInput(request.data?.profile || {}, snapshot.data());
+  const profile = validateProfileInput(normalizeProfileInput(request.data?.profile || {}, snapshot.data()));
   await db.doc(`aiAgentProfiles/${profileId}/versions/${String(version - 1).padStart(6, '0')}`).set({
     ...snapshot.data(), archivedAt: FieldValue.serverTimestamp()
   });
@@ -529,6 +570,7 @@ export const recordHybridCallEvent = onRequest({ secrets: [HYBRID_TWILIO_AUTH_TO
         runtime: {
           model: runtime.compiled.model,
           voice: runtime.compiled.voice,
+          sessionConfig: runtime.compiled.sessionConfig,
           instructions: runtime.compiled.instructions,
           tools: runtime.compiled.tools,
           profileId: runtime.compiled.profileId,
@@ -680,12 +722,9 @@ export const openAIRealtimeIncomingCall = onRequest({ secrets: [HYBRID_OPENAI_AP
     headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       type: 'realtime',
-      model: clean(runtime.model, 120) || 'gpt-realtime',
+      model: clean(runtime.model, 120) || 'gpt-realtime-2.1',
       instructions: clean(runtime.instructions, 30000),
-      audio: {
-        input: { transcription: { model: 'gpt-4o-mini-transcribe' }, turn_detection: { type: 'semantic_vad', eagerness: 'medium', create_response: true, interrupt_response: true } },
-        output: { voice: clean(runtime.voice, 120) || 'marin' }
-      }
+      ...sanitizeRealtimeSessionConfig(runtime.sessionConfig, clean(runtime.voice, 120) || 'marin')
     })
   });
   const body = await response.text();

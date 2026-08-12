@@ -7,6 +7,7 @@
 .bs-admin .hybrid-agent-sidebar { align-self: start; }
 .bs-admin .hybrid-agent-editor { min-width: 0; }
 .bs-admin .hybrid-kb-editor { grid-column: 2; }
+.bs-admin .hybrid-agent-form { display: grid; gap: 12px; }
 
 .bs-admin .hybrid-agent-list { display: grid; gap: 6px; }
 .bs-admin .hybrid-agent-list button {
@@ -31,6 +32,53 @@
   min-width: 0;
 }
 .bs-admin .hybrid-fieldset legend { padding: 0 6px; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+.bs-admin .hybrid-config-section { padding: 15px; }
+.bs-admin .hybrid-config-section > .outbound-form-grid { margin-top: 1px; }
+.bs-admin .hybrid-config-section label > small {
+  display: block;
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 10.5px;
+  line-height: 1.4;
+}
+.bs-admin .hybrid-config-section input.is-invalid { border-color: var(--critical); }
+.bs-admin .hybrid-config-section .field-error { color: var(--critical); }
+.bs-admin .hybrid-range-field input[type="range"] {
+  width: 100%;
+  height: 20px;
+  padding: 0;
+  accent-color: var(--brand);
+  border: 0;
+  background: transparent;
+}
+.bs-admin .hybrid-range-field > span {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.bs-admin .hybrid-range-field > span strong { color: var(--ink); font-variant-numeric: tabular-nums; }
+.bs-admin .hybrid-switch-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+.bs-admin .hybrid-switch-row > input { width: auto; margin: 0; }
+.bs-admin .hybrid-switch-row > span { display: grid; gap: 2px; }
+.bs-admin .hybrid-switch-row small { color: var(--muted); font-size: 10.5px; font-weight: 400; }
+.bs-admin .hybrid-config-note {
+  margin: 11px 0 0;
+  padding: 10px 12px;
+  border-radius: 9px;
+  background: rgba(98, 137, 216, .08);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
 .bs-admin .hybrid-permissions-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 8px 14px; }
 .bs-admin .hybrid-permission,
 .bs-admin .hybrid-kb-choices label { display: flex; align-items: center; gap: 7px; font-size: 12px; }
@@ -38,6 +86,25 @@
 .bs-admin .hybrid-inline-number input { width: 90px; }
 .bs-admin .hybrid-kb-choices { display: flex; flex-wrap: wrap; gap: 9px 16px; }
 .bs-admin .hybrid-agent-actions { display: flex; align-items: center; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+.bs-admin .hybrid-runtime-preview {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid rgba(12, 163, 12, .3);
+  border-radius: 10px;
+  background: rgba(12, 163, 12, .07);
+  font-size: 11px;
+}
+.bs-admin .hybrid-runtime-preview strong { margin-right: 4px; color: var(--good); }
+.bs-admin .hybrid-runtime-preview span {
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--muted);
+}
 .bs-admin .hybrid-field-button { display: flex; align-items: end; padding-bottom: 1px; }
 
 @media (max-width: 900px) {

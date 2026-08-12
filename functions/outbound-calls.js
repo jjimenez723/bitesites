@@ -60,7 +60,11 @@ export function sanitizeCampaign(input = {}, { existing = null } = {}) {
     // number would make the queue view lie about what will happen.
     concurrency: mode === 'parallel' ? concurrency : 1,
     callerId: normalizePhone(input.callerId ?? existing?.callerId),
-    agentId: clean(input.agentId, 120),
+    // agentProfileId is the Hybrid V2 field. Preserve agentId as a legacy
+    // fallback while making the profile selected in Campaign Builder the
+    // default for every new dialer session.
+    agentProfileId: clean(input.agentProfileId ?? existing?.agentProfileId, 200),
+    agentId: clean(input.agentId ?? existing?.agentId, 120),
     script: clean(input.script, 8000),
     objective: clean(input.objective, 500),
     bookingRules: clean(input.bookingRules, 500),

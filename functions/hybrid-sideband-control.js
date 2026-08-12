@@ -18,6 +18,7 @@ import {
 } from './hybrid-call-orchestration.js';
 import { markDoNotCall } from './outbound-calls.js';
 import { clean } from './prospect-normalization.js';
+import { sanitizeRealtimeSessionConfig } from './agent-runtime.js';
 
 const AI_MEDIA_WEBHOOK_SECRET = defineSecret('AI_MEDIA_WEBHOOK_SECRET');
 
@@ -73,8 +74,9 @@ export const hybridSidebandControl = onRequest(
         sessionId: clean(call.sessionId, 200),
         campaignId: clean(call.campaignId, 200),
         runtime: {
-          model: clean(runtime.model, 120) || 'gpt-realtime',
+          model: clean(runtime.model, 120) || 'gpt-realtime-2.1',
           voice: clean(runtime.voice, 120) || 'marin',
+          sessionConfig: sanitizeRealtimeSessionConfig(runtime.sessionConfig, clean(runtime.voice, 120) || 'marin'),
           instructions: clean(runtime.instructions, 30000),
           tools: Array.isArray(runtime.tools) ? runtime.tools.slice(0, 30).map(value => clean(value, 80)).filter(Boolean) : [],
           handoffPhrase: clean(runtime.handoffPhrase, 500) || 'I’m going to bring a member of our team into the conversation now.',

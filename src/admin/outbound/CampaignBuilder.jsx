@@ -8,7 +8,7 @@
 // The calling window defaults are deliberately tighter than the legal maximum.
 // An operator who wants 8am–9pm has to choose it.
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { outbound, useAction } from './data';
 import { providerLabel } from './SourceBadge';
 
@@ -29,6 +29,7 @@ const CONSENT_BASES = [
 
 const BLANK = {
   name: '', mode: 'power', provider: 'mock', concurrency: 1, callerId: '',
+  agentProfileId: '',
   objective: '', script: '', bookingRules: '', escalationRules: '',
   allowedDays: ['mon', 'tue', 'wed', 'thu', 'fri'],
   localStartTime: '09:00', localEndTime: '18:00',
@@ -53,6 +54,8 @@ function capabilityGap(providers, providerId, mode, concurrency) {
 
 export default function CampaignBuilder({ providers = [], campaign = null, onSaved, onCancel }) {
   const [form, setForm] = useState(() => ({ ...BLANK, ...(campaign || {}) }));
+  const [agentProfiles, setAgentProfiles] = useState([]);
+  const [agentsLoading, setAgentsLoading] = useState(true);
   const action = useAction();
   const set = (key, value) => setForm(current => ({ ...current, [key]: value }));
 
@@ -61,6 +64,23 @@ export default function CampaignBuilder({ providers = [], campaign = null, onSav
     [providers, form.provider, form.mode, form.concurrency]
   );
   const provider = providers.find(entry => entry.id === form.provider);
+  const needsAgentProfile = form.provider === 'twilio' && form.mode === 'parallel';
+
+  useEffect(() => {
+    let cancelled = false;
+    outbound.listAgentProfiles()
+      .then(result => {
+        if (cancelled) return;
+        const active = (result?.profiles || []).filter(profile => profile.status !== 'archived');
+        setAgentProfiles(active);
+        setForm(current => current.agentProfileId || !active.length
+          ? current
+          : { ...current, agentProfileId: active[0].id });
+      })
+      .catch(() => { if (!cancelled) setAgentProfiles([]); })
+      .finally(() => { if (!cancelled) setAgentsLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
 
   const submit = async event => {
     event.preventDefault();
@@ -133,6 +153,20 @@ export default function CampaignBuilder({ providers = [], campaign = null, onSav
             <input value={form.callerId} onChange={event => set('callerId', event.target.value)} placeholder="+15551234567" />
             <small>Must be a number you are registered to use.</small>
           </label>
+
+          {needsAgentProfile && (
+            <label>
+              <span>Default AI agent</span>
+              <select value={form.agentProfileId} required disabled={agentsLoading}
+                onChange={event => set('agentProfileId', event.target.value)}>
+                <option value="">{agentsLoading ? 'Loading agents…' : 'Select an agent…'}</option>
+                {agentProfiles.map(profile => (
+                  <option key={profile.id} value={profile.id}>{profile.name} · v{profile.version || 1}</option>
+                ))}
+              </select>
+              <small>Used for AI overflow by default; an operator can still override it for one session.</small>
+            </label>
+          )}
 
           <label className="full">
             <span>Objective</span>
@@ -223,7 +257,8 @@ export default function CampaignBuilder({ providers = [], campaign = null, onSav
         {action.error && <p className="admin-error">{action.error}</p>}
         {action.message && <p className="admin-note">{action.message}</p>}
 
-        <button className="btn-admin primary" type="submit" disabled={action.busy || missing.length > 0}>
+        <button className="btn-admin primary" type="submit"
+          disabled={action.busy || missing.length > 0 || (needsAgentProfile && !form.agentProfileId)}>
           {action.busy ? 'Saving…' : campaign?.id ? 'Save campaign' : 'Create campaign'}
         </button>
       </form>

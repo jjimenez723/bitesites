@@ -109,20 +109,26 @@ async function acceptRealtimeCall(realtimeCallId, runtime) {
     headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       type: 'realtime',
-      model: clean(runtime.model, 120) || 'gpt-realtime',
+      model: clean(runtime.model, 120) || 'gpt-realtime-2.1',
       instructions: String(runtime.instructions || '').slice(0, 30000),
       tools: usableTools(runtime.tools),
       tool_choice: 'auto',
-      audio: {
-        input: {
-          transcription: { model: 'gpt-4o-mini-transcribe' },
-          turn_detection: {
-            type: 'semantic_vad', eagerness: 'medium',
-            create_response: true, interrupt_response: true
-          }
-        },
-        output: { voice: clean(runtime.voice, 120) || 'marin' }
-      }
+      ...(runtime.sessionConfig && typeof runtime.sessionConfig === 'object'
+        ? runtime.sessionConfig
+        : {
+            max_output_tokens: 512,
+            audio: {
+              input: {
+                transcription: { model: 'gpt-4o-mini-transcribe' },
+                noise_reduction: { type: 'far_field' },
+                turn_detection: {
+                  type: 'semantic_vad', eagerness: 'medium',
+                  create_response: true, interrupt_response: true
+                }
+              },
+              output: { voice: clean(runtime.voice, 120) || 'marin', speed: 1 }
+            }
+          })
     })
   });
   const text = await response.text();
