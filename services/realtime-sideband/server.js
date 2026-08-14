@@ -8,6 +8,7 @@ import {
   isOutputAudioDrained,
   realtimeResponseOutcome
 } from './realtime-audio-lifecycle.js';
+import { usableTools } from './tool-schemas.js';
 
 const PORT = Number(process.env.PORT) || 8080;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
@@ -65,51 +66,6 @@ function headerValue(headers = [], wanted) {
   return clean(row?.value, 300);
 }
 
-const TOOL_SCHEMAS = {
-  request_human_handoff: {
-    type: 'function',
-    name: 'request_human_handoff',
-    description: 'Use only when the prospect explicitly asks to speak with a human representative.',
-    parameters: { type: 'object', properties: {}, additionalProperties: false }
-  },
-  mark_do_not_call: {
-    type: 'function',
-    name: 'mark_do_not_call',
-    description: 'Immediately suppress future calls when the prospect clearly asks not to be called again.',
-    parameters: {
-      type: 'object',
-      properties: { reason: { type: 'string', description: 'Brief paraphrase of the opt-out request.' } },
-      additionalProperties: false
-    }
-  },
-  record_qualification: {
-    type: 'function',
-    name: 'record_qualification',
-    description: 'Record a qualification fact learned from the prospect. This does not perform any external action.',
-    parameters: {
-      type: 'object',
-      properties: { field: { type: 'string' }, value: { type: 'string' } },
-      required: ['field', 'value'],
-      additionalProperties: false
-    }
-  },
-  record_interest_signal: {
-    type: 'function',
-    name: 'record_interest_signal',
-    description: 'Record a sales-interest signal for analytics. This never causes a human transfer by itself.',
-    parameters: {
-      type: 'object',
-      properties: { signal: { type: 'string' }, detail: { type: 'string' } },
-      required: ['signal'],
-      additionalProperties: false
-    }
-  }
-};
-
-function usableTools(names = []) {
-  return names.map(name => TOOL_SCHEMAS[name]).filter(Boolean);
-}
-
 async function acceptRealtimeCall(realtimeCallId, runtime) {
   const response = await fetch(`${OPENAI_BASE}/realtime/calls/${encodeURIComponent(realtimeCallId)}/accept`, {
     method: 'POST',
@@ -165,44 +121,34 @@ async function writeTranscript(session, speaker, text, event = {}) {
   }).catch(error => console.warn('[sideband] transcript write failed', error.message));
 }
 
+/**
+ * Every tool call goes to one bounded Firebase action, which re-authorizes it
+ * against the compiled runtime before acting. This service names a tool; it
+ * never decides whether that tool was granted.
+ */
 async function executeTool(session, event) {
   const name = clean(event.name || session.toolNames.get(event.item_id), 80);
   let args = {};
   try { args = event.arguments ? JSON.parse(event.arguments) : {}; } catch { args = {}; }
-  let output;
 
-  if (name === 'request_human_handoff') {
-    output = await control(session.callId, 'prospect_requested_human', {
-      realtimeCallId: session.realtimeCallId
-    });
-  } else if (name === 'mark_do_not_call') {
+  const output = await control(session.callId, 'agent_tool', {
+    realtimeCallId: session.realtimeCallId, tool: name, args
+  });
+
+  if (output?.endsCall) {
+    session.endAfterTool = true;
+    // Never resume a token-truncated response over a call that is ending.
     session.pendingContinuationResponseId = '';
-    output = await control(session.callId, 'do_not_call', {
-      realtimeCallId: session.realtimeCallId,
-      reason: clean(args.reason, 300)
-    });
-    // DNC is both a future suppression and an immediate stop. The media service
-    // has no Twilio credential, so it asks Firebase's bounded carrier endpoint
-    // to end only this existing prospect leg.
+  }
+
+  if (name === 'mark_do_not_call') {
+    // An opt-out is both a future suppression and an immediate stop. The media
+    // service has no Twilio credential, so it asks Firebase's bounded carrier
+    // endpoint to end only this existing prospect leg.
     await carrierControl(session.callId, 'end_prospect_call', {
       actor: session.realtimeCallId,
       reason: 'explicit_do_not_call'
     }).catch(error => console.warn('[sideband] DNC carrier end failed', error.message));
-    session.endAfterTool = true;
-  } else if (name === 'record_qualification') {
-    output = await control(session.callId, 'agent_signal', {
-      realtimeCallId: session.realtimeCallId,
-      signalType: `qualification:${clean(args.field, 60)}`,
-      value: clean(args.value, 500)
-    });
-  } else if (name === 'record_interest_signal') {
-    output = await control(session.callId, 'agent_signal', {
-      realtimeCallId: session.realtimeCallId,
-      signalType: `interest:${clean(args.signal, 60)}`,
-      value: clean(args.detail, 500)
-    });
-  } else {
-    output = { ok: false, error: 'tool_not_configured' };
   }
 
   send(session.ws, {
@@ -210,7 +156,7 @@ async function executeTool(session, event) {
     item: { type: 'function_call_output', call_id: event.call_id, output: JSON.stringify(output) }
   });
 
-  if (session.endAfterTool) {
+  if (name === 'mark_do_not_call') {
     send(session.ws, {
       type: 'response.create',
       response: {

@@ -527,12 +527,12 @@ const normalizeProfileInput = (input = {}, existing = {}) => ({
   },
   turnTaking: {
     mode: profileChoice(input.turnTaking?.mode ?? existing.turnTaking?.mode, ['semantic_vad', 'server_vad'], 'semantic_vad'),
-    eagerness: profileChoice(input.turnTaking?.eagerness ?? existing.turnTaking?.eagerness, ['low', 'medium', 'high', 'auto'], 'medium'),
+    eagerness: profileChoice(input.turnTaking?.eagerness ?? existing.turnTaking?.eagerness, ['low', 'medium', 'high', 'auto'], 'low'),
     allowInterruptions: input.turnTaking?.allowInterruptions ?? existing.turnTaking?.allowInterruptions ?? true,
     noiseReduction: profileChoice(input.turnTaking?.noiseReduction ?? existing.turnTaking?.noiseReduction, ['off', 'near_field', 'far_field'], 'far_field'),
     threshold: profileNumber(input.turnTaking?.threshold ?? existing.turnTaking?.threshold, 0, 1, 0.5),
     prefixPaddingMs: Math.round(profileNumber(input.turnTaking?.prefixPaddingMs ?? existing.turnTaking?.prefixPaddingMs, 0, 2000, 300)),
-    silenceDurationMs: Math.round(profileNumber(input.turnTaking?.silenceDurationMs ?? existing.turnTaking?.silenceDurationMs, 100, 5000, 500)),
+    silenceDurationMs: Math.round(profileNumber(input.turnTaking?.silenceDurationMs ?? existing.turnTaking?.silenceDurationMs, 100, 5000, 700)),
     idleTimeoutMs: Math.round(profileNumber(input.turnTaking?.idleTimeoutMs ?? existing.turnTaking?.idleTimeoutMs, 0, 120000, 10000))
   },
   responseSettings: {
@@ -564,6 +564,8 @@ const normalizeProfileInput = (input = {}, existing = {}) => ({
   handoffPhrase: clean(input.handoffPhrase ?? existing.handoffPhrase, 500) || 'I’m going to bring a member of our team into the conversation now.',
   advancedInstructions: clean(input.advancedInstructions ?? existing.advancedInstructions, 5000),
   knowledgeBaseIds: (input.knowledgeBaseIds ?? existing.knowledgeBaseIds ?? []).slice(0, 20).map(value => clean(value, 200)).filter(Boolean),
+  offerTracks: normalizeOfferTrackKeys(input.offerTracks ?? existing.offerTracks ?? []),
+  auditionScript: clean(input.auditionScript ?? existing.auditionScript, 1200),
   model: clean(input.model ?? existing.model, 120) || 'gpt-realtime-2.1',
   voice: profileChoice(input.voiceSettings?.builtInVoice ?? input.voice ?? existing.voiceSettings?.builtInVoice ?? existing.voice, ['alloy', 'ash', 'ballad', 'coral', 'echo', 'sage', 'shimmer', 'verse', 'marin', 'cedar'], 'marin'),
   voiceSettings: {
@@ -929,6 +931,12 @@ export const recordHybridCallEvent = onRequest({
           sessionConfig: runtime.compiled.sessionConfig,
           instructions: runtime.compiled.instructions,
           tools: runtime.compiled.tools,
+          // Persisted so hybridSidebandControl can re-authorize each tool call
+          // against Firestore instead of trusting the media service, which
+          // holds only a shared secret and is not a trust boundary.
+          permissions: runtime.compiled.permissions,
+          offerTracks: runtime.compiled.offerTracks,
+          knowledgeBaseIds: runtime.compiled.knowledgeBaseIds,
           profileId: runtime.compiled.profileId,
           profileVersion: runtime.compiled.profileVersion,
           effectiveConfigHash: runtime.compiled.effectiveConfigHash,

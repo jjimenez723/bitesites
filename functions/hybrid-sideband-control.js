@@ -19,8 +19,11 @@ import {
 import { markDoNotCall } from './outbound-calls.js';
 import { clean } from './prospect-normalization.js';
 import { sanitizeRealtimeSessionConfig } from './agent-runtime.js';
+import { executeAgentTool, TERMINAL_TOOLS } from './agent-tools.js';
+import { createGoogleCalendarClient, loadCalendarSettings } from './booking-calendar.js';
 
 const AI_MEDIA_WEBHOOK_SECRET = defineSecret('AI_MEDIA_WEBHOOK_SECRET');
+const GOOGLE_CALENDAR_CREDENTIALS = defineSecret('GOOGLE_CALENDAR_CREDENTIALS');
 
 const secretValue = secret => {
   try { return secret.value() || ''; } catch { return ''; }
@@ -43,8 +46,27 @@ function safeTimestamp(value) {
   return date && Number.isFinite(date.getTime()) ? Timestamp.fromDate(date) : null;
 }
 
+/**
+ * Google Calendar client for this invocation, or null when the calendar has
+ * not been connected. Booking works either way: Firestore is the book of
+ * record and Google is the mirror.
+ */
+async function calendarClient(db) {
+  const settings = await loadCalendarSettings(db).catch(() => null);
+  if (!settings || settings.googleSyncEnabled === false) return null;
+  return createGoogleCalendarClient({
+    credentialsJson: secretValue(GOOGLE_CALENDAR_CREDENTIALS),
+    calendarId: settings.googleCalendarId,
+    impersonate: settings.googleImpersonate
+  });
+}
+
 export const hybridSidebandControl = onRequest(
-  { secrets: [AI_MEDIA_WEBHOOK_SECRET], maxInstances: 50, timeoutSeconds: 60 },
+  {
+    secrets: [AI_MEDIA_WEBHOOK_SECRET, GOOGLE_CALENDAR_CREDENTIALS],
+    maxInstances: 50,
+    timeoutSeconds: 60
+  },
   async (req, res) => {
     if (req.method !== 'POST') {
       res.set('Allow', 'POST').status(405).json({ error: 'method-not-allowed' }); return;
@@ -192,6 +214,34 @@ export const hybridSidebandControl = onRequest(
         actorType: 'ai', actorId: clean(req.body?.realtimeCallId, 160)
       });
       res.json({ ok: true }); return;
+    }
+
+    // Single authorization path for every tool the agent can call. The media
+    // service names a tool; this endpoint decides whether that call was ever
+    // granted, by re-reading the compiled runtime rather than believing the
+    // caller. See agent-tools.js.
+    if (action === 'agent_tool') {
+      const jobSnapshot = await db.doc(`aiMediaJobs/${callId}`).get();
+      if (!jobSnapshot.exists) { res.status(404).json({ error: 'media-job-not-found' }); return; }
+      const tool = clean(req.body?.tool, 80);
+      if (!tool) { res.status(400).json({ error: 'tool-required' }); return; }
+
+      const result = await executeAgentTool(db, {
+        call,
+        job: jobSnapshot.data() || {},
+        tool,
+        args: req.body?.args,
+        actorId: clean(req.body?.realtimeCallId, 160) || 'ai',
+        google: await calendarClient(db).catch(() => null)
+      }).catch(error => {
+        console.error('[sideband-control] tool execution failed', tool, error);
+        return { ok: false, error: 'server_action_failed' };
+      });
+
+      // The model decides what to say; the service needs to know whether to
+      // wind the call down after saying it.
+      res.json({ ...result, endsCall: result?.ending === true || TERMINAL_TOOLS.includes(tool) });
+      return;
     }
 
     if (action === 'agent_signal') {

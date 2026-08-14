@@ -12,6 +12,15 @@ import { clean } from './prospect-normalization.js';
 export const AGENT_PREVIEW_MODES = Object.freeze(['sample', 'conversation']);
 export const AGENT_PREVIEW_SAMPLE_TEXT = 'Hi, this is the BiteSites assistant. I am calling to learn about your business and see whether we can help you turn more website visitors into customers.';
 
+/**
+ * The audition line a persona performs in sample mode. A profile may carry its
+ * own opener so operators hear the character rather than a shared placeholder;
+ * anything unset falls back to the generic sample.
+ */
+export function auditionScript(compiled = {}) {
+  return clean(compiled?.auditionScript, 1200) || AGENT_PREVIEW_SAMPLE_TEXT;
+}
+
 export function previewSafetyIdentifier(uid) {
   return createHash('sha256')
     .update(`bitesites-agent-preview:${clean(uid, 160)}`)
@@ -31,7 +40,10 @@ export function buildAgentPreviewRuntime({ profile, knowledgeChunks = [], mode =
       companyName: 'Sample Local Business',
       researchSummary: 'This is a simulated preview contact. Do not treat it as a real prospect or claim that any action has occurred.'
     },
-    knowledgeChunks
+    knowledgeChunks,
+    // The preview session ships without tools on purpose, so there is nothing
+    // here to retrieve with. Knowledge has to come inline or not at all.
+    inlineKnowledge: true
   });
 
   const previewInstructions = [
@@ -43,8 +55,12 @@ export function buildAgentPreviewRuntime({ profile, knowledgeChunks = [], mode =
     '- No external tools or business actions are available. Never claim that you booked, sent, charged, updated, or transferred anything.',
     '- Demonstrate the configured voice, language, tone, pacing, and conversational behavior naturally.',
     mode === 'sample'
-      ? `- When asked for the voice sample, say exactly this text and nothing else: ${AGENT_PREVIEW_SAMPLE_TEXT}`
-      : '- Begin with a short greeting, then let the operator role-play as a prospect. Keep the preview concise.'
+      ? `- When asked for the voice sample, say exactly this text and nothing else: ${auditionScript(compiled)}`
+      : [
+          '- This is an audition. Open exactly as you would on a real call, then let the operator role-play as the prospect.',
+          '- Stay in character through objections. Do not narrate what you are doing or step outside the persona to explain yourself.',
+          '- Keep the audition to a few minutes and let the operator drive.'
+        ].join('\n')
   ].join('\n');
 
   return {

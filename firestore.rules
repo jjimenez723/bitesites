@@ -580,6 +580,47 @@ service cloud.firestore {
       }
     }
 
+    // ------------------------------------------------------- calendar (§15)
+    //
+    // The console renders the calendar straight from these documents, but no
+    // browser may write one. Availability, holds and commits run through
+    // transactions in booking-calendar.js — a browser that could create an
+    // appointment could double-book a slot the voice agent is mid-way through
+    // confirming, which is exactly the race the hold exists to prevent.
+
+    match /appointments/{appointmentId} {
+      allow read: if isOutboundStaff();
+      allow write: if false;
+    }
+
+    match /calendarSettings/{documentId} {
+      // Working hours and capacity are what the availability engine trusts, so
+      // they are normalized by updateCalendarSettings before they land.
+      allow read: if isOutboundStaff();
+      allow write: if false;
+    }
+
+    match /pricingBook/{documentId} {
+      // The only source a pricing-permitted agent may quote from. Admin-owned
+      // because everything in it is spoken aloud on a live call.
+      allow read: if isOutboundStaff();
+      allow update, create: if isAdmin();
+      allow delete: if false;
+    }
+
+    match /followupTemplates/{templateId} {
+      // The agent picks which template goes out; it never writes one.
+      allow read: if isOutboundStaff();
+      allow update, create: if isAdmin();
+      allow delete: if false;
+    }
+
+    match /followupQueue/{entryId} {
+      // Queued sends, owned by the delivery worker.
+      allow read: if isAdmin() || isOutboundManager();
+      allow write: if false;
+    }
+
     match /outboundCallEvents/{eventId} {
       // The idempotency ledger. Not even readable from the browser: it exists
       // so a redelivered webhook is a no-op, and nothing in the UI needs it.

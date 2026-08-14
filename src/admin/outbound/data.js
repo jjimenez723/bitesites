@@ -251,6 +251,36 @@ export const useImportRuns = () =>
     q: query(collection(db, 'importRuns'), orderBy('startedAt', 'desc'), limit(100))
   }), []);
 
+/**
+ * Appointments in a window. Live, because the voice agent books into this same
+ * calendar mid-call — a rep looking at today's schedule needs to see a meeting
+ * appear the moment an agent closes one.
+ */
+export const useAppointments = ({ fromMs, toMs }) =>
+  useLiveOutboundQuery(() => {
+    if (!fromMs || !toMs) return null;
+    return {
+      cap: LIST_CAP,
+      q: query(
+        collection(db, 'appointments'),
+        where('startAt', '>=', new Date(fromMs)),
+        where('startAt', '<', new Date(toMs)),
+        orderBy('startAt', 'asc'),
+        limit(LIST_CAP)
+      )
+    };
+  }, [fromMs, toMs]);
+
+export const calendar = {
+  settings: () => callable('getCalendarSettings'),
+  saveSettings: settings => callable('updateCalendarSettings', { settings }),
+  availability: options => callable('getCalendarAvailability', options || {}),
+  book: booking => callable('bookAppointment', booking),
+  reschedule: (appointmentId, slotId) => callable('rescheduleAppointmentCall', { appointmentId, slotId }),
+  cancel: (appointmentId, reason) => callable('cancelAppointmentCall', { appointmentId, reason }),
+  setOutcome: (appointmentId, outcome) => callable('setAppointmentOutcome', { appointmentId, outcome })
+};
+
 export async function loadProspect(id) {
   const snapshot = await getDoc(doc(db, 'prospects', id));
   return snapshot.exists() ? { id: snapshot.id, ...snapshot.data() } : null;

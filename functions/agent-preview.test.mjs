@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   AGENT_PREVIEW_SAMPLE_TEXT,
+  auditionScript,
   buildAgentPreviewRuntime,
   mintAgentPreviewClientSecret,
   previewSafetyIdentifier
@@ -48,7 +49,24 @@ test('conversation preview is explicitly non-operational', () => {
   const preview = buildAgentPreviewRuntime({ profile, mode: 'conversation' });
   assert.match(preview.session.instructions, /not a real sales call/i);
   assert.match(preview.session.instructions, /No external tools or business actions are available/i);
-  assert.match(preview.session.instructions, /role-play as a prospect/i);
+  assert.match(preview.session.instructions, /role-play as the prospect/i);
+  assert.match(preview.session.instructions, /Stay in character through objections/i);
+});
+
+test('a persona auditions with its own opener rather than the shared placeholder', () => {
+  const opener = 'Hey — is this the owner? My name’s Ava, I’m an AI calling from BiteSites.';
+  const preview = buildAgentPreviewRuntime({
+    profile: { ...profile, auditionScript: opener },
+    mode: 'sample'
+  });
+  assert.equal(auditionScript(preview.compiled), opener);
+  assert.match(preview.session.instructions, /is this the owner/i);
+  assert.equal(preview.session.instructions.includes(AGENT_PREVIEW_SAMPLE_TEXT), false);
+});
+
+test('a persona without an audition script falls back to the shared sample', () => {
+  const preview = buildAgentPreviewRuntime({ profile, mode: 'sample' });
+  assert.equal(auditionScript(preview.compiled), AGENT_PREVIEW_SAMPLE_TEXT);
 });
 
 test('preview safety identifier is stable and does not reveal the uid', () => {
