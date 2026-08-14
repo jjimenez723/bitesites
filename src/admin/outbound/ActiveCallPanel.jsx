@@ -4,9 +4,10 @@
 // live calls because additional human answers remain connected under isolated
 // AI controllers while the rep handles one conversation.
 
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useLiveCalls, useTargets } from './data';
 import HybridCallCard from './HybridCallCard';
+import LiveCallWorkspace from './LiveCallWorkspace';
 
 const terminal = call => ['completed', 'cancelled', 'failed'].includes(call?.status);
 
@@ -20,6 +21,7 @@ function priority(call) {
 }
 
 export default function ActiveCallPanel({ session, onDisposition }) {
+  const [workspaceCallId, setWorkspaceCallId] = useState('');
   const callIds = session?.activeCallIds || [];
   const calls = useLiveCalls(callIds);
   const targets = useTargets(session?.campaignId || '', {
@@ -33,6 +35,16 @@ export default function ActiveCallPanel({ session, onDisposition }) {
   const humanRequests = active.filter(call => call?.handoff?.requestedBy === 'prospect' && ['requested', 'queued'].includes(call?.handoff?.state)).length;
   const aiCount = active.filter(call => call?.control?.controller === 'ai').length;
   const humanCount = active.filter(call => call?.control?.controller === 'human' || call?.control?.controller === 'transitioning').length;
+  const workspaceCall = calls.rows.find(call => call.id === workspaceCallId) || null;
+
+  // A dedicated workspace opens only when the human becomes part of the call.
+  // AI-only calls remain compact until the rep deliberately opens/monitors one.
+  useEffect(() => {
+    const humanCall = active.find(call =>
+      session?.rep?.activeCallId === call.id
+      && ['human', 'transitioning'].includes(call?.control?.controller));
+    if (humanCall) setWorkspaceCallId(humanCall.id);
+  }, [active, session?.rep?.activeCallId]);
 
   if (!session) return null;
 
@@ -43,7 +55,11 @@ export default function ActiveCallPanel({ session, onDisposition }) {
           <div>
             <h3>Live calls</h3>
             <p>
-              One rep can speak on one call. Other human answers stay alive with independent AI agents until they finish or you take over.
+              {session?.operatingMode === 'human'
+                ? 'Human-only mode uses predictive dialing lines while the rep is free, then keeps only the answered rep call.'
+                : session?.operatingMode === 'ai'
+                  ? 'AI-only mode keeps calls running server-side without requiring the rep browser.'
+                  : 'One rep can speak on one call. Other human answers stay alive with independent AI agents until they finish or you take over.'}
             </p>
           </div>
           <div className="hybrid-live-summary">
@@ -65,7 +81,7 @@ export default function ActiveCallPanel({ session, onDisposition }) {
         {calls.loading && !active.length && <p className="admin-note">Loading live calls…</p>}
         {calls.error && <p className="admin-error">{calls.error}</p>}
         {!calls.loading && !active.length && (
-          <p className="admin-note">No active calls. Launch the next 3-call batch when you are ready.</p>
+          <p className="admin-note">No active calls. Auto dial is waiting for the next eligible target.</p>
         )}
 
         {active.length > 0 && (
@@ -77,11 +93,22 @@ export default function ActiveCallPanel({ session, onDisposition }) {
                 session={session}
                 target={targetById.get(call.targetId)}
                 onDisposition={onDisposition}
+                onEnter={() => setWorkspaceCallId(call.id)}
               />
             ))}
           </div>
         )}
       </div>
+
+      {workspaceCall && (
+        <LiveCallWorkspace
+          call={workspaceCall}
+          session={session}
+          target={targetById.get(workspaceCall.targetId)}
+          onClose={() => setWorkspaceCallId('')}
+          onDisposition={onDisposition}
+        />
+      )}
     </div>
   );
 }

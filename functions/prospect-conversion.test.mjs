@@ -35,7 +35,7 @@ const wipe = async name => {
   }
 };
 
-for (const name of ['prospects', 'leads', 'outboundTargets']) await wipe(name);
+for (const name of ['prospects', 'leads', 'outboundTargets', 'calls']) await wipe(name);
 
 const seed = async (records, source = { system: 'scraper', provider: 'mock' }) => {
   const result = await importProspects(db, records, { source });
@@ -61,6 +61,11 @@ check('the trigger list excludes call attempts', !CONVERSION_TRIGGERS.includes('
 // ---------------------------------------------------------------------------
 console.log('\na real conversation creates exactly one lead');
 
+await db.doc('calls/call1').set({
+  status: 'connected', answeredBy: 'human', connectedAt: new Date(),
+  targetId: 'tgt1', prospectId: coldId
+});
+
 const first = await promoteProspect(db, coldId, {
   trigger: 'call_answered', campaignId: 'camp1', targetId: 'tgt1', firstConnectedCallId: 'call1'
 });
@@ -73,6 +78,20 @@ check('it preserves the campaign and call', lead.get('acquisition').campaignId =
   && lead.get('acquisition').firstConnectedCallId === 'call1');
 check('the prospect records the conversion',
   (await db.doc(`prospects/${coldId}`).get()).get('lifecycle').convertedLeadId === first.leadId);
+
+const [forgedId] = await seed([{ name: 'Unverified Call Co', phone: '2015551001' }]);
+await db.doc('calls/unverified-call').set({
+  status: 'ringing', answeredBy: '', targetId: 'tgt-unverified', prospectId: forgedId
+});
+let refusedUnverified = false;
+try {
+  await promoteProspect(db, forgedId, {
+    trigger: 'call_answered', targetId: 'tgt-unverified', firstConnectedCallId: 'unverified-call'
+  });
+} catch (error) {
+  refusedUnverified = /not recorded as a verified human conversation/.test(error.message);
+}
+check('an unverified ringing call cannot create a call-linked lead', refusedUnverified);
 
 // ---------------------------------------------------------------------------
 console.log('\nre-running it is a no-op (webhook redelivery)');
@@ -138,14 +157,38 @@ await db.doc('outboundTargets/tgt-moving').set({
   campaignId: 'camp3', contactType: 'prospect', leadId: null, prospectId: movingId,
   phoneE164: '+12015557070', state: 'ready', attemptCount: 0, maxAttempts: 3
 });
+await db.doc('calls/call-moving').set({
+  status: 'completed', connectedAt: new Date(), targetId: 'tgt-moving', prospectId: movingId
+});
 
-const moved = await promoteProspect(db, movingId, { trigger: 'call_answered', campaignId: 'camp3' });
+const moved = await promoteProspect(db, movingId, {
+  trigger: 'call_answered', campaignId: 'camp3', targetId: 'tgt-moving', firstConnectedCallId: 'call-moving'
+});
 const target = await db.doc('outboundTargets/tgt-moving').get();
 check('the target now points at the lead', target.get('leadId') === moved.leadId);
 check('and no longer at the prospect', target.get('prospectId') === null);
 check('exactly one contact reference is populated',
   Boolean(target.get('leadId')) !== Boolean(target.get('prospectId')));
 check('the prospect link survives as attribution', target.get('convertedFromProspectId') === movingId);
+
+// ---------------------------------------------------------------------------
+console.log('\nmanual qualification is explicit and does not invent contact');
+
+const [manualId] = await seed([{ name: 'Research Qualified Co', phone: '2015558080' }]);
+const manual = await promoteProspect(db, manualId, {
+  trigger: 'manual_qualification', actor: 'manager@bitesites.org',
+  manualReason: 'Approved after account research',
+  manualNotes: 'Strong local portfolio fit; no platform call has taken place.',
+  contactStatus: 'not_contacted'
+});
+const manualLead = await db.doc(`leads/${manual.leadId}`).get();
+check('manual qualification keeps the lead uncontacted', manualLead.get('status') === 'new');
+check('manual qualification stores its reason and contact status',
+  manualLead.get('acquisition').manualReason === 'Approved after account research'
+    && manualLead.get('acquisition').contactStatus === 'not_contacted');
+check('manual qualification does not invent an interest category',
+  Array.isArray(manualLead.get('services')) && manualLead.get('services').length === 0);
+check('manual qualification does not manufacture first response time', !manualLead.get('firstResponseAt'));
 
 // ---------------------------------------------------------------------------
 console.log('\nthe shared contact layer treats leads and prospects alike');

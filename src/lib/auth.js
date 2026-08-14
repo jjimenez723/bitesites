@@ -282,18 +282,33 @@ export async function fetchProfile(user) {
 
 // Emits { user, role, profile, loading:false } on every auth change.
 export function watchSession(callback) {
-  return onAuthStateChanged(auth, async user => {
-    if (!user) return callback({ user: null, role: '', profile: null, loading: false });
+  return onAuthStateChanged(
+    auth,
+    async user => {
+      if (!user) return callback({ user: null, role: '', profile: null, loading: false });
 
-    const [role, existing] = await Promise.all([resolveRole(user), fetchProfile(user)]);
+      try {
+        const [role, existing] = await Promise.all([resolveRole(user), fetchProfile(user)]);
 
-    // A Google account signing in for the first time has authenticated but has
-    // no profile row yet. Creating it here covers both the popup and the
-    // redirect flow; signUp writes its own richer row, so stand clear of that.
-    const profile = existing || (signUpInFlight ? null : await ensureProfile(user));
+        // A Google account signing in for the first time has authenticated but has
+        // no profile row yet. Creating it here covers both the popup and the
+        // redirect flow; signUp writes its own richer row, so stand clear of that.
+        const profile = existing || (signUpInFlight ? null : await ensureProfile(user));
 
-    callback({ user, role, profile, loading: false });
-  });
+        callback({ user, role, profile, loading: false });
+      } catch (error) {
+        // Firestore can reject the role/profile reads independently of Auth (for
+        // example when App Check is missing). Never strand the console on its
+        // boot screen just because authorisation could not be resolved.
+        console.error('[auth] could not resolve the signed-in session', error);
+        callback({ user, role: '', profile: null, loading: false, error });
+      }
+    },
+    error => {
+      console.error('[auth] session watcher failed', error);
+      callback({ user: null, role: '', profile: null, loading: false, error });
+    }
+  );
 }
 
 export const isAdmin = role => role === 'admin';

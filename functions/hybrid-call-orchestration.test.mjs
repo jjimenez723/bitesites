@@ -31,6 +31,24 @@ test('busy rep routes additional verified human answer to AI instead of cancelli
   });
 });
 
+test('AI-only mode routes every verified human answer to AI', () => {
+  assert.deepEqual(routeDecision({
+    session: { ...session(), operatingMode: 'ai' },
+    call: call()
+  }), {
+    controller: 'ai', idempotent: false, reason: 'ai_only_mode'
+  });
+});
+
+test('human-only mode never routes an overflow answer to AI', () => {
+  assert.deepEqual(routeDecision({
+    session: { ...session({ state: 'busy', activeCallId: 'call-a' }), operatingMode: 'human' },
+    call: call()
+  }), {
+    controller: 'none', idempotent: false, reason: 'human_rep_busy'
+  });
+});
+
 test('two sibling calls can both independently resolve while only one is human', () => {
   const first = routeDecision({ session: session(), call: call() });
   assert.equal(first.controller, 'human');

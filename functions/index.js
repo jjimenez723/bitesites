@@ -1499,14 +1499,23 @@ const EMAIL_SOURCE_LABELS = {
   byte_voice: 'a Voice AI call'
 };
 
-const emailServiceNames = services => {
+const emailServiceNames = (services, fallback = 'A BiteSites consultation') => {
   const labels = {
     web_development: 'Web Development',
     ai_automation: 'AI Automation',
     social_media_management: 'Social Media Management',
     other: 'Other'
   };
-  return (Array.isArray(services) ? services : []).map(value => labels[value] || value).filter(Boolean).join(', ') || 'A BiteSites consultation';
+  return (Array.isArray(services) ? services : []).map(value => labels[value] || value).filter(Boolean).join(', ') || fallback;
+};
+
+const readableDisposition = value => str(value, 80).replace(/_/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase()) || 'Conversation completed';
+const readableDuration = seconds => {
+  const total = Math.max(0, Math.round(Number(seconds) || 0));
+  if (!total) return 'Not captured';
+  const minutes = Math.floor(total / 60);
+  const remainder = total % 60;
+  return minutes ? `${minutes}m ${remainder}s` : `${remainder}s`;
 };
 
 async function emailPreference(db, email) {
@@ -1667,10 +1676,24 @@ export const sendLeadLifecycleEmails = onDocumentCreated(
     const sourceLabel = lead.source === 'byte_voice'
       ? (lead.voice?.receivingAgent?.agentName || EMAIL_SOURCE_LABELS.byte_voice)
       : EMAIL_SOURCE_LABELS[lead.source] || lead.source || 'BiteSites';
-    const services = emailServiceNames(lead.services);
+    const services = emailServiceNames(lead.services, 'Interest not captured');
     const tasks = [];
 
-    if (lead.email) {
+    const acquisition = lead.acquisition && typeof lead.acquisition === 'object' ? lead.acquisition : {};
+    const manual = lead.source === 'outbound' && acquisition.trigger === 'manual_qualification';
+    const outboundConversation = lead.source === 'outbound'
+      && ['call_answered', 'meeting_booked', 'conversation_started'].includes(acquisition.trigger)
+      && Boolean(acquisition.firstConnectedCallId);
+    let linkedCall = null;
+    if (outboundConversation) {
+      const callSnapshot = await db.doc(`calls/${acquisition.firstConnectedCallId}`).get();
+      if (callSnapshot.exists) linkedCall = { id: callSnapshot.id, ...callSnapshot.data() };
+    }
+
+    // An outbound prospect did not submit an inquiry. Sending the visitor-facing
+    // "we received your inquiry" receipt after an internal manual promotion is
+    // confusing at best and unsolicited outreach at worst.
+    if (lead.email && lead.source !== 'outbound') {
       tasks.push(sendLifecycleEmail({
         db, templateId: 'lead_received', to: lead.email,
         variables: {
@@ -1683,7 +1706,43 @@ export const sendLeadLifecycleEmails = onDocumentCreated(
       }));
     }
 
-    if (env.admin) {
+    if (env.admin && manual) {
+      const status = acquisition.contactStatus === 'external_contact'
+        ? 'Contacted outside BiteSites — no BiteSites call is linked'
+        : acquisition.contactStatus === 'not_contacted'
+          ? 'No answered BiteSites call; prospect has not been contacted'
+          : 'No answered BiteSites call is linked';
+      tasks.push(sendLifecycleEmail({
+        db, templateId: 'manual_lead_admin', to: env.admin,
+        variables: {
+          lead_name: lead.name || 'Unknown prospect',
+          qualified_by: acquisition.manuallyQualifiedBy || 'a BiteSites team member',
+          contact_status: status,
+          contact: lead.email || lead.phone || 'No contact captured',
+          manual_reason: acquisition.manualReason || 'Not provided',
+          manual_notes: acquisition.manualNotes || 'No notes provided',
+          service_names: services,
+          lead_url: `${env.appUrl}/admin/leads?lead=${encodeURIComponent(leadId)}`
+        },
+        tag: 'manual-lead-admin', kind: 'manual-lead-admin'
+      }));
+    } else if (env.admin && outboundConversation) {
+      tasks.push(sendLifecycleEmail({
+        db, templateId: 'outbound_call_lead_admin', to: env.admin,
+        variables: {
+          lead_name: lead.name || 'Unknown prospect',
+          contact: lead.email || lead.phone || 'No contact captured',
+          disposition: readableDisposition(linkedCall?.disposition || acquisition.trigger),
+          duration: readableDuration(linkedCall?.durationSec),
+          operator: linkedCall?.control?.controller === 'human' || linkedCall?.operator === 'human' ? 'Human-assisted' : 'AI-assisted',
+          call_summary: linkedCall?.summary || 'No summary captured yet',
+          service_names: services,
+          call_url: `${env.appUrl}/admin/outbound?tab=history&call=${encodeURIComponent(acquisition.firstConnectedCallId)}`,
+          lead_url: `${env.appUrl}/admin/leads?lead=${encodeURIComponent(leadId)}`
+        },
+        tag: 'outbound-call-lead-admin', kind: 'outbound-call-lead-admin'
+      }));
+    } else if (env.admin) {
       tasks.push(sendLifecycleEmail({
         db, templateId: 'new_lead_admin', to: env.admin,
         variables: {
@@ -2507,7 +2566,7 @@ export {
 // it calls this instead, and this is the only client-reachable path that can
 // change a role. It writes both halves, or neither.
 
-const ASSIGNABLE_ROLES = ['admin', 'client'];
+const ASSIGNABLE_ROLES = ['admin', 'client', 'outbound_rep', 'outbound_manager'];
 
 // The caller's own role, resolved the same way firestore.rules resolves it:
 // claim first, document second.
@@ -2594,8 +2653,14 @@ export const setUserRole = onCall(
       await sendLifecycleEmail({
         db, templateId: 'access_granted', to: target.email,
         variables: {
-          first_name: firstName(target), role_label: role === 'admin' ? 'administrator' : 'client',
-          sign_in_url: role === 'admin' ? `${emailEnvironment().appUrl}/admin` : `${emailEnvironment().appUrl}/#pricing`
+          first_name: firstName(target),
+          role_label: role === 'admin' ? 'administrator'
+            : role === 'outbound_manager' ? 'outbound manager'
+              : role === 'outbound_rep' ? 'outbound representative' : 'client',
+          sign_in_url: role === 'admin' ? `${emailEnvironment().appUrl}/admin`
+            : ['outbound_manager', 'outbound_rep'].includes(role)
+              ? `${emailEnvironment().appUrl}/admin/outbound`
+              : `${emailEnvironment().appUrl}/#pricing`
         },
         tag: 'access-granted', kind: 'access-granted'
       }).catch(error => createOperationalAlert(db, {

@@ -6,7 +6,7 @@
 // was or when it arrived.
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useLeads, setLeadStatus, saveLeadCommercial, loadLeadActivities, toDate } from './data';
 import { Panel, DetailRows, Pill } from './Panel';
 import Transcript from './Transcript';
@@ -80,6 +80,32 @@ function CrmState({ crm }) {
     return <p className="admin-note">Not sent — no GoHighLevel webhook is configured.</p>;
   }
   return <p className="admin-error">Sync failed — {crm.error || 'unknown error'}</p>;
+}
+
+function OutboundProvenance({ lead }) {
+  if (lead.source !== 'outbound') return null;
+  const acquisition = lead.acquisition || {};
+  const manual = acquisition.trigger === 'manual_qualification';
+  const externallyContacted = acquisition.contactStatus === 'external_contact';
+  return (
+    <section className={`lead-provenance ${manual ? 'is-manual' : 'is-verified'}`} aria-label="Lead origin verification">
+      <span className="lead-provenance-icon" aria-hidden="true">{manual ? '!' : '✓'}</span>
+      <div>
+        <span className="panel-section-label">Lead origin</span>
+        <strong>{manual ? 'Added to Leads manually' : 'Verified outbound conversation'}</strong>
+        <p>{manual
+          ? externallyContacted
+            ? 'No BiteSites call is verified. A staff member reported contact outside the platform.'
+            : 'No answered BiteSites call or external contact is recorded for this lead.'
+          : 'A server-verified human answer is linked to this lead and its notification.'}</p>
+        {manual && acquisition.manualReason && <small>Reason: {acquisition.manualReason}</small>}
+        {manual && acquisition.manualNotes && <small>Context: {acquisition.manualNotes}</small>}
+      </div>
+      {acquisition.firstConnectedCallId && (
+        <Link className="btn-admin" to={`/admin/outbound?tab=history&call=${encodeURIComponent(acquisition.firstConnectedCallId)}`}>Open verified call</Link>
+      )}
+    </section>
+  );
 }
 
 const inputDate = value => {
@@ -210,14 +236,29 @@ function ActivityHistory({ leadId, refreshKey }) {
 }
 
 export default function Leads() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const { rows, loading, error, refresh } = useLeads();
-  const [openId, setOpenId] = useState(null);
+  const [openId, setOpenId] = useState(() => searchParams.get('lead'));
   const [filter, setFilter] = useState('all');
   const [sourceFilter, setSourceFilter] = useState('all');
   const [search, setSearch] = useState('');
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
   const [activityRefresh, setActivityRefresh] = useState(0);
+
+  const openLead = id => {
+    setOpenId(id);
+    const updated = new URLSearchParams(searchParams);
+    updated.set('lead', id);
+    setSearchParams(updated, { replace: true });
+  };
+
+  const closeLead = () => {
+    setOpenId(null);
+    const updated = new URLSearchParams(searchParams);
+    updated.delete('lead');
+    setSearchParams(updated, { replace: true });
+  };
 
   const counts = useMemo(() => {
     const map = new Map();
@@ -353,7 +394,7 @@ export default function Leads() {
                     <tr
                       key={lead.id}
                       className={`clickable ${openId === lead.id ? 'selected' : ''}`}
-                      onClick={() => setOpenId(lead.id)}
+                      onClick={() => openLead(lead.id)}
                     >
                       <td>
                         <div className="cell-strong">{lead.name}</div>
@@ -365,6 +406,11 @@ export default function Leads() {
                         {/* A website-demo caller is still a lead, but worth
                             telling apart from someone who dialled the number. */}
                         {lead.voice?.demo && <span className="chip" style={{ marginLeft: 6 }}>demo</span>}
+                        {lead.source === 'outbound' && (
+                          <span className={`chip ${lead.acquisition?.trigger === 'manual_qualification' ? 'warning' : 'success'}`} style={{ marginLeft: 6 }}>
+                            {lead.acquisition?.trigger === 'manual_qualification' ? 'manual · no verified call' : 'verified call'}
+                          </span>
+                        )}
                       </td>
                       <td className="cell-dim cell-wrap">
                         {lead.source === 'byte_voice' ? receivingAgentLabel(lead) : '—'}
@@ -387,9 +433,10 @@ export default function Leads() {
         <Panel
           title={open.name}
           subtitle={`${sourceLabel(open)} · ${when(open.createdAt)}`}
-          onClose={() => setOpenId(null)}
+          onClose={closeLead}
         >
           {open.email && <div className="lead-primary-action"><div><strong>Follow up with {firstWord(open.name) || 'this lead'}</strong><span>Send a confirmation, Meet link, or booking page.</span></div><Link className="btn-admin primary" to={`/admin/email?lead=${encodeURIComponent(open.id)}`}>Email lead</Link></div>}
+          <OutboundProvenance lead={open} />
           <div>
             <div className="panel-section-label">Status</div>
             <div className="chip-row" style={{ marginTop: 10 }}>

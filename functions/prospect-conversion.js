@@ -27,6 +27,25 @@ export const CONVERSION_TRIGGERS = [
 
 const isMeaningful = trigger => CONVERSION_TRIGGERS.includes(trigger);
 
+async function requireVerifiedAnsweredCall(db, { callId, targetId, prospectId }) {
+  const id = clean(callId, 200);
+  if (!id) throw new Error('A verified answered call id is required for call-based lead creation.');
+
+  const snapshot = await db.doc(`calls/${id}`).get();
+  if (!snapshot.exists) throw new Error('The answered call could not be verified.');
+  const call = snapshot.data() || {};
+  const verifiedHumanAnswer = call.answeredBy === 'human'
+    || Boolean(call.connectedAt && ['connected', 'completed'].includes(call.status));
+  if (!verifiedHumanAnswer) throw new Error('The call is not recorded as a verified human conversation.');
+  if (targetId && call.targetId && call.targetId !== targetId) {
+    throw new Error('The answered call does not belong to this outbound target.');
+  }
+  if (prospectId && call.prospectId && call.prospectId !== prospectId) {
+    throw new Error('The answered call does not belong to this prospect.');
+  }
+  return { id, ...call };
+}
+
 /** Find an existing lead for this person by normalised phone, then email. */
 export async function findExistingLead(db, { email, phoneE164 }) {
   const leads = db.collection('leads');
@@ -78,6 +97,9 @@ export async function promoteProspect(db, prospectId, {
   targetId = '',
   firstConnectedCallId = '',
   actor = '',
+  manualReason = '',
+  manualNotes = '',
+  contactStatus = '',
   now = new Date()
 } = {}) {
   if (!isMeaningful(trigger)) {
@@ -93,9 +115,26 @@ export async function promoteProspect(db, prospectId, {
     return { leadId: prospect.lifecycle.convertedLeadId, created: false, linked: false, alreadyConverted: true };
   }
 
+  // UI labels and email copy treat `call_answered` as independently verified
+  // provenance. Do not allow an arbitrary client-supplied id to manufacture
+  // that state; the call record must show a human connection and match the
+  // target/prospect being promoted. An already-converted prospect remains an
+  // idempotent no-op even if a webhook redelivery omits old call metadata.
+  if (trigger === 'call_answered') {
+    await requireVerifiedAnsweredCall(db, {
+      callId: firstConnectedCallId,
+      targetId,
+      prospectId
+    });
+  }
+
   const email = normalizeEmail(prospect.email);
   const phoneE164 = prospect.phoneE164 || normalizePhone(prospect.phone);
   const stamp = Timestamp.fromDate(now);
+  const manual = trigger === 'manual_qualification';
+  const verifiedContactStatus = ['not_contacted', 'external_contact', 'unknown'].includes(contactStatus)
+    ? contactStatus
+    : manual ? 'unknown' : 'platform_conversation';
 
   const acquisition = {
     originalSystem: clean(prospect.source?.system, 60) || 'outbound',
@@ -106,6 +145,12 @@ export async function promoteProspect(db, prospectId, {
     targetId: clean(targetId, 160),
     firstConnectedCallId: clean(firstConnectedCallId, 200),
     trigger,
+    contactStatus: verifiedContactStatus,
+    ...(manual ? {
+      manualReason: clean(manualReason, 120),
+      manualNotes: clean(manualNotes, 2000),
+      manuallyQualifiedBy: clean(actor, 128)
+    } : {}),
     convertedAt: stamp
   };
 
@@ -125,6 +170,12 @@ export async function promoteProspect(db, prospectId, {
     await db.collection(`leads/${existing.id}/activities`).doc().set({
       type: 'outbound_prospect_linked',
       prospectId, campaignId, targetId, trigger,
+      ...(manual ? {
+        manualReason: clean(manualReason, 120),
+        manualNotes: clean(manualNotes, 2000),
+        contactStatus: verifiedContactStatus,
+        actor: clean(actor, 128)
+      } : {}),
       at: stamp
     });
 
@@ -165,9 +216,14 @@ export async function promoteProspect(db, prospectId, {
       // from website-conversion maths (§10). Note this bypasses the public lead
       // validation rules by design — it is an Admin SDK write.
       source: 'outbound',
-      status: 'contacted',
+      // Manual qualification is an internal tracking decision, not proof that
+      // anybody spoke. Only a verified platform conversation or explicitly
+      // declared external contact earns the contacted stage.
+      status: !manual || verifiedContactStatus === 'external_contact' ? 'contacted' : 'new',
       businessSize: 'other',
-      services: ['other'],
+      // An empty list is honest. "Other" used to appear in admin email as if
+      // the prospect had expressed an interest when nobody had spoken to them.
+      services: [],
       preferredContactMethod: 'phone',
       projectDetails: clean(prospect.notes, 5000),
       acquisition,
@@ -175,11 +231,19 @@ export async function promoteProspect(db, prospectId, {
       createdAt: stamp,
       updatedAt: stamp,
       statusChangedAt: stamp,
-      firstResponseAt: stamp
+      ...(!manual || verifiedContactStatus === 'external_contact' ? { firstResponseAt: stamp } : {})
     });
 
     transaction.set(db.collection(`leads/${leadId}/activities`).doc(), {
-      type: 'created_from_outbound', prospectId, campaignId, targetId, trigger, at: stamp
+      type: manual ? 'created_manually_from_prospect' : 'created_from_outbound',
+      prospectId, campaignId, targetId, trigger,
+      ...(manual ? {
+        manualReason: clean(manualReason, 120),
+        manualNotes: clean(manualNotes, 2000),
+        contactStatus: verifiedContactStatus,
+        actor: clean(actor, 128)
+      } : {}),
+      at: stamp
     });
     return true;
   });

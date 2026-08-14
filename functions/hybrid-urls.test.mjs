@@ -29,3 +29,30 @@ test('the Hybrid callback satisfies Twilio provider readiness', async () => {
 
   assert.deepEqual(health, { ok: true, missing: [] });
 });
+
+test('Hybrid Twilio URLs use Firebase Hosting canonical query order', async () => {
+  let params = {};
+  const provider = new HybridTwilioDialer({
+    accountSid: 'AC-test',
+    authToken: 'test-token',
+    twimlAppSid: 'AP-test',
+    statusCallbackUrl: hybridOutboundEventsUrl('https://staging.example.com'),
+    hybridV2: true,
+    fetchImpl: async (_url, init) => {
+      params = Object.fromEntries(new URLSearchParams(init.body));
+      return { ok: true, text: async () => JSON.stringify({ sid: 'CA-test' }) };
+    }
+  });
+
+  await provider.startParallelDialSession({
+    targets: [{ id: 'target-a', campaignId: 'campaign-a', phoneE164: '+15555550100' }],
+    campaign: { id: 'campaign-a', callerId: '+15555550101', recordCalls: false },
+    sessionId: 'session-a',
+    concurrency: 3
+  });
+
+  const expectedQuery = 'campaignId=campaign-a&legIndex=0&sessionId=session-a&targetId=target-a';
+  assert.equal(params.Url, `https://staging.example.com/api/twilio-prospect-twiml?${expectedQuery}`);
+  assert.equal(params.StatusCallback, `https://staging.example.com/api/hybrid-outbound-events?${expectedQuery}`);
+  assert.equal(params.AsyncAmdStatusCallback, params.StatusCallback);
+});

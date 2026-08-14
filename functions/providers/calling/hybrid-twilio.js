@@ -100,7 +100,10 @@ export class HybridTwilioDialer extends CallingProviderAdapter {
     if (!this.statusCallbackUrl) return '';
     const origin = new URL(this.statusCallbackUrl).origin;
     const url = new URL(path, origin);
-    for (const [key, value] of Object.entries(metadata)) {
+    // Firebase Hosting canonicalizes rewritten query strings by key. Twilio
+    // signs the exact URL it was given, so generate that same canonical order
+    // before Twilio calculates its signature.
+    for (const [key, value] of Object.entries(metadata).sort(([a], [b]) => a.localeCompare(b))) {
       if (value !== undefined && value !== null && value !== '') url.searchParams.set(key, String(value));
     }
     return url.toString();
@@ -216,8 +219,14 @@ export class HybridTwilioDialer extends CallingProviderAdapter {
 
   async endCall(providerCallId) {
     if (!providerCallId) return { ended: false, reason: 'missing_call_id' };
-    await this.#post(`/Calls/${encodeURIComponent(providerCallId)}.json`, { Status: 'completed' });
-    return { ended: true };
+    try {
+      await this.#post(`/Calls/${encodeURIComponent(providerCallId)}.json`, { Status: 'completed' });
+      return { ended: true };
+    } catch (error) {
+      if (error.status === 404) return { ended: false, reason: 'unknown_call' };
+      if (error.status === 400) return { ended: false, reason: 'already_terminal' };
+      throw error;
+    }
   }
 
   async redirectCall(providerCallId, url) {

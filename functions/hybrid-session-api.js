@@ -6,20 +6,20 @@
 
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { defineSecret } from 'firebase-functions/params';
-import { FieldValue, getFirestore } from 'firebase-admin/firestore';
+import { FieldValue, Timestamp, getFirestore } from 'firebase-admin/firestore';
 
 import {
   startDialerSession,
   findActiveDialerSession,
   heartbeatSession,
-  dialNext,
   stopDialerSession,
   applyDisposition,
   markDoNotCall
 } from './outbound-calls.js';
 import { getCallingProvider, assertSupports } from './providers/calling/index.js';
 import { clean } from './prospect-normalization.js';
-import { recordCallAuditEvent } from './hybrid-call-orchestration.js';
+import { recordCallAuditEvent, releaseRepFromCall } from './hybrid-call-orchestration.js';
+import { maintainHybridCapacity } from './hybrid-capacity.js';
 import { hybridOutboundEventsUrl } from './hybrid-urls.js';
 
 const TWILIO_ACCOUNT_SID = defineSecret('TWILIO_ACCOUNT_SID');
@@ -70,6 +70,19 @@ async function requireOwnedSession(db, sessionId, uid) {
   return { id: sessionId, ...snapshot.data() };
 }
 
+async function requireCallOperator(db, call, uid) {
+  const snapshot = await db.doc(`dialerSessions/${call.sessionId}`).get();
+  if (!snapshot.exists) throw new HttpsError('not-found', 'Session not found.');
+  const transfer = call.staffTransfer || {};
+  const originalOperator = snapshot.get('userUid') === uid
+    && !(transfer.state === 'completed' && transfer.fromUid === uid);
+  const transferredOperator = transfer.state === 'completed' && transfer.toUid === uid;
+  if (!originalOperator && !transferredOperator) {
+    throw new HttpsError('permission-denied', 'You are not the active operator for this call.');
+  }
+  return { id: call.sessionId, ...snapshot.data() };
+}
+
 function twilioConfig() {
   return {
     accountSid: secretValue(TWILIO_ACCOUNT_SID),
@@ -93,6 +106,7 @@ export const getActiveHybridDialerSession = onCall(callOptions, async request =>
       campaignId: clean(session.campaignId, 200),
       status: clean(session.status, 40),
       concurrency: Math.max(1, Number(session.concurrency) || 3),
+      operatingMode: ['human', 'hybrid', 'ai'].includes(session.operatingMode) ? session.operatingMode : 'hybrid',
       autoTakeover: session.takeover?.autoEnabled === true,
       agentProfileId: clean(session.agentProfileId, 200),
       agentProfileName: clean(session.agentProfileName, 120)
@@ -100,14 +114,16 @@ export const getActiveHybridDialerSession = onCall(callOptions, async request =>
   };
 });
 
-/** Current product default is three simultaneous outbound legs per rep. */
+/** Start a Hybrid V2 session with one to five simultaneous outbound legs. */
 export const startHybridDialerSession = onCall({ ...callOptions, secrets: HYBRID_SECRETS }, async request => {
-  const { db, uid } = await requireDialer(request);
+  const { db, uid, role } = await requireDialer(request);
   const campaignId = requireId(request.data?.campaignId, 'campaign id');
   const campaignSnapshot = await db.doc(`outboundCampaigns/${campaignId}`).get();
   if (!campaignSnapshot.exists) throw new HttpsError('not-found', 'Campaign not found.');
   const campaign = { id: campaignId, ...campaignSnapshot.data() };
-  const concurrency = 3;
+  const concurrency = Math.max(1, Math.min(5, Number(request.data?.concurrency) || 3));
+  const operatingMode = ['human', 'hybrid', 'ai'].includes(request.data?.operatingMode)
+    ? request.data.operatingMode : 'hybrid';
 
   const support = assertSupports(campaign.provider, 'parallel', concurrency, { hybrid: true });
   if (!support.ok) {
@@ -117,10 +133,11 @@ export const startHybridDialerSession = onCall({ ...callOptions, secrets: HYBRID
     );
   }
 
-  const requestedProfileId = clean(request.data?.agentProfileId || campaign.agentProfileId || campaign.agentId, 200);
-  if (!requestedProfileId) throw new HttpsError('failed-precondition', 'Choose an AI agent profile before starting the hybrid dialer.');
-  const profileSnapshot = await db.doc(`aiAgentProfiles/${requestedProfileId}`).get();
-  if (!profileSnapshot.exists || profileSnapshot.get('status') === 'archived') {
+  const campaignProfileId = clean(campaign.agentProfileId || campaign.agentId, 200);
+  const requestedProfileId = clean(request.data?.agentProfileId || campaignProfileId, 200);
+  if (operatingMode !== 'human' && !requestedProfileId) throw new HttpsError('failed-precondition', 'Choose an AI agent profile before starting AI-assisted calling.');
+  const profileSnapshot = requestedProfileId ? await db.doc(`aiAgentProfiles/${requestedProfileId}`).get() : null;
+  if (requestedProfileId && (!profileSnapshot?.exists || profileSnapshot.get('status') === 'archived')) {
     throw new HttpsError('failed-precondition', 'The selected AI agent profile is unavailable.');
   }
 
@@ -137,14 +154,19 @@ export const startHybridDialerSession = onCall({ ...callOptions, secrets: HYBRID
   const overrideJson = JSON.stringify(sessionOverride);
   if (overrideJson.length > 12000) throw new HttpsError('invalid-argument', 'Session override is too large.');
 
+  const autoTakeover = operatingMode === 'hybrid'
+    && role !== 'outbound_rep' && request.data?.autoTakeover === true;
   await db.doc(`dialerSessions/${sessionId}`).set({
     hybridV2: true,
     concurrency,
+    operatingMode,
+    detachedAllowed: operatingMode === 'ai',
+    autoDial: { enabled: false, state: 'idle', refillLeaseToken: '', refillLeaseUntil: null },
     rep: { state: 'available', activeCallId: '', listeningCallId: '' },
-    takeover: { autoEnabled: request.data?.autoTakeover === true },
+    takeover: { autoEnabled: autoTakeover },
     agentProfileId: requestedProfileId,
-    agentProfileName: clean(profileSnapshot.get('name'), 120),
-    agentProfileVersion: Math.max(1, Number(profileSnapshot.get('version')) || 1),
+    agentProfileName: clean(profileSnapshot?.get('name'), 120),
+    agentProfileVersion: Math.max(1, Number(profileSnapshot?.get('version')) || 1),
     agentSessionOverride: sessionOverride,
     updatedAt: FieldValue.serverTimestamp()
   }, { merge: true });
@@ -157,7 +179,8 @@ export const startHybridDialerSession = onCall({ ...callOptions, secrets: HYBRID
   return {
     sessionId,
     concurrency,
-    autoTakeover: request.data?.autoTakeover === true,
+    autoTakeover,
+    operatingMode,
     agentProfileId: requestedProfileId
   };
 });
@@ -170,16 +193,99 @@ export const heartbeatHybridDialerSession = onCall(callOptions, async request =>
   return heartbeatSession(db, sessionId);
 });
 
-/**
- * Launch exactly one three-leg batch at a time. This prevents repeated clicks
- * from turning a 3-line product setting into 6/9/12 concurrent PSTN calls.
- */
+/** Change who owns future human answers without ending the server-side stream. */
+export const setHybridOperatingMode = onCall({ ...callOptions, secrets: HYBRID_SECRETS }, async request => {
+  const { db, uid } = await requireDialer(request);
+  const sessionId = requireId(request.data?.sessionId, 'session id');
+  const session = await requireOwnedSession(db, sessionId, uid);
+  const operatingMode = ['human', 'hybrid', 'ai'].includes(request.data?.operatingMode)
+    ? request.data.operatingMode : '';
+  if (!operatingMode) throw new HttpsError('invalid-argument', 'Choose Human, Hybrid, or AI calling.');
+  const agentProfileId = clean(request.data?.agentProfileId || session.agentProfileId, 200);
+  if (operatingMode !== 'human' && !agentProfileId) {
+    throw new HttpsError('failed-precondition', 'Choose an AI agent profile before enabling AI calling.');
+  }
+  const profileSnapshot = agentProfileId ? await db.doc(`aiAgentProfiles/${agentProfileId}`).get() : null;
+  if (agentProfileId && (!profileSnapshot?.exists || profileSnapshot.get('status') === 'archived')) {
+    throw new HttpsError('failed-precondition', 'The selected AI agent profile is unavailable.');
+  }
+  const agentProfileName = clean(profileSnapshot?.get('name'), 120);
+  const agentProfileVersion = Math.max(1, Number(profileSnapshot?.get('version')) || 1);
+  await db.doc(`dialerSessions/${sessionId}`).set({
+    operatingMode,
+    detachedAllowed: operatingMode === 'ai',
+    agentProfileId,
+    agentProfileName,
+    agentProfileVersion,
+    updatedAt: FieldValue.serverTimestamp()
+  }, { merge: true });
+  if (agentProfileId) {
+    for (const callId of (session.activeCallIds || []).slice(-100)) {
+      const callRef = db.doc(`calls/${callId}`);
+      const callSnapshot = await callRef.get();
+      if (!callSnapshot.exists || ['completed', 'cancelled', 'failed'].includes(callSnapshot.get('status'))) continue;
+      await callRef.set({
+        agent: {
+          ...(callSnapshot.get('agent') || {}),
+          profileId: agentProfileId,
+          profileName: agentProfileName,
+          profileVersion: agentProfileVersion,
+          effectiveConfigHash: '', model: '', voice: ''
+        },
+        updatedAt: FieldValue.serverTimestamp()
+      }, { merge: true });
+    }
+  }
+  const refill = await maintainHybridCapacity(db, sessionId, { providerConfig: twilioConfig(), actorId: uid })
+    .catch(error => ({ started: [], reason: clean(error?.message, 200) || 'refill_failed' }));
+  await recordCallAuditEvent(db, 'session_operating_mode_changed', {
+    sessionId,
+    campaignId: session.campaignId,
+    actorType: 'rep',
+    actorId: uid,
+    metadata: { operatingMode, agentProfileId }
+  });
+  return { ok: true, operatingMode, agentProfileId, agentProfileName, started: refill.started || [] };
+});
+
+/** Resize a running session without terminating calls above the new ceiling. */
+export const setHybridConcurrency = onCall({ ...callOptions, secrets: HYBRID_SECRETS }, async request => {
+  const { db, uid } = await requireDialer(request);
+  const sessionId = requireId(request.data?.sessionId, 'session id');
+  const session = await requireOwnedSession(db, sessionId, uid);
+  const concurrency = Number(request.data?.concurrency);
+  if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 5) {
+    throw new HttpsError('invalid-argument', 'Concurrent lines must be between 1 and 5.');
+  }
+  const campaignSnapshot = await db.doc(`outboundCampaigns/${session.campaignId}`).get();
+  const providerId = clean(campaignSnapshot.get('provider'), 40);
+  const support = assertSupports(providerId, 'parallel', concurrency, { hybrid: true });
+  if (!support.ok) {
+    throw new HttpsError('failed-precondition', `The provider cannot run ${concurrency} lines: ${support.missing.join(', ')}.`);
+  }
+  await db.doc(`dialerSessions/${sessionId}`).set({
+    concurrency,
+    updatedAt: FieldValue.serverTimestamp()
+  }, { merge: true });
+  const refill = await maintainHybridCapacity(db, sessionId, { providerConfig: twilioConfig(), actorId: uid })
+    .catch(error => ({ started: [], reason: clean(error?.message, 200) || 'refill_failed' }));
+  await recordCallAuditEvent(db, 'session_concurrency_changed', {
+    sessionId,
+    campaignId: session.campaignId,
+    actorType: 'rep',
+    actorId: uid,
+    metadata: { from: Math.max(1, Number(session.concurrency) || 1), to: concurrency }
+  });
+  return { ok: true, concurrency, started: refill.started || [] };
+});
+
+/** Start server-owned auto dialing at the session's configured concurrency. */
 export const dialHybridTargets = onCall({ ...callOptions, timeoutSeconds: 180, secrets: HYBRID_SECRETS }, async request => {
   const { db, uid } = await requireDialer(request);
   const sessionId = requireId(request.data?.sessionId, 'session id');
   const session = await requireOwnedSession(db, sessionId, uid);
   if (session.hybridV2 !== true) throw new HttpsError('failed-precondition', 'This is not a Hybrid Dialer V2 session.');
-  if (session.status !== 'active') return { started: [], reason: `session_${session.status}` };
+  if (session.status !== 'active') return { started: [], reason: `session_${session.status}`, verifiedState: 'blocked' };
 
   const nonTerminal = [];
   for (const callId of (session.activeCallIds || []).slice(-20)) {
@@ -188,7 +294,21 @@ export const dialHybridTargets = onCall({ ...callOptions, timeoutSeconds: 180, s
     const status = snapshot.get('status');
     if (!['completed', 'cancelled', 'failed'].includes(status)) nonTerminal.push(callId);
   }
-  if (nonTerminal.length) return { started: [], reason: 'batch_in_progress', activeCallIds: nonTerminal };
+  if (nonTerminal.length) {
+    const result = { started: [], reason: 'batch_in_progress', activeCallIds: nonTerminal, verifiedState: 'blocked' };
+    await db.doc(`dialerSessions/${sessionId}`).set({
+      lastDialAttempt: {
+        state: 'blocked', reason: 'batch_in_progress', requestedAt: FieldValue.serverTimestamp(),
+        startedCallIds: [], requestedBy: uid
+      },
+      updatedAt: FieldValue.serverTimestamp()
+    }, { merge: true });
+    await recordCallAuditEvent(db, 'dial_preflight_blocked', {
+      sessionId, campaignId: session.campaignId, actorType: 'rep', actorId: uid,
+      metadata: { reason: 'batch_in_progress', activeCalls: nonTerminal.length }
+    });
+    return result;
+  }
 
   const campaignSnapshot = await db.doc(`outboundCampaigns/${session.campaignId}`).get();
   const providerId = campaignSnapshot.get('provider');
@@ -196,48 +316,48 @@ export const dialHybridTargets = onCall({ ...callOptions, timeoutSeconds: 180, s
 
   await db.doc(`dialerSessions/${sessionId}`).set({
     connectedCallId: '', connectedTargetId: '', connectedAt: null,
+    autoDial: {
+      ...(session.autoDial || {}), enabled: true, state: 'starting',
+      startedAt: FieldValue.serverTimestamp(), lastError: ''
+    },
     rep: { state: 'available', activeCallId: '', listeningCallId: '' },
     updatedAt: FieldValue.serverTimestamp()
   }, { merge: true });
 
-  const result = await dialNext(db, sessionId, { providerConfig: twilioConfig() })
+  const result = await maintainHybridCapacity(db, sessionId, { providerConfig: twilioConfig(), actorId: uid })
     .catch(error => { throw new HttpsError('internal', clean(error?.message, 300)); });
 
-  const profileId = clean(session.agentProfileId, 200);
-  for (const started of result.started || []) {
-    await db.doc(`calls/${started.callId}`).set({
-      hybridV2: true,
-      control: { controller: 'unassigned', repUid: '', aiSessionId: '', revision: 0 },
-      handoff: { requestedBy: '', requestedAt: null, state: 'none', priority: 0, completedAt: null },
-      media: {
-        conferenceSid: '', conferenceName: '', prospectParticipantSid: '',
-        aiParticipantSid: '', humanParticipantSid: '', listenerParticipantSid: '', streamSid: '', recordingSid: ''
-      },
-      agent: {
-        profileId,
-        profileName: clean(session.agentProfileName, 120),
-        profileVersion: Math.max(1, Number(session.agentProfileVersion) || 1),
-        effectiveConfigHash: '', model: '', voice: ''
-      },
-      agentSessionOverride: session.agentSessionOverride || {},
-      analytics: {
-        humanTalkSec: 0, aiTalkSec: 0, listenSec: 0,
-        takeoverCount: 0, prospectRequestedHuman: false
-      },
-      updatedAt: FieldValue.serverTimestamp()
-    }, { merge: true });
-    await recordCallAuditEvent(db, 'call_dialed', {
-      callId: started.callId, sessionId, campaignId: session.campaignId,
-      actorType: 'rep', actorId: uid, metadata: { targetId: started.targetId }
-    });
-  }
-  return result;
+  const verifiedState = (result.started || []).length ? 'provider_accepted' : 'blocked';
+  await db.doc(`dialerSessions/${sessionId}`).set({
+    lastDialAttempt: {
+      state: verifiedState,
+      reason: clean(result.reason, 100),
+      requestedAt: FieldValue.serverTimestamp(),
+      startedCallIds: (result.started || []).map(entry => entry.callId).slice(0, 5),
+      requestedBy: uid,
+      availability: {
+        scanned: Math.max(0, Number(result.availability?.scanned) || 0),
+        rejectedByReason: result.availability?.rejectedByReason || {}
+      }
+    },
+    updatedAt: FieldValue.serverTimestamp()
+  }, { merge: true });
+  await recordCallAuditEvent(db, verifiedState === 'provider_accepted' ? 'dial_provider_accepted' : 'dial_preflight_blocked', {
+    sessionId, campaignId: session.campaignId, actorType: 'rep', actorId: uid,
+    metadata: { reason: clean(result.reason, 100), started: (result.started || []).length }
+  });
+
+  return { ...result, verifiedState };
 });
 
 export const stopHybridDialerSession = onCall({ ...callOptions, secrets: HYBRID_SECRETS }, async request => {
   const { db, uid } = await requireDialer(request);
   const sessionId = requireId(request.data?.sessionId, 'session id');
   const session = await requireOwnedSession(db, sessionId, uid);
+  await db.doc(`dialerSessions/${sessionId}`).set({
+    autoDial: { ...(session.autoDial || {}), enabled: false, state: 'stopped' },
+    updatedAt: FieldValue.serverTimestamp()
+  }, { merge: true });
   const result = await stopDialerSession(db, sessionId, {
     reason: clean(request.data?.reason, 60) || 'ended',
     providerConfig: session.provider === 'twilio' ? twilioConfig() : {}
@@ -256,20 +376,50 @@ export const endHybridCall = onCall({ ...callOptions, secrets: HYBRID_SECRETS },
   const callSnapshot = await db.doc(`calls/${callId}`).get();
   if (!callSnapshot.exists) throw new HttpsError('not-found', 'Call not found.');
   const call = { id: callId, ...callSnapshot.data() };
-  await requireOwnedSession(db, call.sessionId, uid);
+  await requireCallOperator(db, call, uid);
   if (call.provider !== 'twilio') throw new HttpsError('failed-precondition', 'Hybrid call control currently requires Twilio.');
 
   const provider = getCallingProvider('twilio', twilioConfig());
   if (call.providerCallId) await provider.endCall(call.providerCallId)
     .catch(error => { throw new HttpsError('internal', clean(error?.message, 300)); });
+  const now = new Date();
   await db.doc(`calls/${callId}`).set({
-    endedBy: uid, endRequestedAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp()
+    status: 'completed',
+    endedAt: Timestamp.fromDate(now),
+    endedBy: uid,
+    endRequestedAt: Timestamp.fromDate(now),
+    updatedAt: FieldValue.serverTimestamp()
   }, { merge: true });
+  const campaignSnapshot = call.campaignId ? await db.doc(`outboundCampaigns/${call.campaignId}`).get() : null;
+  const campaign = campaignSnapshot?.exists ? { id: campaignSnapshot.id, ...campaignSnapshot.data() } : null;
+  if (call.targetId) {
+    await applyDisposition(db, {
+      targetId: call.targetId,
+      callId,
+      disposition: 'completed',
+      campaign,
+      actor: uid,
+      now
+    });
+  }
+  if (call?.control?.controller === 'human' || call?.control?.controller === 'transitioning') {
+    await releaseRepFromCall(db, call.sessionId, call.id, {
+      repUid: call?.control?.repUid || '', now
+    }).catch(() => null);
+  }
   await recordCallAuditEvent(db, 'call_end_requested', {
     callId, sessionId: call.sessionId, campaignId: call.campaignId,
     actorType: 'rep', actorId: uid
   });
-  return { ok: true };
+  const refill = await maintainHybridCapacity(db, call.sessionId, { providerConfig: twilioConfig() })
+    .catch(async error => {
+      await db.doc(`dialerSessions/${call.sessionId}`).set({
+        autoDial: { state: 'error', lastError: clean(error?.message, 300) },
+        updatedAt: FieldValue.serverTimestamp()
+      }, { merge: true });
+      return { started: [], reason: 'refill_failed' };
+    });
+  return { ok: true, replacementCalls: (refill.started || []).length };
 });
 
 /** Explicit DNC action. Kept separate from End Call by contract. */
@@ -279,7 +429,7 @@ export const markHybridCallDoNotCall = onCall({ ...callOptions, secrets: HYBRID_
   const callSnapshot = await db.doc(`calls/${callId}`).get();
   if (!callSnapshot.exists) throw new HttpsError('not-found', 'Call not found.');
   const call = { id: callId, ...callSnapshot.data() };
-  await requireOwnedSession(db, call.sessionId, uid);
+  await requireCallOperator(db, call, uid);
 
   await markDoNotCall(db, call.targetId, { actor: email || uid });
   if (call.provider === 'twilio' && call.providerCallId) {
@@ -304,26 +454,53 @@ export const submitHybridDisposition = onCall(callOptions, async request => {
   const callSnapshot = await db.doc(`calls/${callId}`).get();
   if (!callSnapshot.exists) throw new HttpsError('not-found', 'Call not found.');
   const call = { id: callId, ...callSnapshot.data() };
-  await requireOwnedSession(db, call.sessionId, uid);
+  await requireCallOperator(db, call, uid);
   const campaignSnapshot = await db.doc(`outboundCampaigns/${call.campaignId}`).get();
   const disposition = clean(request.data?.disposition, 40);
+  const allowedDispositions = new Set([
+    'connected', 'qualified', 'booked_meeting', 'call_later', 'not_interested',
+    'voicemail', 'no_answer', 'wrong_number', 'do_not_call'
+  ]);
+  if (!allowedDispositions.has(disposition)) throw new HttpsError('invalid-argument', 'Choose a valid call outcome.');
+  const followUpAtRaw = clean(request.data?.followUpAt, 80);
+  const followUpAt = followUpAtRaw ? new Date(followUpAtRaw) : null;
+  if (followUpAtRaw && Number.isNaN(followUpAt?.getTime())) throw new HttpsError('invalid-argument', 'Enter a valid follow-up time.');
+  if (['booked_meeting', 'call_later'].includes(disposition) && !followUpAt) {
+    throw new HttpsError('invalid-argument', 'This outcome requires a follow-up time.');
+  }
   const result = await applyDisposition(db, {
     targetId: call.targetId,
     callId,
     disposition,
     notes: clean(request.data?.notes, 2000),
     campaign: campaignSnapshot.exists ? { id: campaignSnapshot.id, ...campaignSnapshot.data() } : null,
-    actor: email || uid
+    actor: email || uid,
+    requestedFollowUpAt: followUpAt
   });
   await db.doc(`calls/${callId}`).set({
     disposition,
     summary: clean(request.data?.notes, 2000),
     dispositionBy: email || uid,
+    wrapUp: {
+      status: 'completed',
+      completedAt: FieldValue.serverTimestamp(),
+      completedBy: email || uid,
+      ...(followUpAt ? { followUpAt } : {})
+    },
     updatedAt: FieldValue.serverTimestamp()
   }, { merge: true });
+  const promotedLeadId = result?.promotion?.leadId;
+  if (followUpAt && promotedLeadId) {
+    await db.doc(`leads/${promotedLeadId}`).set({
+      nextActionAt: followUpAt,
+      nextActionType: disposition === 'booked_meeting' ? 'meeting' : 'callback',
+      nextActionCallId: callId,
+      updatedAt: FieldValue.serverTimestamp()
+    }, { merge: true });
+  }
   await recordCallAuditEvent(db, 'disposition_recorded', {
     callId, sessionId: call.sessionId, campaignId: call.campaignId,
-    actorType: 'rep', actorId: uid, metadata: { disposition }
+    actorType: 'rep', actorId: uid, metadata: { disposition, followUpAt: followUpAtRaw }
   });
   return result;
 });

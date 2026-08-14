@@ -2,6 +2,8 @@
 //
 //   npm run role -- someone@example.com admin
 //   npm run role -- someone@example.com client
+//   npm run role -- someone@example.com outbound_rep
+//   npm run role -- someone@example.com outbound_manager
 //   npm run role -- someone@example.com none      (revoke)
 //
 // Roles live in roles/{uid}, which no client can write — that is what makes
@@ -27,11 +29,11 @@ const { initializeApp, applicationDefault } = await import('firebase-admin/app')
 const { getAuth } = await import('firebase-admin/auth');
 const { getFirestore, FieldValue } = await import('firebase-admin/firestore');
 
-const VALID = ['admin', 'client', 'none'];
+const VALID = ['admin', 'client', 'outbound_rep', 'outbound_manager', 'none'];
 const [email, role] = process.argv.slice(2);
 
 if (!email || !role || !VALID.includes(role)) {
-  console.error('Usage: npm run role -- <email> <admin|client|none>');
+  console.error('Usage: npm run role -- <email> <admin|client|outbound_rep|outbound_manager|none>');
   process.exit(1);
 }
 

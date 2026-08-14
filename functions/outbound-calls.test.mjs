@@ -22,7 +22,8 @@ const {
   cancelLosingLegs, recordCallEvent, applyDisposition,
   markDoNotCall, reconcileSessions, releaseDueTargets, refreshCampaignCounts,
   sanitizeCampaign, outboundCallId, findActiveDialerSession,
-  releaseTargetsForApprovedResearch
+  releaseTargetsForApprovedResearch, prepareCampaignResearchBatch,
+  approveCampaignResearchBatch
 } = await import('./outbound-calls.js');
 const { importProspects } = await import('./prospect-import.js');
 const { assertSupports } = await import('./providers/calling/index.js');
@@ -300,6 +301,19 @@ check('the retry respects the retry delay',
   retry.nextAttemptAt.getTime() >= NOW.getTime() + campaign.retryDelayMinutes * 60000);
 check('a no-answer does not promote anything', retry.promotion === null);
 
+const promisedCallback = new Date('2026-01-07T17:30:00Z');
+const callback = await applyDisposition(db, {
+  targetId: noAnswerTarget.targetId, callId: noAnswerTarget.callId,
+  disposition: 'call_later', campaign, now: NOW,
+  requestedFollowUpAt: promisedCallback
+});
+check('a promised callback uses the exact rep-selected time',
+  callback.nextAttemptAt?.toISOString() === promisedCallback.toISOString(),
+  callback.nextAttemptAt?.toISOString());
+check('the exact callback time is persisted on the target',
+  (await db.doc(`outboundTargets/${noAnswerTarget.targetId}`).get()).get('nextAttemptAt').toDate().toISOString()
+    === promisedCallback.toISOString());
+
 const dncResult = await applyDisposition(db, {
   targetId: thirdDial.started[2].targetId, callId: thirdDial.started[2].callId,
   disposition: 'do_not_call', campaign, now: NOW
@@ -412,6 +426,28 @@ check('approval-required imports begin pending', toggledTarget.get('state') === 
 await updateCampaign(db, toggledCampaign, { requireResearchApproval: false });
 check('turning approval off releases existing pending targets',
   (await toggledTarget.ref.get()).get('state') === 'ready');
+
+const bulkCampaign = await createCampaign(db, {
+  name: 'Bulk research', mode: 'power', provider: 'mock',
+  callerId: '+15551234567', requireResearchApproval: true
+}, { createdBy: 'test' });
+const bulkProspects = (await importProspects(db, [
+  { name: 'Bulk Alpha', phone: '2015557373', address: 'Ridgewood, NJ' },
+  { name: 'Bulk Beta', phone: '2015557474', address: 'Ridgewood, NJ' }
+], { source: { system: 'csv', provider: 'csv' } })).written;
+await importTargets(db, bulkCampaign, { prospectIds: bulkProspects, now: NOW });
+const bulkPrepared = await prepareCampaignResearchBatch(db, bulkCampaign, {
+  now: NOW, limit: 12, fetchImpl: async () => ({ ok: false, status: 0 })
+});
+check('bulk research prepares every pending campaign target',
+  bulkPrepared.prepared === 2 && bulkPrepared.awaitingApproval === 2, JSON.stringify(bulkPrepared));
+const bulkApproved = await approveCampaignResearchBatch(db, bulkCampaign, {
+  approvedBy: 'admin', now: NOW
+});
+const bulkTargets = await db.collection('outboundTargets').where('campaignId', '==', bulkCampaign).get();
+check('bulk approval releases every generated campaign brief',
+  bulkApproved.approved === 2 && bulkTargets.docs.every(entry => entry.get('state') === 'ready'),
+  JSON.stringify(bulkApproved));
 
 // ---------------------------------------------------------------------------
 console.log('\nan abandoned session releases its locks');

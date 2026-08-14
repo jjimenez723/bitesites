@@ -94,6 +94,18 @@ export default function Users() {
                           Client
                         </button>
                       )}
+                      {role !== 'outbound_rep' && (
+                        <button className="btn-admin" type="button" disabled={busy}
+                                onClick={() => grant(user, 'outbound_rep')}>
+                          Outbound rep
+                        </button>
+                      )}
+                      {role !== 'outbound_manager' && (
+                        <button className="btn-admin" type="button" disabled={busy}
+                                onClick={() => grant(user, 'outbound_manager')}>
+                          Outbound manager
+                        </button>
+                      )}
                       {role !== 'admin' && (
                         <button className="btn-admin" type="button" disabled={busy}
                                 onClick={() => grant(user, 'admin')}>

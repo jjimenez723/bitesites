@@ -165,6 +165,11 @@ leads/{id}         Public form submissions. Anyone may create; only admins may r
 roles/{uid}        role: 'admin' | 'client'. Admin-writable only. The access-control root.
 users/{uid}        Self-service profile. Created at sign-up with status 'pending'.
 projects/{id}      Client portal records. clientUids[] controls who can read.
+financeSettings/ledger          Ledger initialization metadata.
+financeAccounts/{id}            Client retainers, initial payments, and payout rules.
+financeTeam/{id}                Payout participants and expense-pool membership.
+financeExpenses/{id}            Recurring/one-time costs with universal or client tags.
+financeIncome/{id}              Dated commissions and other one-time revenue.
 ```
 
 Outbound calling adds a second contact universe. It is deliberately separate
@@ -238,6 +243,8 @@ forge a lead that looks like a booked call.
   `users/{uid}` doc with `status: 'pending'`, and cannot later change that status.
 - **Admins cannot rewrite lead history** — `createdAt` and `email` are immutable on update.
 - **Everything undeclared is denied** by a catch-all `match /{document=**}`.
+- **Finance is owner-write/admin-read.** Full admins can audit the finance collections,
+  but only Jensy's two documented owner addresses can create, edit, or delete ledger rows.
 - Custom claims (`role`) set via the Admin SDK are honoured as a fast path, avoiding a
   document read per rule evaluation.
 

@@ -3,9 +3,9 @@
 // Loaded lazily from main.jsx so none of this — Firebase Auth, the console
 // stylesheet, the charts — reaches a visitor to the marketing site.
 //
-// The gate below is convenience, not security. Every collection the console
-// reads is admin-only in firestore.rules, so a non-admin who forced their way
-// past this screen would still get permission-denied on every query.
+// The gate below mirrors the role-specific shell for full admins, outbound
+// managers, and focused outbound reps. Firestore rules and callables remain the
+// security boundary; hiding a route is only a usability affordance.
 
 import React, { useEffect, useState } from 'react';
 import { Link, NavLink, Navigate, Route, Routes } from 'react-router-dom';
@@ -15,11 +15,14 @@ import {
 } from '../lib/auth';
 import Overview from './Overview';
 import Performance from './Performance';
+import Finance from './Finance';
 import Leads from './Leads';
 import Conversations from './Conversations';
 import Users from './Users';
 import EmailStudio from './EmailStudio';
 import OutboundCalls from './OutboundCalls';
+import OutboundExperiencePreview from './outbound/OutboundExperiencePreview';
+import { FINANCE_OWNER_EMAILS } from './finance-seed';
 import adminLogo from '../assets/bitesites-admin-logo.svg';
 import './admin.css';
 
@@ -41,6 +44,7 @@ const AdminLogo = () => (
 const NAV = [
   { to: '/admin', end: true, label: 'Overview', icon: 'M3 13h4v8H3zM10 3h4v18h-4zM17 9h4v12h-4z' },
   { to: '/admin/performance', label: 'Performance', icon: 'M3 18l5-6 4 3 8-10M16 5h4v4' },
+  { to: '/admin/finance', label: 'Finance', icon: 'M4 18V8m6 10V4m6 14v-6m4 6H2M17 5.5c0-1-1-1.5-2-1.5s-2 .5-2 1.5 1 1.5 2 1.5 2 .5 2 1.5S16 9 15 9s-2-.5-2-1.5' },
   { to: '/admin/leads', label: 'Leads', icon: 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z' },
   { to: '/admin/conversations', label: 'Conversations', icon: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z' },
   { to: '/admin/outbound', label: 'Outbound Calls', icon: 'M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8.1 9.8a16 16 0 0 0 6 6l1.3-1.2a2 2 0 0 1 2.1-.5c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.8 2.1z' },
@@ -160,18 +164,24 @@ function Denied() {
   );
 }
 
-export default function AdminApp() {
+function AuthenticatedAdminApp() {
   const [session, setSession] = useState({ user: null, role: '', profile: null, loading: true });
 
   useEffect(() => watchSession(setSession), []);
 
   if (session.loading) return <div className="admin-boot">Checking your session…</div>;
   if (!session.user) return <SignIn />;
-  if (session.role !== 'admin') return <Denied />;
+  const staffRoles = ['admin', 'outbound_rep', 'outbound_manager'];
+  if (!staffRoles.includes(session.role)) return <Denied />;
 
   const email = session.user.email || '';
   const name = session.profile?.displayName || session.user.displayName || email.split('@')[0];
   const initials = name.slice(0, 2).toUpperCase();
+  const isAdminUser = session.role === 'admin';
+  const canWriteFinance = isAdminUser && FINANCE_OWNER_EMAILS.includes(email.toLowerCase());
+  const visibleNav = isAdminUser ? NAV : NAV.filter(item => item.to === '/admin/outbound');
+  const roleLabel = session.role === 'outbound_manager' ? 'Outbound manager'
+    : session.role === 'outbound_rep' ? 'Outbound rep' : 'Console';
 
   return (
     <div className="bs-admin">
@@ -181,13 +191,13 @@ export default function AdminApp() {
             <AdminLogo />
             <div>
               <strong>BiteSites</strong>
-              <span>Console</span>
+              <span>{roleLabel}</span>
             </div>
           </div>
 
           <nav className="admin-nav">
             <div className="admin-nav-label">Workspace</div>
-            {NAV.map(item => (
+            {visibleNav.map(item => (
               <NavLink key={item.label} to={item.to} end={item.end}>
                 <Icon d={item.icon} />
                 {item.label}
@@ -211,17 +221,25 @@ export default function AdminApp() {
 
         <div className="admin-main">
           <Routes>
-            <Route index element={<Overview />} />
-            <Route path="performance" element={<Performance />} />
-            <Route path="leads" element={<Leads />} />
-            <Route path="conversations" element={<Conversations />} />
-            <Route path="outbound" element={<OutboundCalls />} />
-            <Route path="email" element={<EmailStudio />} />
-            <Route path="users" element={<Users />} />
-            <Route path="*" element={<Navigate to="/admin" replace />} />
+            {isAdminUser && <Route index element={<Overview />} />}
+            {isAdminUser && <Route path="performance" element={<Performance />} />}
+            {isAdminUser && <Route path="finance" element={<Finance canWrite={canWriteFinance} />} />}
+            {isAdminUser && <Route path="leads" element={<Leads />} />}
+            {isAdminUser && <Route path="conversations" element={<Conversations />} />}
+            <Route path="outbound" element={<OutboundCalls role={session.role} currentUid={session.user.uid} />} />
+            {isAdminUser && <Route path="email" element={<EmailStudio />} />}
+            {isAdminUser && <Route path="users" element={<Users />} />}
+            <Route path="*" element={<Navigate to={isAdminUser ? '/admin' : '/admin/outbound'} replace />} />
           </Routes>
         </div>
       </div>
     </div>
   );
+}
+
+export default function AdminApp() {
+  if (import.meta.env.DEV && window.location.pathname === '/admin/outbound-preview') {
+    return <OutboundExperiencePreview />;
+  }
+  return <AuthenticatedAdminApp />;
 }

@@ -46,19 +46,17 @@ if (env.DEV && env.VITE_APPCHECK_DEBUG_TOKEN) {
     env.VITE_APPCHECK_DEBUG_TOKEN === 'true' ? true : env.VITE_APPCHECK_DEBUG_TOKEN;
 }
 
-// Do not run a production reCAPTCHA challenge on localhost. Local App Check is
-// opt-in through the documented debug token above; without one, the challenge
-// only produces noisy third-party iframe/CSP diagnostics and cannot be trusted
-// as a development attestation anyway.
-if (!env.DEV || env.VITE_APPCHECK_DEBUG_TOKEN) {
-  try {
-    initializeAppCheck(app, {
-      provider: new ReCaptchaEnterpriseProvider(recaptchaSiteKey),
-      isTokenAutoRefreshEnabled: true
-    });
-  } catch (error) {
-    // Never let attestation failure blank the marketing site — a lead that cannot
-    // be attested should surface as a failed submit, not a broken page.
-    console.warn('[firebase] App Check failed to initialise', error);
-  }
+// Firestore App Check enforcement also applies to signed-in admin reads. Keep
+// App Check enabled in development so localhost receives a real attestation;
+// otherwise Auth succeeds but every Firestore request is rejected. For LAN IPs
+// and tunnels, use the debug-token path above instead.
+try {
+  initializeAppCheck(app, {
+    provider: new ReCaptchaEnterpriseProvider(recaptchaSiteKey),
+    isTokenAutoRefreshEnabled: true
+  });
+} catch (error) {
+  // Never let attestation failure blank the marketing site — a lead that cannot
+  // be attested should surface as a failed submit, not a broken page.
+  console.warn('[firebase] App Check failed to initialise', error);
 }

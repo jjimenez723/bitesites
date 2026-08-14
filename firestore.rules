@@ -45,8 +45,32 @@ service cloud.firestore {
       return role() == 'admin';
     }
 
+    // Finance is visible to every full admin, but only the BiteSites owner may
+    // change the ledger. This is the security boundary; the matching disabled
+    // controls in the React console are only a usability affordance.
+    function isFinanceOwner() {
+      return isAdmin()
+        && 'email' in request.auth.token
+        && request.auth.token.email in [
+             'jensyjimenez723@gmail.com',
+             'jensy@bitesites.org'
+           ];
+    }
+
     function isClient() {
       return role() == 'client';
+    }
+
+    function isOutboundRep() {
+      return role() == 'outbound_rep';
+    }
+
+    function isOutboundManager() {
+      return role() == 'outbound_manager';
+    }
+
+    function isOutboundStaff() {
+      return isAdmin() || isOutboundRep() || isOutboundManager();
     }
 
     function isOwner(uid) {
@@ -333,7 +357,8 @@ service cloud.firestore {
       allow create: if validConversationOpen(request.resource.data, 'byte', 'voice');
       allow update: if isAdmin()
                     || validConversationClose(request.resource.data, resource.data);
-      allow read:   if isAdmin();
+      allow read:   if isAdmin()
+                    || (isOutboundStaff() && resource.data.direction == 'outbound');
       allow delete: if isAdmin();
 
       // Turns cover both the state timeline and any transcript the widget
@@ -341,7 +366,9 @@ service cloud.firestore {
       // GoHighLevel webhook, which runs with the Admin SDK and bypasses rules.
       match /turns/{turnId} {
         allow create: if validTurn(request.resource.data);
-        allow read:   if isAdmin();
+        allow read:   if isAdmin()
+                      || (isOutboundStaff()
+                          && get(/databases/$(database)/documents/calls/$(callId)).data.direction == 'outbound');
         allow update: if false;
         allow delete: if isAdmin();
       }
@@ -418,6 +445,36 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
 
+    // --------------------------------------------------------------- finance
+    // Separate collections keep accounts, staff, expenses, and variable income
+    // independently editable and avoid an ever-growing single ledger document.
+    // Other admins may audit every row but cannot create, change, or delete one.
+
+    match /financeSettings/{documentId} {
+      allow read: if isAdmin();
+      allow write: if isFinanceOwner();
+    }
+
+    match /financeAccounts/{accountId} {
+      allow read: if isAdmin();
+      allow write: if isFinanceOwner();
+    }
+
+    match /financeTeam/{memberId} {
+      allow read: if isAdmin();
+      allow write: if isFinanceOwner();
+    }
+
+    match /financeExpenses/{expenseId} {
+      allow read: if isAdmin();
+      allow write: if isFinanceOwner();
+    }
+
+    match /financeIncome/{incomeId} {
+      allow read: if isAdmin();
+      allow write: if isFinanceOwner();
+    }
+
     // ------------------------------------------------------- outbound calling
     //
     // Everything in this block is admin-only for READS and effectively
@@ -445,7 +502,7 @@ service cloud.firestore {
     // existing role behaviour.
 
     match /prospects/{prospectId} {
-      allow read: if isAdmin();
+      allow read: if isOutboundStaff();
       // Server-only lifecycle. See the note above: creation must go through
       // the import service, and deletion is an archive operation there too.
       allow create, delete: if false;
@@ -461,7 +518,7 @@ service cloud.firestore {
                          ]);
 
       match /activities/{activityId} {
-        allow read:   if isAdmin();
+        allow read:   if isOutboundStaff();
         allow create: if isAdmin();
         allow update, delete: if false;
       }
@@ -472,24 +529,24 @@ service cloud.firestore {
       // even here the callables own status and counts — a browser that could
       // set `status: running` would start dialing without the provider
       // capability check that createOutboundCampaign performs.
-      allow read: if isAdmin();
+      allow read: if isOutboundStaff();
       allow create, update, delete: if false;
 
       match /events/{eventId} {
-        allow read: if isAdmin();
+        allow read: if isOutboundStaff();
         allow write: if false;
       }
     }
 
     match /outboundTargets/{targetId} {
-      allow read: if isAdmin();
+      allow read: if isOutboundStaff();
       allow write: if false;
     }
 
     match /dialerSessions/{sessionId} {
       // A rep watches their own session live; the transitions are all written
       // server-side inside transactions.
-      allow read: if isAdmin();
+      allow read: if isOutboundStaff();
       allow write: if false;
     }
 
@@ -497,28 +554,28 @@ service cloud.firestore {
       // Read-only in the browser. Approval goes through approveLeadResearch,
       // which is what keeps `verifiedFacts` and `sources` unforgeable — an
       // admin may reword a summary, not invent a sourced fact.
-      allow read: if isAdmin();
+      allow read: if isOutboundStaff();
       allow write: if false;
     }
 
     match /scrapeJobs/{jobId} {
-      allow read: if isAdmin();
+      allow read: if isAdmin() || isOutboundManager();
       allow write: if false;
 
       // Raw provider payloads. Admin-only and pruned on a retention schedule
       // by outboundNightlyMaintenance — see §14.
       match /results/{resultId} {
-        allow read: if isAdmin();
+        allow read: if isAdmin() || isOutboundManager();
         allow write: if false;
       }
     }
 
     match /importRuns/{runId} {
-      allow read: if isAdmin();
+      allow read: if isAdmin() || isOutboundManager();
       allow write: if false;
 
       match /errors/{errorId} {
-        allow read: if isAdmin();
+        allow read: if isAdmin() || isOutboundManager();
         allow write: if false;
       }
     }

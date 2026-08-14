@@ -8,8 +8,11 @@ const LABELS = {
   system: 'System'
 };
 
-export default function LiveTranscript({ callId, compact = false }) {
-  const { rows, loading, error } = useCallTurns(callId);
+export default function LiveTranscript({ callId, compact = false, demoTurns = null, humanLabel = 'You' }) {
+  const live = useCallTurns(callId);
+  const rows = demoTurns || live.rows;
+  const loading = demoTurns ? false : live.loading;
+  const error = demoTurns ? null : live.error;
   const endRef = useRef(null);
 
   useEffect(() => {
@@ -26,7 +29,7 @@ export default function LiveTranscript({ callId, compact = false }) {
     <div className={`hybrid-transcript ${compact ? 'is-compact' : ''}`} aria-live="polite">
       {visible.map(turn => (
         <div key={turn.id} className={`hybrid-turn speaker-${turn.speaker || 'system'}`}>
-          <span className="hybrid-turn-speaker">{LABELS[turn.speaker] || turn.speaker || 'System'}</span>
+          <span className="hybrid-turn-speaker">{turn.speaker === 'human' ? humanLabel : LABELS[turn.speaker] || turn.speaker || 'System'}</span>
           <span className="hybrid-turn-text">{turn.text}</span>
         </div>
       ))}

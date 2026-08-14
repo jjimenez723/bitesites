@@ -97,6 +97,22 @@
         { "fieldPath": "startedAt", "order": "DESCENDING" }
       ]
     },
+    { "//": "TransferInbox — live outbound warm handoffs addressed to one staff member.",
+      "collectionGroup": "calls",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "direction", "order": "ASCENDING" },
+        { "fieldPath": "staffTransfer.toUid", "order": "ASCENDING" }
+      ]
+    },
+    { "//": "TeamCallCoach — currently connected outbound calls for supervisor monitoring.",
+      "collectionGroup": "calls",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "direction", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
+    },
     { "//": "outbound-calls.recordCallEvent — matching a webhook back to its call.",
       "collectionGroup": "calls",
       "queryScope": "COLLECTION",

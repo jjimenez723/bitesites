@@ -372,6 +372,120 @@ export async function releaseTargetsForApprovedResearch(db, key) {
   return waiting.length;
 }
 
+/** Generate/cache research for one bounded slice of a campaign's waiting queue. */
+export async function prepareCampaignResearchBatch(db, campaignId, {
+  limit = 12, concurrency = 4, now = new Date(), fetchImpl
+} = {}) {
+  const campaignSnapshot = await db.doc(`outboundCampaigns/${campaignId}`).get();
+  if (!campaignSnapshot.exists) throw new Error('Campaign not found');
+  const campaign = { id: campaignId, ...campaignSnapshot.data() };
+  const boundedLimit = Math.max(1, Math.min(25, Number(limit) || 12));
+  const boundedConcurrency = Math.max(1, Math.min(6, Number(concurrency) || 4));
+  const snapshot = await db.collection('outboundTargets')
+    .where('campaignId', '==', campaignId)
+    .where('state', 'in', ['pending', 'researching'])
+    .limit(boundedLimit)
+    .get();
+  const targets = snapshot.docs.map(entry => ({ id: entry.id, ...entry.data() }));
+  const summary = { processed: 0, prepared: 0, awaitingApproval: 0, ready: 0, failed: 0 };
+  let cursor = 0;
+
+  const worker = async () => {
+    while (cursor < targets.length) {
+      const target = targets[cursor];
+      cursor += 1;
+      await db.doc(`outboundTargets/${target.id}`).set({
+        state: 'researching', researchStatus: 'researching', updatedAt: FieldValue.serverTimestamp()
+      }, { merge: true });
+      try {
+        const result = await ensureResearch(db, { ...target, state: 'researching' }, campaign, { fetchImpl, now });
+        summary.processed += 1;
+        if (result.ok) {
+          summary.prepared += 1;
+          summary.ready += 1;
+        } else if (result.reason === 'awaiting_approval') {
+          summary.prepared += 1;
+          summary.awaitingApproval += 1;
+        } else {
+          summary.failed += 1;
+          await db.doc(`outboundTargets/${target.id}`).set({
+            state: 'failed', researchStatus: 'failed', researchError: clean(result.reason, 200),
+            updatedAt: FieldValue.serverTimestamp()
+          }, { merge: true });
+        }
+      } catch (error) {
+        summary.processed += 1;
+        summary.failed += 1;
+        await db.doc(`outboundTargets/${target.id}`).set({
+          state: 'failed', researchStatus: 'failed', researchError: clean(error?.message, 200),
+          updatedAt: FieldValue.serverTimestamp()
+        }, { merge: true });
+      }
+    }
+  };
+
+  await Promise.all(Array.from({ length: Math.min(boundedConcurrency, targets.length) }, () => worker()));
+  if (targets.length) await refreshCampaignCounts(db, campaignId);
+  return { ...summary, hasMore: targets.length === boundedLimit };
+}
+
+/** Approve one bounded slice of generated briefs and release those targets. */
+export async function approveCampaignResearchBatch(db, campaignId, {
+  approvedBy = '', limit = 200, now = new Date()
+} = {}) {
+  const campaignSnapshot = await db.doc(`outboundCampaigns/${campaignId}`).get();
+  if (!campaignSnapshot.exists) throw new Error('Campaign not found');
+  const boundedLimit = Math.max(1, Math.min(200, Number(limit) || 200));
+  const snapshot = await db.collection('outboundTargets')
+    .where('campaignId', '==', campaignId)
+    .where('state', '==', 'awaiting_approval')
+    .limit(boundedLimit)
+    .get();
+  if (snapshot.empty) return { processed: 0, approved: 0, missingResearch: 0, hasMore: false };
+
+  const entries = snapshot.docs.map(entry => ({
+    target: entry,
+    key: contactKey({
+      contactType: entry.get('contactType'),
+      leadId: entry.get('leadId'),
+      prospectId: entry.get('prospectId')
+    })
+  }));
+  const researchRefs = entries.map(entry => db.doc(`leadResearch/${entry.key}`));
+  const researchSnapshots = await db.getAll(...researchRefs);
+  const batch = db.batch();
+  let approved = 0;
+  let missingResearch = 0;
+  const stamp = Timestamp.fromDate(now);
+
+  entries.forEach((entry, index) => {
+    if (!researchSnapshots[index].exists) {
+      missingResearch += 1;
+      batch.set(entry.target.ref, {
+        state: 'pending', researchStatus: 'none', researchApproved: false,
+        updatedAt: FieldValue.serverTimestamp()
+      }, { merge: true });
+      return;
+    }
+    approved += 1;
+    batch.set(researchRefs[index], {
+      approved: true, approvedBy: clean(approvedBy, 128), approvedAt: stamp
+    }, { merge: true });
+    batch.set(entry.target.ref, {
+      state: 'ready', researchStatus: 'ready', researchApproved: true,
+      updatedAt: FieldValue.serverTimestamp()
+    }, { merge: true });
+  });
+  await batch.commit();
+  await refreshCampaignCounts(db, campaignId);
+  return {
+    processed: entries.length,
+    approved,
+    missingResearch,
+    hasMore: entries.length === boundedLimit
+  };
+}
+
 // ------------------------------------------------------------------ call docs
 
 /**
@@ -384,8 +498,13 @@ export async function releaseTargetsForApprovedResearch(db, key) {
 export const outboundCallId = (targetId_, attemptNumber) =>
   deterministicId('outcall', targetId_, String(attemptNumber));
 
-async function createCallDoc(db, { target, campaign, session, providerCallId, attemptNumber, operator, dialerMode, now }) {
+async function createCallDoc(db, {
+  target, campaign, session, providerCallId, attemptNumber, operator, dialerMode, now,
+  contact = {}, research = null
+}) {
   const callId = outboundCallId(target.id, attemptNumber);
+  const address = contact.address && typeof contact.address === 'object' ? contact.address : {};
+  const safeResearch = research && typeof research === 'object' ? research : null;
   await db.doc(`calls/${callId}`).set({
     // Existing inbound-shaped fields, so Conversations.jsx renders it without
     // a special case and older readers keep working.
@@ -416,7 +535,47 @@ async function createCallDoc(db, { target, campaign, session, providerCallId, at
     summary: '',
     recordingUrl: '',
     transcriptRecorded: false,
-    cancellationReason: ''
+    cancellationReason: '',
+
+    // Snapshot the human-facing context at dial time. A prospect can later be
+    // edited or converted to a lead, but the rep must always be able to see the
+    // exact brief and identity that governed this attempt.
+    displayName: clean(contact.companyName || contact.name || contact.firstName, 160),
+    companyName: clean(contact.companyName || contact.businessName || contact.name, 160),
+    contactName: clean([contact.firstName, contact.lastName].filter(Boolean).join(' '), 120),
+    phoneE164: clean(contact.phoneE164 || target.phoneE164, 40),
+    website: clean(contact.website, 500),
+    businessCategory: clean(contact.business?.category || contact.category, 120),
+    contactLocation: {
+      city: clean(address.city, 120),
+      region: clean(address.region, 80),
+      country: clean(address.country, 80),
+      timezone: clean(contact.location?.timezone || target.timezone, 100)
+    },
+    callPlan: safeResearch ? {
+      key: clean(safeResearch.id || `${target.contactType}_${target.leadId || target.prospectId}`, 200),
+      status: safeResearch.approved ? 'approved' : 'draft',
+      approved: safeResearch.approved === true,
+      approvedBy: clean(safeResearch.approvedBy, 160),
+      version: Math.max(1, Number(safeResearch.version) || 1),
+      summary: clean(safeResearch.summary, 3000),
+      suggestedOpening: clean(safeResearch.suggestedOpening, 2000),
+      verifiedFacts: (safeResearch.verifiedFacts || []).slice(0, 20).map(fact => ({
+        id: clean(fact.id, 80), text: clean(fact.text, 700), sourceId: clean(fact.sourceId, 80)
+      })),
+      hypotheses: (safeResearch.hypotheses || []).slice(0, 20).map(value => clean(value, 500)).filter(Boolean),
+      likelyNeeds: (safeResearch.likelyNeeds || []).slice(0, 20).map(value => clean(value, 500)).filter(Boolean),
+      talkingPoints: (safeResearch.talkingPoints || []).slice(0, 20).map(value => clean(value, 700)).filter(Boolean),
+      likelyObjections: (safeResearch.likelyObjections || []).slice(0, 20).map(value => clean(value, 700)).filter(Boolean),
+      confidence: Math.max(0, Math.min(1, Number(safeResearch.confidence) || 0)),
+      generatedAt: safeResearch.generatedAt || null,
+      approvedAt: safeResearch.approvedAt || null
+    } : {
+      key: '', status: 'missing', approved: false, approvedBy: '', version: 0,
+      summary: '', suggestedOpening: '', verifiedFacts: [], hypotheses: [],
+      likelyNeeds: [], talkingPoints: [], likelyObjections: [], confidence: 0,
+      generatedAt: null, approvedAt: null
+    }
   }, { merge: true });
   return callId;
 }
@@ -495,7 +654,9 @@ export async function heartbeatSession(db, sessionId, { now = new Date() } = {})
  * identical: lock, compliance-check, brief, dial, record. Sharing it means the
  * compliance gate cannot be present in one mode and missing in the other.
  */
-export async function dialNext(db, sessionId, { now = new Date(), providerConfig = {}, fetchImpl } = {}) {
+export async function dialNext(db, sessionId, {
+  now = new Date(), providerConfig = {}, fetchImpl, maxNewCalls = null
+} = {}) {
   const sessionRef = db.doc(`dialerSessions/${sessionId}`);
   const sessionSnapshot = await sessionRef.get();
   if (!sessionSnapshot.exists) throw new Error('Session not found');
@@ -510,7 +671,11 @@ export async function dialNext(db, sessionId, { now = new Date(), providerConfig
     return { started: [], reason: `campaign_${campaign.status}` };
   }
 
-  const wanted = session.mode === 'parallel' ? Math.max(1, Math.min(5, Number(session.concurrency) || 1)) : 1;
+  const configured = session.mode === 'parallel' ? Math.max(1, Math.min(5, Number(session.concurrency) || 1)) : 1;
+  const wanted = maxNewCalls === null
+    ? configured
+    : Math.max(0, Math.min(configured, Number(maxNewCalls) || 0));
+  if (!wanted) return { started: [], reason: 'at_capacity' };
   // Over-fetch: compliance will reject some of them, and a session that dials
   // three of five wanted legs is a slower session, not a broken one.
   // Looking at only nine records made a 500-target queue appear empty whenever
@@ -623,7 +788,9 @@ export async function dialNext(db, sessionId, { now = new Date(), providerConfig
       attemptNumber,
       operator: 'human',
       dialerMode: session.mode,
-      now
+      now,
+      contact: contacts[target.id] || {},
+      research: target.research || null
     });
     await db.doc(`outboundTargets/${target.id}`).set({
       state: leg.providerCallId ? 'dialing' : 'ready',
@@ -765,7 +932,9 @@ export async function runAICampaignSlice(db, campaignId, {
       attemptNumber,
       operator: 'ai',
       dialerMode: 'ai',
-      now
+      now,
+      contact,
+      research: briefResult.research || null
     });
 
     await db.doc(`outboundTargets/${target.id}`).set({
@@ -1066,7 +1235,10 @@ export async function recordCallEvent(db, event, { eventDocId, now = new Date(),
  * Resolve a target after an attempt: set its state, schedule the retry, write
  * the outcome back to the contact, and promote when the outcome earns it.
  */
-export async function applyDisposition(db, { targetId: id, callId, disposition, campaign, notes = '', actor = '', now = new Date() }) {
+export async function applyDisposition(db, {
+  targetId: id, callId, disposition, campaign, notes = '', actor = '',
+  requestedFollowUpAt = null, now = new Date()
+}) {
   const targetRef = db.doc(`outboundTargets/${id}`);
   const snapshot = await targetRef.get();
   if (!snapshot.exists) return { ok: false, reason: 'target_missing' };
@@ -1080,8 +1252,17 @@ export async function applyDisposition(db, { targetId: id, callId, disposition, 
   let nextAttemptAt = null;
   const retryable = ['call_later', 'no_answer', 'voicemail', 'busy'].includes(state);
   if (retryable && !exhausted) {
-    const earliest = new Date(now.getTime() + Number(campaign?.retryDelayMinutes ?? 240) * 60000);
-    nextAttemptAt = nextWindowOpening(earliest, target.timezone, campaign) || earliest;
+    const requested = requestedFollowUpAt instanceof Date
+      ? requestedFollowUpAt
+      : requestedFollowUpAt ? new Date(requestedFollowUpAt) : null;
+    if (state === 'call_later' && requested && !Number.isNaN(requested.getTime()) && requested > now) {
+      // A rep-confirmed callback is a promise to the prospect, so it takes
+      // precedence over the campaign's generic retry window.
+      nextAttemptAt = requested;
+    } else {
+      const earliest = new Date(now.getTime() + Number(campaign?.retryDelayMinutes ?? 240) * 60000);
+      nextAttemptAt = nextWindowOpening(earliest, target.timezone, campaign) || earliest;
+    }
   }
 
   await releaseTarget(db, id, {
@@ -1182,6 +1363,7 @@ export async function reconcileSessions(db, { now = new Date(), providerConfig =
   let closedSessions = 0;
   const sessions = await db.collection('dialerSessions').where('status', '==', 'active').limit(50).get();
   for (const entry of sessions.docs) {
+    if (entry.get('hybridV2') === true && entry.get('detachedAllowed') === true) continue;
     const heartbeat = asDate(entry.get('lastHeartbeatAt'));
     if (heartbeat && now.getTime() - heartbeat.getTime() < SESSION_HEARTBEAT_TTL_MS) continue;
     await stopDialerSession(db, entry.id, { reason: 'abandoned', now, providerConfig });

@@ -35,6 +35,14 @@ export function routeDecision({ session, call }) {
 
   const currentRep = rep(session);
   const repFree = currentRep.state === 'available' && !currentRep.activeCallId;
+  const operatingMode = ['human', 'hybrid', 'ai'].includes(session?.operatingMode)
+    ? session.operatingMode : 'hybrid';
+  if (operatingMode === 'ai') {
+    return { controller: 'ai', idempotent: false, reason: 'ai_only_mode' };
+  }
+  if (operatingMode === 'human' && !repFree) {
+    return { controller: 'none', idempotent: false, reason: 'human_rep_busy' };
+  }
   return repFree
     ? { controller: 'human', idempotent: false, reason: 'rep_available' }
     : { controller: 'ai', idempotent: false, reason: 'rep_busy' };
@@ -124,21 +132,32 @@ export async function routeVerifiedHumanAnswer(db, sessionId, callId, {
         rep: { state: 'busy', activeCallId: callId, listeningCallId: '' },
         lastHeartbeatAt: stamp
       }, { merge: true });
-    } else {
+    } else if (decision.controller === 'ai') {
       transaction.set(callRef, {
         status: 'connected', answeredBy: 'human', connectedAt: stamp,
         control: {
           controller: 'ai', repUid: '', aiSessionId: '', changedAt: stamp, revision: nextRevision
         }
       }, { merge: true });
+    } else {
+      transaction.set(callRef, {
+        status: 'completed', answeredBy: 'human', connectedAt: stamp, endedAt: stamp,
+        control: {
+          controller: 'none', repUid: '', aiSessionId: '', changedAt: stamp, revision: nextRevision
+        }
+      }, { merge: true });
     }
 
-    if (targetRef) transaction.set(targetRef, { state: 'connected', updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+    if (targetRef) transaction.set(targetRef, {
+      state: decision.controller === 'none' ? 'completed' : 'connected',
+      updatedAt: FieldValue.serverTimestamp()
+    }, { merge: true });
     return { routed: true, controller: decision.controller, reason: decision.reason, idempotent: false };
   });
 
   if (result.routed && !result.idempotent) {
-    await audit(db, result.controller === 'human' ? 'rep_connected' : 'ai_routing_required', {
+    await audit(db, result.controller === 'human' ? 'rep_connected'
+      : result.controller === 'ai' ? 'ai_routing_required' : 'human_mode_overflow_ended', {
       callId, sessionId, actorType: 'system', metadata: { reason: result.reason }, now
     });
   }

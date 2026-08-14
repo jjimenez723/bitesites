@@ -23,6 +23,8 @@ import {
   updateDoc,
   deleteDoc,
   collection,
+  query,
+  where,
   serverTimestamp
 } from 'firebase/firestore';
 
@@ -70,6 +72,8 @@ await testEnv.withSecurityRulesDisabled(async context => {
   await setDoc(doc(db, 'roles', 'admin_doc'), { role: 'admin' });
   await setDoc(doc(db, 'roles', 'client_ok'), { role: 'client' });
   await setDoc(doc(db, 'roles', 'client_other'), { role: 'client' });
+  await setDoc(doc(db, 'roles', 'outbound_rep'), { role: 'outbound_rep' });
+  await setDoc(doc(db, 'roles', 'outbound_manager'), { role: 'outbound_manager' });
   await setDoc(doc(db, 'users', 'someone_else'), {
     email: 'someone@example.com',
     status: 'pending'
@@ -96,14 +100,21 @@ await testEnv.withSecurityRulesDisabled(async context => {
     name: 'Site build',
     clientUids: ['client_ok']
   });
+  await setDoc(doc(db, 'financeAccounts', 'seeded_account'), {
+    name: 'Seeded account', monthlyRetainer: 400
+  });
 });
 
 const anon = testEnv.unauthenticatedContext().firestore();
 const visitor = testEnv.authenticatedContext('visitor', { email: 'visitor@example.com' }).firestore();
 const adminByDoc = testEnv.authenticatedContext('admin_doc', { email: 'admin@bitesites.org' }).firestore();
 const adminByClaim = testEnv.authenticatedContext('admin_claim', { email: 'a2@bitesites.org', role: 'admin' }).firestore();
+const financeOwner = testEnv.authenticatedContext('finance_owner', { email: 'jensy@bitesites.org', role: 'admin' }).firestore();
+const financeOwnerGmail = testEnv.authenticatedContext('finance_owner_gmail', { email: 'jensyjimenez723@gmail.com', role: 'admin' }).firestore();
 const clientOk = testEnv.authenticatedContext('client_ok', { email: 'c1@example.com' }).firestore();
 const clientOther = testEnv.authenticatedContext('client_other', { email: 'c2@example.com' }).firestore();
+const outboundRep = testEnv.authenticatedContext('outbound_rep', { email: 'rep@bitesites.org' }).firestore();
+const outboundManager = testEnv.authenticatedContext('outbound_manager', { email: 'manager@bitesites.org' }).firestore();
 
 describe('leads — public submission');
 await it('anonymous visitor can submit a valid lead', () =>
@@ -338,6 +349,26 @@ await it('admin can record a client outcome', () =>
 await it('public and clients cannot read or write client outcomes', async () => {
   await assertFails(getDocs(collection(anon, 'clientOutcomes')));
   await assertFails(setDoc(doc(clientOk, 'clientOutcomes', 'forged'), { revenue: 1 }));
+});
+
+describe('finance — admins audit, only the finance owner writes');
+await it('finance owner can initialize every ledger collection', () =>
+  assertSucceeds(Promise.all([
+    setDoc(doc(financeOwner, 'financeSettings', 'ledger'), { version: 1 }),
+    setDoc(doc(financeOwner, 'financeAccounts', 'owner_account'), { name: 'Account' }),
+    setDoc(doc(financeOwner, 'financeTeam', 'owner_member'), { name: 'Member' }),
+    setDoc(doc(financeOwner, 'financeExpenses', 'owner_expense'), { name: 'Expense' }),
+    setDoc(doc(financeOwner, 'financeIncome', 'owner_income'), { amount: 600 })
+  ])));
+await it('another admin can read the finance ledger', () =>
+  assertSucceeds(getDocs(collection(adminByDoc, 'financeAccounts'))));
+await it('the documented Gmail owner login can also edit the ledger', () =>
+  assertSucceeds(updateDoc(doc(financeOwnerGmail, 'financeAccounts', 'seeded_account'), { monthlyRetainer: 450 })));
+await it('another admin cannot change the finance ledger', () =>
+  assertFails(updateDoc(doc(adminByDoc, 'financeAccounts', 'seeded_account'), { monthlyRetainer: 999 })));
+await it('clients and the public cannot read finance data', async () => {
+  await assertFails(getDocs(collection(clientOk, 'financeAccounts')));
+  await assertFails(getDocs(collection(anon, 'financeExpenses')));
 });
 
 describe('search metrics — server-written, admin-readable');
@@ -601,6 +632,12 @@ await testEnv.withSecurityRulesDisabled(async context => {
   await setDoc(doc(db, 'importRuns', 'run1'), { sourceSystem: 'watcher_leads', status: 'completed' });
   await setDoc(doc(db, 'importRuns', 'run1', 'errors', 'e1'), { reason: 'invalid_record' });
   await setDoc(doc(db, 'outboundCallEvents', 'evt1'), { type: 'completed' });
+  await setDoc(doc(db, 'calls', 'outbound_call'), {
+    direction: 'outbound', status: 'connected', sessionId: 'sess1', startedAt: new Date()
+  });
+  await setDoc(doc(db, 'calls', 'outbound_call', 'turns', 't1'), {
+    role: 'contact', text: 'Hello', at: new Date(), sequence: 1
+  });
 });
 
 describe('prospects — cold contacts are admin-read, server-write');
@@ -616,6 +653,11 @@ await it('a client cannot read prospects', () =>
 
 await it('admin can read prospects', () =>
   assertSucceeds(getDocs(collection(adminByDoc, 'prospects'))));
+
+await it('outbound staff can read the prospect context required for a live call', async () => {
+  await assertSucceeds(getDocs(collection(outboundRep, 'prospects')));
+  await assertSucceeds(getDocs(collection(outboundManager, 'prospects')));
+});
 
 await it('anonymous visitor cannot create a prospect', () =>
   assertFails(setDoc(doc(anon, 'prospects', 'injected'), {
@@ -673,6 +715,30 @@ await it('anonymous visitor cannot read campaigns', () =>
 
 await it('admin can read campaigns', () =>
   assertSucceeds(getDocs(collection(adminByDoc, 'outboundCampaigns'))));
+
+await it('outbound staff can read campaigns, targets, sessions, and approved research', async () => {
+  await assertSucceeds(getDocs(collection(outboundRep, 'outboundCampaigns')));
+  await assertSucceeds(getDocs(collection(outboundRep, 'outboundTargets')));
+  await assertSucceeds(getDoc(doc(outboundRep, 'dialerSessions', 'sess1')));
+  await assertSucceeds(getDoc(doc(outboundRep, 'leadResearch', 'prospect_p1')));
+});
+
+await it('outbound staff can read outbound calls and transcripts but not inbound calls', async () => {
+  await assertSucceeds(getDoc(doc(outboundRep, 'calls', 'outbound_call')));
+  await assertSucceeds(getDocs(collection(outboundRep, 'calls', 'outbound_call', 'turns')));
+  await assertSucceeds(getDocs(query(
+    collection(outboundManager, 'calls'),
+    where('direction', '==', 'outbound'),
+    where('status', '==', 'connected')
+  )));
+  await assertFails(getDoc(doc(outboundRep, 'calls', 'call_open')));
+});
+
+await it('outbound reps cannot rewrite server-owned dialing state', async () => {
+  await assertFails(updateDoc(doc(outboundRep, 'outboundTargets', 'tgt1'), { state: 'connected' }));
+  await assertFails(updateDoc(doc(outboundRep, 'dialerSessions', 'sess1'), { connectedCallId: 'forged' }));
+  await assertFails(updateDoc(doc(outboundManager, 'leadResearch', 'prospect_p1'), { approved: true }));
+});
 
 // A browser that could set `status: running` would start dialing without the
 // provider-capability check createOutboundCampaign performs.

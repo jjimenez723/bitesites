@@ -8,7 +8,7 @@ export const EMAIL_BRAND = {
   logoUrl: 'https://bitesites.org/apple-touch-icon.png'
 };
 
-const EMAIL_TEMPLATE_VERSION = 4;
+const EMAIL_TEMPLATE_VERSION = 5;
 const fontStack = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
 
 const shell = ({ preheader, title, body, cta, footer }) => {
@@ -148,6 +148,34 @@ export const DEFAULT_EMAIL_TEMPLATES = {
       footer: 'Internal BiteSites lead notification.'
     }),
     text: 'New BiteSites lead\n\nName: {{lead_name}}\nSource: {{source_label}}\nContact: {{contact}}\nInterested in: {{service_names}}\n\nOpen lead: {{lead_url}}'
+  },
+  manual_lead_admin: {
+    name: 'Prospect added manually — admin notice',
+    description: 'Clearly identifies a prospect an admin added to Leads without implying that a BiteSites call connected.',
+    category: 'transactional',
+    subject: 'Prospect added manually: {{lead_name}}',
+    html: shell({
+      preheader: 'A prospect was added to Leads by a team member.',
+      title: 'Prospect added manually',
+      body: '<p style="margin:0 0 14px;"><strong>{{lead_name}}</strong> was manually added to Leads by {{qualified_by}}.</p><p style="margin:0 0 14px;padding:13px 15px;border:1px solid #ead7a2;border-radius:9px;background:#fffaf0;color:#5c4812;"><strong>Call status:</strong> {{contact_status}}</p><p style="margin:0 0 8px;"><strong>Contact:</strong> {{contact}}</p><p style="margin:0 0 8px;"><strong>Reason:</strong> {{manual_reason}}</p><p style="margin:0 0 8px;"><strong>Notes:</strong> {{manual_notes}}</p><p style="margin:0;"><strong>Interest:</strong> {{service_names}}</p>',
+      cta: { href: '{{lead_url}}', label: 'Review lead' },
+      footer: 'Internal BiteSites notification. Manual qualification is not proof that a BiteSites call connected.'
+    }),
+    text: 'Prospect added manually\n\nName: {{lead_name}}\nAdded by: {{qualified_by}}\nCall status: {{contact_status}}\nContact: {{contact}}\nReason: {{manual_reason}}\nNotes: {{manual_notes}}\nInterest: {{service_names}}\n\nReview lead: {{lead_url}}'
+  },
+  outbound_call_lead_admin: {
+    name: 'Answered outbound call — admin notice',
+    description: 'Notifies the team when a verified outbound conversation creates a lead and links to the call record.',
+    category: 'transactional',
+    subject: 'Answered outbound call: {{lead_name}} · {{disposition}}',
+    html: shell({
+      preheader: 'A verified outbound conversation produced a lead.',
+      title: 'Outbound conversation captured',
+      body: '<p style="margin:0 0 14px;"><strong>{{lead_name}}</strong> became a lead after a verified outbound conversation.</p><p style="margin:0 0 8px;"><strong>Contact:</strong> {{contact}}</p><p style="margin:0 0 8px;"><strong>Outcome:</strong> {{disposition}}</p><p style="margin:0 0 8px;"><strong>Duration:</strong> {{duration}}</p><p style="margin:0 0 8px;"><strong>Operator:</strong> {{operator}}</p><p style="margin:0 0 8px;"><strong>Summary:</strong> {{call_summary}}</p><p style="margin:0;"><strong>Interest:</strong> {{service_names}}</p>',
+      cta: { href: '{{call_url}}', label: 'Open call record' },
+      footer: 'Internal BiteSites notification linked to a verified outbound call.'
+    }),
+    text: 'Answered outbound call\n\nName: {{lead_name}}\nContact: {{contact}}\nOutcome: {{disposition}}\nDuration: {{duration}}\nOperator: {{operator}}\nSummary: {{call_summary}}\nInterest: {{service_names}}\n\nOpen call: {{call_url}}\nOpen lead: {{lead_url}}'
   },
   access_granted: {
     name: 'Account access granted',

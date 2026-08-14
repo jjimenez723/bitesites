@@ -90,6 +90,12 @@ check('mints the matching auth claim', (await claimOf('target')) === 'client');
 check('marks the profile approved', (await statusOf('target')) === 'approved');
 
 describe('promotion updates the claim, not just the document');
+await call({ uid: 'target', role: 'outbound_rep' }, ADMIN);
+check('can grant focused outbound representative access',
+  (await roleDocOf('target')) === 'outbound_rep' && (await claimOf('target')) === 'outbound_rep');
+await call({ uid: 'target', role: 'outbound_manager' }, ADMIN);
+check('can promote a rep to outbound manager',
+  (await roleDocOf('target')) === 'outbound_manager' && (await claimOf('target')) === 'outbound_manager');
 await call({ uid: 'target', role: 'admin' }, ADMIN);
 check('role document says admin', (await roleDocOf('target')) === 'admin');
 check('claim says admin too', (await claimOf('target')) === 'admin');

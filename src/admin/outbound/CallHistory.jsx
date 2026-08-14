@@ -6,16 +6,31 @@
 // modification.
 
 import React, { useState } from 'react';
-import { useOutboundCalls, LIST_CAP } from './data';
+import { useSearchParams } from 'react-router-dom';
+import { useOutboundCalls, useLiveDoc, LIST_CAP } from './data';
 import { Panel, DetailRows } from '../Panel';
 import Transcript from '../Transcript';
 import { StatusPill, formatWhen, formatDuration, providerLabel, Empty, QueryState } from './SourceBadge';
 import { receivingAgent, receivingAgentLabel } from '../voice-attribution';
 
 export default function CallHistory({ campaignId, campaigns = [], onSelectCampaign }) {
-  const [openId, setOpenId] = useState(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [openId, setOpenId] = useState(() => searchParams.get('call'));
   const { rows, loading, error, capped, refresh } = useOutboundCalls(campaignId || 'all');
-  const open = rows.find(row => row.id === openId) || null;
+  const directCall = useLiveDoc(openId ? `calls/${openId}` : '');
+  const open = rows.find(row => row.id === openId) || directCall.data || null;
+  const openCall = id => {
+    setOpenId(id);
+    const updated = new URLSearchParams(searchParams);
+    updated.set('call', id);
+    setSearchParams(updated, { replace: true });
+  };
+  const closeCall = () => {
+    setOpenId(null);
+    const updated = new URLSearchParams(searchParams);
+    updated.delete('call');
+    setSearchParams(updated, { replace: true });
+  };
 
   return (
     <>
@@ -50,7 +65,7 @@ export default function CallHistory({ campaignId, campaigns = [], onSelectCampai
               </thead>
               <tbody>
                 {rows.map(row => (
-                  <tr key={row.id} className={`clickable ${openId === row.id ? 'selected' : ''}`} onClick={() => setOpenId(row.id)}>
+                  <tr key={row.id} className={`clickable ${openId === row.id ? 'selected' : ''}`} onClick={() => openCall(row.id)}>
                     <td className="cell-strong">{formatWhen(row.startedAt)}</td>
                     <td className="cell-dim cell-wrap">{(row.prospectId || row.leadId || row.targetId || '').slice(0, 24)}</td>
                     <td className="cell-dim cell-wrap">{receivingAgentLabel(row)}</td>
@@ -78,7 +93,7 @@ export default function CallHistory({ campaignId, campaigns = [], onSelectCampai
         <Panel
           title={`Outbound call · ${formatWhen(open.startedAt)}`}
           subtitle={open.prospectId || open.leadId || open.targetId || ''}
-          onClose={() => setOpenId(null)}
+          onClose={closeCall}
         >
           <DetailRows
             rows={[

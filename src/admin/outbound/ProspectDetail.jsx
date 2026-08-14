@@ -16,6 +16,8 @@ export default function ProspectDetail({ prospectId, onClose, onChanged }) {
   const [activities, setActivities] = useState([]);
   const [tab, setTab] = useState('details');
   const [loading, setLoading] = useState(true);
+  const [manualOpen, setManualOpen] = useState(false);
+  const [manual, setManual] = useState({ reason: '', contactStatus: '', notes: '' });
   const action = useAction();
 
   const reload = () => {
@@ -31,14 +33,15 @@ export default function ProspectDetail({ prospectId, onClose, onChanged }) {
   if (!prospectId) return null;
 
   const promote = async () => {
-    // `manual_qualification` is a real conversion trigger — an admin deciding
-    // this business is worth tracking as a lead. An attempted call is not, and
-    // the server rejects it if the UI ever tries.
     const result = await action.run(
-      () => outbound.promoteProspect(prospectId, 'manual_qualification'),
-      'Promoted.'
+      () => outbound.promoteProspect(prospectId, 'manual_qualification', {
+        manualReason: manual.reason,
+        manualNotes: manual.notes,
+        contactStatus: manual.contactStatus
+      }),
+      'Added to Leads with its contact history preserved.'
     );
-    if (result) { reload(); onChanged?.(); }
+    if (result) { setManualOpen(false); reload(); onChanged?.(); }
   };
 
   const resolve = async choice => {
@@ -131,9 +134,55 @@ export default function ProspectDetail({ prospectId, onClose, onChanged }) {
               </div>
 
               {!prospect.lifecycle?.convertedLeadId && (
-                <button className="btn-admin" type="button" style={{ marginTop: 16 }} disabled={action.busy} onClick={promote}>
-                  {action.busy ? 'Working…' : 'Qualify as a lead'}
-                </button>
+                <div className="manual-lead-entry">
+                  {!manualOpen ? (
+                    <button className="btn-admin" type="button" disabled={action.busy} onClick={() => setManualOpen(true)}>
+                      Add to Leads manually
+                    </button>
+                  ) : (
+                    <div className="manual-lead-confirm" role="group" aria-labelledby="manual-lead-title">
+                      <div>
+                        <span className="outbound-eyebrow">Manual conversion</span>
+                        <h4 id="manual-lead-title">Add this prospect without implying a call occurred?</h4>
+                        <p>BiteSites has no answered call recorded for this prospect. The team notification will say exactly that unless you confirm contact occurred elsewhere.</p>
+                      </div>
+                      <div className="outbound-form-grid">
+                        <label>
+                          <span>Why add this prospect?</span>
+                          <select className="admin-select" value={manual.reason} onChange={event => setManual(current => ({ ...current, reason: event.target.value }))}>
+                            <option value="">Choose a reason…</option>
+                            <option value="promising_prospect">Promising prospect</option>
+                            <option value="referral">Referral</option>
+                            <option value="external_conversation">Conversation outside BiteSites</option>
+                            <option value="existing_relationship">Existing relationship</option>
+                            <option value="other">Other</option>
+                          </select>
+                        </label>
+                        <label>
+                          <span>Was contact made?</span>
+                          <select className="admin-select" value={manual.contactStatus} onChange={event => setManual(current => ({ ...current, contactStatus: event.target.value }))}>
+                            <option value="">Confirm contact status…</option>
+                            <option value="not_contacted">No — not contacted</option>
+                            <option value="external_contact">Yes — outside BiteSites</option>
+                            <option value="unknown">Unknown</option>
+                          </select>
+                        </label>
+                        <label className="full">
+                          <span>Context for the next staff member <small>(optional)</small></span>
+                          <textarea rows={3} value={manual.notes} maxLength={2000}
+                            onChange={event => setManual(current => ({ ...current, notes: event.target.value }))}
+                            placeholder="What makes this prospect worth tracking? Include anything learned outside BiteSites." />
+                        </label>
+                      </div>
+                      <div className="admin-filters">
+                        <button className="btn-admin primary" type="button" disabled={action.busy || !manual.reason || !manual.contactStatus} onClick={promote}>
+                          {action.busy ? 'Adding…' : 'Confirm and add to Leads'}
+                        </button>
+                        <button className="btn-admin" type="button" disabled={action.busy} onClick={() => setManualOpen(false)}>Cancel</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
               )}
             </>
           )}

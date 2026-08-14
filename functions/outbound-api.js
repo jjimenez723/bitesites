@@ -34,7 +34,8 @@ import {
   startDialerSession, heartbeatSession, dialNext, stopDialerSession,
   runAICampaignSlice, recordCallEvent, applyDisposition, moveToCallLater,
   markDoNotCall, reconcileSessions, releaseDueTargets, refreshCampaignCounts,
-  ensureResearch, releaseTargetsForApprovedResearch
+  ensureResearch, releaseTargetsForApprovedResearch,
+  prepareCampaignResearchBatch, approveCampaignResearchBatch
 } from './outbound-calls.js';
 import { contactKey, approveResearch, loadResearch, researchContact, saveResearch } from './lead-enrichment.js';
 import { loadContactForTarget } from './outbound-contacts.js';
@@ -126,10 +127,21 @@ async function callerRole(db, auth) {
 async function requireAdmin(request) {
   if (!request.auth?.uid) throw new HttpsError('unauthenticated', 'Sign in first.');
   const db = getFirestore();
-  if ((await callerRole(db, request.auth)) !== 'admin') {
-    throw new HttpsError('permission-denied', 'Only an admin can use outbound calling.');
+  const role = await callerRole(db, request.auth);
+  if (!['admin', 'outbound_manager'].includes(role)) {
+    throw new HttpsError('permission-denied', 'Only an admin or outbound manager can manage outbound calling.');
   }
-  return { db, uid: request.auth.uid, email: request.auth.token?.email || '' };
+  return { db, uid: request.auth.uid, email: request.auth.token?.email || '', role };
+}
+
+async function requireOutboundStaff(request) {
+  if (!request.auth?.uid) throw new HttpsError('unauthenticated', 'Sign in first.');
+  const db = getFirestore();
+  const role = await callerRole(db, request.auth);
+  if (!['admin', 'outbound_rep', 'outbound_manager'].includes(role)) {
+    throw new HttpsError('permission-denied', 'This account cannot use outbound calling.');
+  }
+  return { db, uid: request.auth.uid, email: request.auth.token?.email || '', role };
 }
 
 const str = (value, maxLen = 200) => clean(value, maxLen);
@@ -152,7 +164,7 @@ const callOptions = { enforceAppCheck: false, maxInstances: 10 };
 
 /** What the dashboard can offer. Capability flags and secret NAMES only. */
 export const getOutboundConfig = onCall({ ...callOptions, secrets: OUTBOUND_CONFIG_SECRETS }, async request => {
-  await requireAdmin(request);
+  await requireOutboundStaff(request);
 
   const providers = await Promise.all(describeCallingProviders().map(async provider => {
     let health = { ok: false, missing: provider.requiredSecrets };
@@ -326,10 +338,22 @@ export const resolveProspectDuplicate = onCall(callOptions, async request => {
 export const promoteProspectToLead = onCall(callOptions, async request => {
   const { db, email } = await requireAdmin(request);
   const prospectId = requireId(request.data?.prospectId, 'prospect id');
+  const trigger = str(request.data?.trigger, 40) || 'manual_qualification';
+  const manualReason = str(request.data?.manualReason, 120);
+  const contactStatus = str(request.data?.contactStatus, 40);
+  if (trigger === 'manual_qualification') {
+    if (!manualReason) throw new HttpsError('invalid-argument', 'Choose why this prospect should be added to Leads.');
+    if (!['not_contacted', 'external_contact', 'unknown'].includes(contactStatus)) {
+      throw new HttpsError('invalid-argument', 'Confirm whether contact occurred outside BiteSites.');
+    }
+  }
   const result = await promoteProspect(db, prospectId, {
-    trigger: str(request.data?.trigger, 40) || 'manual_qualification',
+    trigger,
     campaignId: str(request.data?.campaignId, 200),
     targetId: str(request.data?.targetId, 200),
+    manualReason,
+    manualNotes: str(request.data?.manualNotes, 2000),
+    contactStatus,
     actor: email
   }).catch(error => { throw new HttpsError('failed-precondition', clean(error?.message, 300)); });
   return result;
@@ -430,6 +454,20 @@ export const prepareTargetForDialing = onCall({ ...callOptions, timeoutSeconds: 
   return { ok: result.ok, reason: result.reason || '', research: result.research || null };
 });
 
+export const prepareCampaignResearch = onCall({ ...callOptions, timeoutSeconds: 540 }, async request => {
+  const { db } = await requireAdmin(request);
+  const campaignId = requireId(request.data?.campaignId, 'campaign id');
+  return prepareCampaignResearchBatch(db, campaignId, { limit: 12, concurrency: 4 })
+    .catch(error => { throw new HttpsError('internal', clean(error?.message, 300)); });
+});
+
+export const approveCampaignResearch = onCall({ ...callOptions, timeoutSeconds: 120 }, async request => {
+  const { db, email } = await requireAdmin(request);
+  const campaignId = requireId(request.data?.campaignId, 'campaign id');
+  return approveCampaignResearchBatch(db, campaignId, { approvedBy: email, limit: 200 })
+    .catch(error => { throw new HttpsError('internal', clean(error?.message, 300)); });
+});
+
 // ------------------------------------------------------------------ dialing
 
 export const startPowerDialerSession = onCall({ ...callOptions, secrets: OUTBOUND_SECRETS }, async request => {
@@ -513,7 +551,7 @@ export const submitCallDisposition = onCall({ ...callOptions, secrets: OUTBOUND_
 });
 
 export const moveTargetToCallLater = onCall(callOptions, async request => {
-  const { db } = await requireAdmin(request);
+  const { db } = await requireOutboundStaff(request);
   const targetId = requireId(request.data?.targetId, 'target id');
   const snapshot = await db.doc(`outboundTargets/${targetId}`).get();
   if (!snapshot.exists) throw new HttpsError('not-found', 'Target not found.');
@@ -526,7 +564,7 @@ export const moveTargetToCallLater = onCall(callOptions, async request => {
 });
 
 export const markTargetDoNotCall = onCall(callOptions, async request => {
-  const { db, email } = await requireAdmin(request);
+  const { db, email } = await requireOutboundStaff(request);
   return markDoNotCall(db, requireId(request.data?.targetId, 'target id'), { actor: email });
 });
 

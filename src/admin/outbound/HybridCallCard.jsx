@@ -18,7 +18,7 @@ function liveSeconds(call, now) {
   return start ? Math.max(0, Math.floor((now - start.getTime()) / 1000)) : 0;
 }
 
-export default function HybridCallCard({ call, session, target, onDisposition }) {
+export default function HybridCallCard({ call, session, target, onDisposition, onEnter }) {
   const action = useAction();
   const [now, setNow] = useState(Date.now());
   const [listening, setListening] = useState(false);
@@ -83,6 +83,7 @@ export default function HybridCallCard({ call, session, target, onDisposition })
   const duration = formatDuration(liveSeconds(call, now));
 
   const listen = async () => {
+    onEnter?.(call);
     if (listening) {
       leaveHybridVoice();
       await action.run(() => outbound.stopListen(call.id), 'Listen mode ended.');
@@ -101,6 +102,7 @@ export default function HybridCallCard({ call, session, target, onDisposition })
   };
 
   const takeover = async () => {
+    onEnter?.(call);
     if (listening) {
       leaveHybridVoice();
       await outbound.stopListen(call.id).catch(() => {});
@@ -172,6 +174,9 @@ export default function HybridCallCard({ call, session, target, onDisposition })
                 Take Over
               </button>
             </>
+          )}
+          {controller !== 'ai' && (
+            <button className="btn-admin primary" type="button" onClick={() => onEnter?.(call)}>Open live workspace</button>
           )}
           <button className="btn-admin" type="button" disabled={action.busy} onClick={endCall}>End Call</button>
           <button className="btn-admin danger" type="button" disabled={action.busy} onClick={dnc}>Add to Do Not Call</button>

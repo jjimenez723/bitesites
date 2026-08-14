@@ -74,7 +74,7 @@ function clearCurrent(call) {
  */
 export async function joinHybridCall(callId, mode = 'human') {
   if (!callId) throw new Error('A call id is required.');
-  if (!['listen', 'human'].includes(mode)) throw new Error('Mode must be listen or human.');
+  if (!['listen', 'human', 'assist', 'coach'].includes(mode)) throw new Error('Mode must be listen, human, assist, or coach.');
 
   if (currentCall && currentCallId === callId && currentMode === mode) return currentCall;
   if (currentCall) {
@@ -85,7 +85,7 @@ export async function joinHybridCall(callId, mode = 'human') {
   const device = await hybridVoiceDevice();
   const call = await device.connect({
     params: { callId, mode },
-    rtcConstraints: { audio: mode === 'human' }
+    rtcConstraints: { audio: mode !== 'listen' }
   });
   currentCall = call;
   currentMode = mode;
@@ -109,7 +109,16 @@ export function leaveHybridVoice() {
 }
 
 export function hybridVoiceState() {
-  return { connected: Boolean(currentCall), callId: currentCallId, mode: currentMode };
+  return {
+    connected: Boolean(currentCall), callId: currentCallId, mode: currentMode,
+    muted: Boolean(currentCall?.isMuted?.())
+  };
+}
+
+export function setHybridVoiceMuted(muted) {
+  if (!currentCall || !['human', 'assist'].includes(currentMode)) throw new Error('Your microphone is not connected to a live call.');
+  currentCall.mute(Boolean(muted));
+  return currentCall.isMuted();
 }
 
 export async function destroyHybridVoice() {

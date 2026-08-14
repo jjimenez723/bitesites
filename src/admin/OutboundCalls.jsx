@@ -1,6 +1,7 @@
 // Outbound Calls — lead discovery, sales orchestration, AI agents and dialer.
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useCampaigns, outbound } from './outbound/data';
 import CampaignList from './outbound/CampaignList';
 import LeadDiscovery from './outbound/LeadDiscovery';
@@ -13,6 +14,8 @@ import CallLaterQueue from './outbound/CallLaterQueue';
 import CallHistory from './outbound/CallHistory';
 import ProviderStatus from './outbound/ProviderStatus';
 import AgentProfiles from './outbound/AgentProfiles';
+import TransferInbox from './outbound/TransferInbox';
+import TeamCallCoach from './outbound/TeamCallCoach';
 import './outbound/outbound.css';
 import './outbound/hybrid.css';
 import './outbound/agents.css';
@@ -24,20 +27,47 @@ const TABS = [
   ['review', 'Import Review'],
   ['queue', 'Queue'],
   ['dialer', 'Live Dialer'],
+  ['coaching', 'Team Coaching'],
   ['agents', 'AI Agents'],
   ['later', 'Call Later'],
   ['history', 'History'],
   ['settings', 'Settings']
 ];
 
-export default function OutboundCalls() {
-  const [tab, setTab] = useState('campaigns');
+const REP_TAB_KEYS = new Set(['queue', 'dialer', 'later', 'history']);
+
+export default function OutboundCalls({ role = 'admin', currentUid = '' }) {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const canManage = role !== 'outbound_rep';
+  const visibleTabs = useMemo(
+    () => canManage ? TABS : TABS.filter(([key]) => REP_TAB_KEYS.has(key)),
+    [canManage]
+  );
+  const requestedTab = searchParams.get('tab');
+  const initialTab = visibleTabs.some(([key]) => key === requestedTab)
+    ? requestedTab
+    : canManage ? 'campaigns' : 'dialer';
+  const [tab, setTabState] = useState(initialTab);
   const [campaignId, setCampaignId] = useState('');
   const [prospectId, setProspectId] = useState(null);
   const [config, setConfig] = useState({ data: null, loading: true, error: null });
   const tabRefs = useRef([]);
 
   const campaigns = useCampaigns();
+
+  const setTab = useCallback(next => {
+    if (!visibleTabs.some(([key]) => key === next)) return;
+    setTabState(next);
+    const updated = new URLSearchParams(searchParams);
+    updated.set('tab', next);
+    setSearchParams(updated, { replace: true });
+  }, [searchParams, setSearchParams, visibleTabs]);
+
+  useEffect(() => {
+    if (requestedTab && visibleTabs.some(([key]) => key === requestedTab) && requestedTab !== tab) {
+      setTabState(requestedTab);
+    }
+  }, [requestedTab, tab, visibleTabs]);
 
   const loadConfig = useCallback(() => {
     setConfig(current => ({ ...current, loading: true }));
@@ -59,13 +89,13 @@ export default function OutboundCalls() {
   }, [campaigns.rows, campaignId]);
 
   const onTabKeyDown = event => {
-    const index = TABS.findIndex(([key]) => key === tab);
+    const index = visibleTabs.findIndex(([key]) => key === tab);
     if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return;
     event.preventDefault();
     const next = event.key === 'ArrowRight'
-      ? (index + 1) % TABS.length
-      : (index - 1 + TABS.length) % TABS.length;
-    setTab(TABS[next][0]);
+      ? (index + 1) % visibleTabs.length
+      : (index - 1 + visibleTabs.length) % visibleTabs.length;
+    setTab(visibleTabs[next][0]);
     tabRefs.current[next]?.focus();
   };
 
@@ -95,7 +125,7 @@ export default function OutboundCalls() {
 
       <div className="admin-body">
         <div className="outbound-subnav" role="tablist" aria-label="Outbound sections" onKeyDown={onTabKeyDown}>
-          {TABS.map(([key, label], index) => (
+          {visibleTabs.map(([key, label], index) => (
             <button
               key={key}
               type="button"
@@ -144,7 +174,8 @@ export default function OutboundCalls() {
           {tab === 'review' && <ImportReview onOpen={setProspectId} />}
           {tab === 'queue' && (
             <LeadQueue campaignId={campaignId} campaigns={campaigns.rows}
-              onSelectCampaign={setCampaignId} onOpenProspect={setProspectId} />
+              canManage={canManage}
+              onSelectCampaign={setCampaignId} onOpenProspect={canManage ? setProspectId : null} />
           )}
           {tab === 'dialer' && (
             <DialerControls
@@ -152,8 +183,10 @@ export default function OutboundCalls() {
               campaigns={campaigns.rows}
               onSelectCampaign={setCampaignId}
               onOpenQueue={() => setTab('queue')}
+              role={role}
             />
           )}
+          {tab === 'coaching' && <TeamCallCoach />}
           {tab === 'agents' && <AgentProfiles />}
           {tab === 'later' && (
             <CallLaterQueue campaignId={campaignId} campaigns={campaigns.rows} onSelectCampaign={setCampaignId} />
@@ -170,6 +203,7 @@ export default function OutboundCalls() {
       {prospectId && (
         <ProspectDetail prospectId={prospectId} onClose={() => setProspectId(null)} onChanged={campaigns.refresh} />
       )}
+      <TransferInbox currentUid={currentUid} />
     </>
   );
 }

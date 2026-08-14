@@ -151,6 +151,33 @@ export function useCallTurns(callId) {
   return state;
 }
 
+/** Live warm-transfer requests addressed to the signed-in teammate. */
+export const useIncomingHybridTransfers = uid =>
+  useLiveOutboundQuery(() => {
+    if (!uid) return null;
+    return {
+      cap: 20,
+      q: query(
+        collection(db, 'calls'),
+        where('direction', '==', 'outbound'),
+        where('staffTransfer.toUid', '==', uid),
+        limit(20)
+      )
+    };
+  }, [uid]);
+
+/** Manager view of currently connected outbound calls for private coaching. */
+export const useTeamLiveCalls = () =>
+  useLiveOutboundQuery(() => ({
+    cap: 100,
+    q: query(
+      collection(db, 'calls'),
+      where('direction', '==', 'outbound'),
+      where('status', '==', 'connected'),
+      limit(100)
+    )
+  }), []);
+
 export const useCampaigns = () =>
   useLiveOutboundQuery(() => ({
     cap: LIST_CAP,
@@ -267,7 +294,8 @@ export const outbound = {
 
   importCsv: (csvText, dryRun = true) => callable('importProspectCsv', { csvText, dryRun }),
   resolveDuplicate: (prospectId, action) => callable('resolveProspectDuplicate', { prospectId, action }),
-  promoteProspect: (prospectId, trigger) => callable('promoteProspectToLead', { prospectId, trigger }),
+  promoteProspect: (prospectId, trigger, context = {}) =>
+    callable('promoteProspectToLead', { prospectId, trigger, ...context }),
 
   createCampaign: campaign => callable('createOutboundCampaign', campaign),
   updateCampaign: (campaignId, campaign) => callable('updateOutboundCampaign', { campaignId, campaign }),
@@ -282,6 +310,8 @@ export const outbound = {
     callable('researchOutboundContact', { contactType, contactId, refresh }),
   approveResearch: (key, edits) => callable('approveLeadResearch', { key, edits }),
   prepareTarget: targetId => callable('prepareTargetForDialing', { targetId }),
+  prepareCampaignResearch: campaignId => callable('prepareCampaignResearch', { campaignId }),
+  approveCampaignResearch: campaignId => callable('approveCampaignResearch', { campaignId }),
 
   // Legacy dialer actions retained for compatibility and emulator rehearsal.
   startPowerSession: campaignId => callable('startPowerDialerSession', { campaignId }),
@@ -296,8 +326,12 @@ export const outbound = {
 
   // Hybrid Dialer V2.
   getActiveHybridSession: () => callable('getActiveHybridDialerSession'),
-  startHybridSession: (campaignId, { agentProfileId, sessionOverride = {}, autoTakeover = false } = {}) =>
-    callable('startHybridDialerSession', { campaignId, agentProfileId, sessionOverride, autoTakeover }),
+  startHybridSession: (campaignId, { agentProfileId, sessionOverride = {}, autoTakeover = false, operatingMode = 'hybrid', concurrency = 3 } = {}) =>
+    callable('startHybridDialerSession', { campaignId, agentProfileId, sessionOverride, autoTakeover, operatingMode, concurrency }),
+  setHybridOperatingMode: (sessionId, operatingMode, agentProfileId = '') =>
+    callable('setHybridOperatingMode', { sessionId, operatingMode, agentProfileId }),
+  setHybridConcurrency: (sessionId, concurrency) =>
+    callable('setHybridConcurrency', { sessionId, concurrency }),
   dialHybrid: sessionId => callable('dialHybridTargets', { sessionId }),
   stopHybridSession: (sessionId, reason = 'ended') => callable('stopHybridDialerSession', { sessionId, reason }),
   endHybridCall: callId => callable('endHybridCall', { callId }),
@@ -308,6 +342,15 @@ export const outbound = {
   beginListen: callId => callable('beginHybridListen', { callId }),
   stopListen: callId => callable('stopHybridListen', { callId }),
   voiceToken: () => callable('getHybridVoiceAccessToken'),
+  listTransferAgents: () => callable('listHybridTransferAgents'),
+  requestStaffTransfer: (callId, toUid, note = '', handoffSummary = '') =>
+    callable('requestHybridStaffTransfer', { callId, toUid, note, handoffSummary }),
+  acceptStaffTransfer: callId => callable('acceptHybridStaffTransfer', { callId }),
+  declineStaffTransfer: (callId, reason = '') => callable('declineHybridStaffTransfer', { callId, reason }),
+  completeStaffTransfer: callId => callable('completeHybridStaffTransfer', { callId }),
+  beginCoachMonitor: callId => callable('beginHybridCoachMonitor', { callId }),
+  sendCoachCue: (callId, message) => callable('sendHybridCoachCue', { callId, message }),
+  endCoachMonitor: callId => callable('endHybridCoachMonitor', { callId }),
 
   // AI agent profiles / knowledge bases.
   listAgentProfiles: () => callable('listAIAgentProfiles'),

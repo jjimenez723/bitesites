@@ -67,10 +67,40 @@ test('system templates use the simple white email layout', () => {
 test('covers the account, lead, feedback, access, broadcast, and operations lifecycle', () => {
   const expected = [
     'welcome', 'password_reset', 'new_account_admin', 'lead_received',
-    'conversation_feedback', 'new_lead_admin', 'access_granted',
+    'conversation_feedback', 'new_lead_admin', 'manual_lead_admin',
+    'outbound_call_lead_admin', 'access_granted',
     'access_revoked', 'operational_alert', 'announcement'
   ];
   assert.deepEqual(Object.keys(DEFAULT_EMAIL_TEMPLATES).sort(), expected.sort());
+});
+
+test('manual and verified-call lead alerts cannot be confused', () => {
+  const manual = buildMessage({
+    from: 'BiteSites <jensy@bitesites.org>', to: 'sales@example.com',
+    template: DEFAULT_EMAIL_TEMPLATES.manual_lead_admin,
+    variables: {
+      lead_name: 'H & S Contracting', qualified_by: 'Manager',
+      contact_status: 'No BiteSites call or contact is recorded', contact: '(347) 698-6352',
+      manual_reason: 'Research-qualified account', manual_notes: 'No conversation yet.',
+      service_names: 'Interest not captured', lead_url: 'https://example.com/admin/leads?lead=1'
+    }
+  });
+  const answered = buildMessage({
+    from: 'BiteSites <jensy@bitesites.org>', to: 'sales@example.com',
+    template: DEFAULT_EMAIL_TEMPLATES.outbound_call_lead_admin,
+    variables: {
+      lead_name: 'H & S Contracting', contact: '(347) 698-6352', disposition: 'Qualified',
+      duration: '4m 12s', operator: 'Jensy', call_summary: 'Asked for a proposal.',
+      service_names: 'Web development', call_url: 'https://example.com/admin/outbound?tab=history&call=1',
+      lead_url: 'https://example.com/admin/leads?lead=1'
+    }
+  });
+  assert.match(manual.Subject, /manually/i);
+  assert.match(manual.TextBody, /No BiteSites call or contact is recorded/);
+  assert.doesNotMatch(manual.TextBody, /Answered outbound call/i);
+  assert.match(answered.Subject, /answered outbound call/i);
+  assert.match(answered.TextBody, /Open call:/);
+  assert.doesNotMatch(answered.TextBody, /added manually/i);
 });
 
 test('adds visible and one-click unsubscribe controls to broadcasts', () => {

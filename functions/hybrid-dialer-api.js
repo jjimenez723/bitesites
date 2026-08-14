@@ -23,9 +23,12 @@ import {
 } from './hybrid-call-orchestration.js';
 import { compileAgentRuntime, runtimePreview, sanitizeRealtimeSessionConfig } from './agent-runtime.js';
 import { buildAgentPreviewRuntime, mintAgentPreviewClientSecret } from './agent-preview.js';
-import { applyDisposition, markDoNotCall } from './outbound-calls.js';
+import { applyDisposition, cancelLosingLegs, markDoNotCall } from './outbound-calls.js';
 import { getCallingProvider } from './providers/calling/index.js';
 import { clean } from './prospect-normalization.js';
+import { maintainHybridCapacity } from './hybrid-capacity.js';
+import { hybridOutboundEventsUrl } from './hybrid-urls.js';
+import { validHybridTwilioRequest } from './hybrid-twilio-signature.js';
 
 export const HYBRID_TWILIO_ACCOUNT_SID = defineSecret('TWILIO_ACCOUNT_SID');
 export const HYBRID_TWILIO_AUTH_TOKEN = defineSecret('TWILIO_AUTH_TOKEN');
@@ -87,6 +90,32 @@ async function ownedCall(db, callId, uid) {
   return call;
 }
 
+async function transferCall(db, callId, uid) {
+  const snapshot = await db.doc(`calls/${callId}`).get();
+  if (!snapshot.exists) throw new HttpsError('not-found', 'Call not found.');
+  const call = { id: callId, ...snapshot.data() };
+  const transfer = call.staffTransfer || {};
+  if (![transfer.fromUid, transfer.toUid].includes(uid)) {
+    throw new HttpsError('permission-denied', 'This staff handoff does not belong to you.');
+  }
+  return call;
+}
+
+async function staffIdentity(db, uid, fallback = '') {
+  const [userSnapshot, roleSnapshot] = await Promise.all([
+    db.doc(`users/${uid}`).get(), db.doc(`roles/${uid}`).get()
+  ]);
+  return {
+    uid,
+    role: clean(roleSnapshot.get('role'), 80),
+    email: clean(userSnapshot.get('email') || roleSnapshot.get('email'), 200),
+    name: clean(userSnapshot.get('displayName'), 120)
+      || clean(userSnapshot.get('email') || roleSnapshot.get('email'), 200).split('@')[0]
+      || clean(fallback, 120)
+      || 'Teammate'
+  };
+}
+
 const xml = value => String(value ?? '')
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
@@ -124,18 +153,15 @@ function createTwilioVoiceToken({ accountSid, apiKeySid, apiKeySecret, appSid, i
 
 function twilioSignatureValid(req, authToken) {
   const signature = String(req.get?.('x-twilio-signature') || '');
-  if (!authToken || !signature) return false;
   const publicOrigin = process.env.PUBLIC_APP_URL || `https://${req.get?.('host') || ''}`;
-  let url;
-  try {
-    const original = req.originalUrl || req.url || '';
-    url = original.startsWith('http') ? original : new URL(original, publicOrigin).toString();
-  } catch { return false; }
   const body = req.body && typeof req.body === 'object' ? req.body : {};
-  const payload = Object.keys(body).sort().reduce((acc, key) => acc + key + body[key], url);
-  const expected = createHmac('sha1', authToken).update(Buffer.from(payload, 'utf8')).digest('base64');
-  if (expected.length !== signature.length) return false;
-  return timingSafeEqual(Buffer.from(expected), Buffer.from(signature));
+  return validHybridTwilioRequest({
+    signature,
+    body,
+    authToken,
+    originalUrl: req.originalUrl || req.url || '',
+    publicOrigin
+  });
 }
 
 async function findCallByProviderSid(db, providerCallId) {
@@ -188,10 +214,13 @@ async function loadEffectiveRuntime(db, call) {
 // -------------------------------------------------------------- rep/session
 
 export const setHybridAutoTakeover = onCall(callOptions, async request => {
-  const { db, uid } = await requireDialer(request);
+  const { db, uid, role } = await requireDialer(request);
   const sessionId = id(request.data?.sessionId, 'session id');
   await ownedSession(db, sessionId, uid);
   const enabled = request.data?.enabled === true;
+  if (role === 'outbound_rep' && enabled) {
+    throw new HttpsError('permission-denied', 'Auto Takeover is locked off in guided rep mode.');
+  }
   await db.doc(`dialerSessions/${sessionId}`).set({
     takeover: { autoEnabled: enabled }, updatedAt: FieldValue.serverTimestamp()
   }, { merge: true });
@@ -244,6 +273,230 @@ export const getHybridVoiceAccessToken = onCall({ ...callOptions, secrets: TWILI
     identity,
     expiresIn: 900
   };
+});
+
+// ---------------------------------------------------------- staff handoffs
+
+/** A bounded, role-filtered directory for warm transfer and coaching requests. */
+export const listHybridTransferAgents = onCall(callOptions, async request => {
+  const { db, uid } = await requireDialer(request);
+  const roles = await db.collection('roles')
+    .where('role', 'in', ['admin', 'outbound_rep', 'outbound_manager'])
+    .limit(100).get();
+  const eligible = roles.docs.filter(entry => entry.id !== uid);
+  const profiles = eligible.length
+    ? await db.getAll(...eligible.map(entry => db.doc(`users/${entry.id}`)))
+    : [];
+  const activeSessions = await db.collection('dialerSessions').where('status', '==', 'active').limit(100).get();
+  const sessionByUid = new Map(activeSessions.docs.map(entry => [entry.get('userUid'), entry.data()]));
+  return {
+    agents: eligible.map((entry, index) => {
+      const profile = profiles[index]?.exists ? profiles[index].data() : {};
+      const active = sessionByUid.get(entry.id);
+      const onCall = Boolean(active?.rep?.activeCallId);
+      return {
+        uid: entry.id,
+        role: clean(entry.get('role'), 80),
+        name: clean(profile?.displayName, 120)
+          || clean(profile?.email || entry.get('email'), 200).split('@')[0]
+          || 'Teammate',
+        availability: onCall ? 'on_call' : 'available'
+      };
+    })
+  };
+});
+
+/** Ask a specific teammate to join the same live conference. */
+export const requestHybridStaffTransfer = onCall(callOptions, async request => {
+  const { db, uid } = await requireDialer(request);
+  const callId = id(request.data?.callId, 'call id');
+  const toUid = id(request.data?.toUid, 'teammate id');
+  if (toUid === uid) throw new HttpsError('invalid-argument', 'Choose another teammate.');
+  const call = await ownedCall(db, callId, uid);
+  if (['completed', 'cancelled', 'failed'].includes(call.status)) {
+    throw new HttpsError('failed-precondition', 'This call has already ended.');
+  }
+  if (call.control?.controller !== 'human') {
+    throw new HttpsError('failed-precondition', 'Join the call before requesting a staff handoff.');
+  }
+  if (['requested', 'accepted'].includes(call.staffTransfer?.state)) {
+    throw new HttpsError('already-exists', 'A staff handoff is already in progress.');
+  }
+  const [from, to] = await Promise.all([staffIdentity(db, uid), staffIdentity(db, toUid)]);
+  if (!['admin', 'outbound_rep', 'outbound_manager'].includes(to.role)) {
+    throw new HttpsError('failed-precondition', 'That teammate does not have outbound call access.');
+  }
+  await db.doc(`calls/${callId}`).set({
+    staffTransfer: {
+      state: 'requested', fromUid: uid, fromName: from.name,
+      toUid, toName: to.name,
+      note: clean(request.data?.note, 1000),
+      handoffSummary: clean(request.data?.handoffSummary, 2000),
+      requestedAt: FieldValue.serverTimestamp(), acceptedAt: null,
+      completedAt: null, cancelledAt: null
+    },
+    media: { ...(call.media || {}), assistParticipantSid: '' },
+    updatedAt: FieldValue.serverTimestamp()
+  }, { merge: true });
+  await recordCallAuditEvent(db, 'staff_transfer_requested', {
+    callId, sessionId: call.sessionId, campaignId: call.campaignId,
+    actorType: 'rep', actorId: uid, metadata: { toUid }
+  });
+  return { ok: true, toUid, toName: to.name };
+});
+
+export const acceptHybridStaffTransfer = onCall(callOptions, async request => {
+  const { db, uid } = await requireDialer(request);
+  const callId = id(request.data?.callId, 'call id');
+  const call = await transferCall(db, callId, uid);
+  if (call.staffTransfer?.toUid !== uid) throw new HttpsError('permission-denied', 'Only the requested teammate can accept.');
+  if (call.staffTransfer?.state !== 'requested') throw new HttpsError('failed-precondition', 'This handoff is no longer waiting.');
+  await db.doc(`calls/${callId}`).set({
+    staffTransfer: { ...call.staffTransfer, state: 'accepted', acceptedAt: FieldValue.serverTimestamp() },
+    updatedAt: FieldValue.serverTimestamp()
+  }, { merge: true });
+  await recordCallAuditEvent(db, 'staff_transfer_accepted', {
+    callId, sessionId: call.sessionId, campaignId: call.campaignId,
+    actorType: 'rep', actorId: uid, metadata: { fromUid: call.staffTransfer.fromUid }
+  });
+  return { ok: true };
+});
+
+export const declineHybridStaffTransfer = onCall(callOptions, async request => {
+  const { db, uid } = await requireDialer(request);
+  const callId = id(request.data?.callId, 'call id');
+  const call = await transferCall(db, callId, uid);
+  const transfer = call.staffTransfer || {};
+  const state = transfer.toUid === uid ? 'declined' : 'cancelled';
+  await db.doc(`calls/${callId}`).set({
+    staffTransfer: {
+      ...transfer, state,
+      cancelledAt: FieldValue.serverTimestamp(),
+      cancellationReason: clean(request.data?.reason, 300)
+    },
+    updatedAt: FieldValue.serverTimestamp()
+  }, { merge: true });
+  await recordCallAuditEvent(db, `staff_transfer_${state}`, {
+    callId, sessionId: call.sessionId, campaignId: call.campaignId,
+    actorType: 'rep', actorId: uid
+  });
+  return { ok: true, state };
+});
+
+/** Finish the warm handoff only after the receiving teammate has joined. */
+export const completeHybridStaffTransfer = onCall(callOptions, async request => {
+  const { db, uid } = await requireDialer(request);
+  const callId = id(request.data?.callId, 'call id');
+  const call = await transferCall(db, callId, uid);
+  const transfer = call.staffTransfer || {};
+  if (transfer.fromUid !== uid) throw new HttpsError('permission-denied', 'The current call owner must complete the handoff.');
+  if (transfer.state !== 'accepted') throw new HttpsError('failed-precondition', 'The receiving teammate must join before transfer can complete.');
+  const sessionRef = db.doc(`dialerSessions/${call.sessionId}`);
+  const callRef = db.doc(`calls/${callId}`);
+  await db.runTransaction(async transaction => {
+    const [freshCall, sessionSnapshot] = await Promise.all([
+      transaction.get(callRef), transaction.get(sessionRef)
+    ]);
+    const currentTransfer = freshCall.get('staffTransfer') || {};
+    if (currentTransfer.state !== 'accepted') throw new Error('The handoff state changed.');
+    if (!freshCall.get('media.assistParticipantSid')) {
+      throw new HttpsError('failed-precondition', 'The receiving teammate is still connecting to the call.');
+    }
+    const control = freshCall.get('control') || {};
+    transaction.set(callRef, {
+      staffTransfer: { ...currentTransfer, state: 'completed', completedAt: FieldValue.serverTimestamp() },
+      control: { ...control, controller: 'human', repUid: currentTransfer.toUid, revision: Number(control.revision || 0) + 1 },
+      operatorUid: currentTransfer.toUid,
+      updatedAt: FieldValue.serverTimestamp()
+    }, { merge: true });
+    if (sessionSnapshot.exists && sessionSnapshot.get('rep.activeCallId') === callId) {
+      transaction.set(sessionRef, {
+        rep: { state: 'available', activeCallId: '', listeningCallId: '' },
+        updatedAt: FieldValue.serverTimestamp()
+      }, { merge: true });
+    }
+  });
+  await recordCallAuditEvent(db, 'staff_transfer_completed', {
+    callId, sessionId: call.sessionId, campaignId: call.campaignId,
+    actorType: 'rep', actorId: uid,
+    metadata: { fromUid: transfer.fromUid, toUid: transfer.toUid }
+  });
+  return { ok: true, newOperatorUid: transfer.toUid };
+});
+
+// -------------------------------------------------------- supervisor coaching
+
+export const beginHybridCoachMonitor = onCall(callOptions, async request => {
+  const { db, uid } = await requireDialer(request, { manageAgents: true });
+  const callId = id(request.data?.callId, 'call id');
+  const snapshot = await db.doc(`calls/${callId}`).get();
+  if (!snapshot.exists) throw new HttpsError('not-found', 'Call not found.');
+  const call = { id: callId, ...snapshot.data() };
+  if (call.direction !== 'outbound' || ['completed', 'cancelled', 'failed'].includes(call.status)) {
+    throw new HttpsError('failed-precondition', 'Only a live outbound call can be monitored.');
+  }
+  const coach = await staffIdentity(db, uid);
+  await db.doc(`calls/${callId}`).set({
+    coaching: {
+      ...(call.coaching || {}), state: 'monitoring', supervisorUid: uid,
+      supervisorName: coach.name, startedAt: FieldValue.serverTimestamp(), endedAt: null
+    },
+    updatedAt: FieldValue.serverTimestamp()
+  }, { merge: true });
+  await recordCallAuditEvent(db, 'supervisor_monitor_started', {
+    callId, sessionId: call.sessionId, campaignId: call.campaignId,
+    actorType: 'supervisor', actorId: uid
+  });
+  return { ok: true, supervisorName: coach.name };
+});
+
+export const sendHybridCoachCue = onCall(callOptions, async request => {
+  const { db, uid } = await requireDialer(request, { manageAgents: true });
+  const callId = id(request.data?.callId, 'call id');
+  const message = clean(request.data?.message, 500);
+  if (!message) throw new HttpsError('invalid-argument', 'Enter a coaching cue.');
+  const snapshot = await db.doc(`calls/${callId}`).get();
+  if (!snapshot.exists) throw new HttpsError('not-found', 'Call not found.');
+  const call = { id: callId, ...snapshot.data() };
+  if (call.coaching?.state !== 'monitoring' || call.coaching?.supervisorUid !== uid) {
+    throw new HttpsError('failed-precondition', 'Start private monitor mode before sending a cue.');
+  }
+  const coach = await staffIdentity(db, uid);
+  await db.doc(`calls/${callId}`).set({
+    coaching: {
+      ...call.coaching,
+      latestCue: {
+        message, supervisorUid: uid, supervisorName: coach.name,
+        at: FieldValue.serverTimestamp()
+      }
+    },
+    updatedAt: FieldValue.serverTimestamp()
+  }, { merge: true });
+  await recordCallAuditEvent(db, 'supervisor_coaching_cue', {
+    callId, sessionId: call.sessionId, campaignId: call.campaignId,
+    actorType: 'supervisor', actorId: uid, metadata: { message }
+  });
+  return { ok: true };
+});
+
+export const endHybridCoachMonitor = onCall(callOptions, async request => {
+  const { db, uid } = await requireDialer(request, { manageAgents: true });
+  const callId = id(request.data?.callId, 'call id');
+  const snapshot = await db.doc(`calls/${callId}`).get();
+  if (!snapshot.exists) throw new HttpsError('not-found', 'Call not found.');
+  const call = { id: callId, ...snapshot.data() };
+  if (call.coaching?.supervisorUid && call.coaching.supervisorUid !== uid) {
+    throw new HttpsError('permission-denied', 'Another supervisor owns this monitor session.');
+  }
+  await db.doc(`calls/${callId}`).set({
+    coaching: { ...(call.coaching || {}), state: 'ended', endedAt: FieldValue.serverTimestamp() },
+    updatedAt: FieldValue.serverTimestamp()
+  }, { merge: true });
+  await recordCallAuditEvent(db, 'supervisor_monitor_ended', {
+    callId, sessionId: call.sessionId, campaignId: call.campaignId,
+    actorType: 'supervisor', actorId: uid
+  });
+  return { ok: true };
 });
 
 // ---------------------------------------------------------- agent profiles
@@ -501,7 +754,8 @@ export const twilioHybridBrowserTwiML = onRequest({ secrets: [HYBRID_TWILIO_AUTH
     res.status(401).type('text/plain').send('unauthorized'); return;
   }
   const callId = clean(req.body?.callId || req.query?.callId, 200);
-  const mode = clean(req.body?.mode || req.query?.mode, 20) === 'listen' ? 'listen' : 'human';
+  const requestedMode = clean(req.body?.mode || req.query?.mode, 20);
+  const mode = ['listen', 'assist', 'coach'].includes(requestedMode) ? requestedMode : 'human';
   if (!callId) { res.status(400).type('text/plain').send('missing callId'); return; }
   const db = getFirestore();
   const snapshot = await db.doc(`calls/${callId}`).get();
@@ -511,10 +765,22 @@ export const twilioHybridBrowserTwiML = onRequest({ secrets: [HYBRID_TWILIO_AUTH
   const identity = clean(String(req.body?.From || '').replace(/^client:/, ''), 121);
   const sessionSnapshot = await db.doc(`dialerSessions/${call.sessionId}`).get();
   const expectedIdentity = `bs_${clean(sessionSnapshot.get('userUid'), 110)}`;
-  if (!identity || identity !== expectedIdentity) { res.status(403).type('text/plain').send('wrong rep'); return; }
+  const transferIdentity = `bs_${clean(call?.staffTransfer?.toUid, 110)}`;
+  const transferAllowed = mode === 'assist'
+    && ['accepted', 'completed'].includes(call?.staffTransfer?.state)
+    && identity === transferIdentity;
+  const identityUid = identity.startsWith('bs_') ? identity.slice(3) : '';
+  const coachRoleSnapshot = mode === 'coach' && identityUid ? await db.doc(`roles/${identityUid}`).get() : null;
+  const coachAllowed = mode === 'coach'
+    && ['admin', 'outbound_manager'].includes(clean(coachRoleSnapshot?.get('role'), 80))
+    && call?.coaching?.state === 'monitoring'
+    && call?.coaching?.supervisorUid === identityUid;
+  if (!identity || (identity !== expectedIdentity && !transferAllowed && !coachAllowed)) { res.status(403).type('text/plain').send('wrong rep'); return; }
   const label = `${mode}-${clean(sessionSnapshot.get('userUid'), 80)}`.slice(0, 120);
+  const participantLabel = mode === 'assist' ? `assist-${call.staffTransfer.toUid}`
+    : mode === 'coach' ? `coach-${identityUid}` : label;
   res.status(200).type('text/xml').send(
-    `<?xml version="1.0" encoding="UTF-8"?><Response><Dial><Conference beep="false" muted="${mode === 'listen' ? 'true' : 'false'}" startConferenceOnEnter="true" endConferenceOnExit="false" participantLabel="${xml(label)}">${xml(room)}</Conference></Dial></Response>`
+    `<?xml version="1.0" encoding="UTF-8"?><Response><Dial><Conference beep="false" muted="${['listen', 'coach'].includes(mode) ? 'true' : 'false'}" startConferenceOnEnter="true" endConferenceOnExit="false" participantLabel="${xml(participantLabel)}">${xml(room)}</Conference></Dial></Response>`
   );
 });
 
@@ -537,6 +803,12 @@ export const twilioHybridConferenceEvent = onRequest({ secrets: [HYBRID_TWILIO_A
       if (label === 'prospect' && callSid) update.prospectParticipantSid = callSid;
       if (label.startsWith('human-') && callSid) update.humanParticipantSid = callSid;
       if (label.startsWith('listen-') && callSid) update.listenerParticipantSid = callSid;
+      if (label.startsWith('assist-') && callSid) {
+        update.assistParticipantSid = event === 'participant-leave' ? '' : callSid;
+      }
+      if (label.startsWith('coach-') && callSid) {
+        update.coachParticipantSid = event === 'participant-leave' ? '' : callSid;
+      }
       await db.doc(`calls/${callId}`).set({ media: { ...media, ...update }, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
       if (event === 'participant-join' && label.startsWith('human-') && callSnapshot.get('control.controller') === 'transitioning') {
         const repUid = clean(label.slice('human-'.length), 160);
@@ -549,7 +821,15 @@ export const twilioHybridConferenceEvent = onRequest({ secrets: [HYBRID_TWILIO_A
 
 // --------------------------------------------------------- Twilio call event
 
-export const recordHybridCallEvent = onRequest({ secrets: [HYBRID_TWILIO_AUTH_TOKEN, HYBRID_AI_MEDIA_SECRET], maxInstances: 30 }, async (req, res) => {
+export const recordHybridCallEvent = onRequest({
+  secrets: [
+    HYBRID_TWILIO_ACCOUNT_SID,
+    HYBRID_TWILIO_AUTH_TOKEN,
+    HYBRID_TWILIO_TWIML_APP_SID,
+    HYBRID_AI_MEDIA_SECRET
+  ],
+  maxInstances: 30
+}, async (req, res) => {
   if (req.method !== 'POST') { res.set('Allow', 'POST').status(405).json({ error: 'method-not-allowed' }); return; }
   const authToken = secretValue(HYBRID_TWILIO_AUTH_TOKEN);
   if (!twilioSignatureValid(req, authToken)) { res.status(401).json({ error: 'unauthorized' }); return; }
@@ -591,6 +871,37 @@ export const recordHybridCallEvent = onRequest({ secrets: [HYBRID_TWILIO_AUTH_TO
 
   if (event.type === 'human_answered') {
     const routed = await routeVerifiedHumanAnswer(db, call.sessionId, call.id, { targetId: call.targetId, now: event.at });
+    if (routed.controller === 'none') {
+      await provider.endCall(call.providerCallId).catch(() => {});
+      const campaignSnapshot = call.campaignId ? await db.doc(`outboundCampaigns/${call.campaignId}`).get() : null;
+      await applyDisposition(db, {
+        targetId: call.targetId,
+        callId: call.id,
+        disposition: 'completed',
+        campaign: campaignSnapshot?.exists ? { id: campaignSnapshot.id, ...campaignSnapshot.data() } : null,
+        actor: 'system',
+        now: event.at
+      }).catch(() => {});
+      res.status(200).json({ ok: true, callId: call.id, routed: 'none' }); return;
+    }
+    if (routed.controller === 'human') {
+      const sessionSnapshot = await db.doc(`dialerSessions/${call.sessionId}`).get();
+      if (sessionSnapshot.get('operatingMode') === 'human') {
+        const campaignSnapshot = await db.doc(`outboundCampaigns/${call.campaignId}`).get();
+        await cancelLosingLegs(db, call.sessionId, {
+          winningCallId: call.id,
+          campaign: campaignSnapshot.exists ? { id: campaignSnapshot.id, ...campaignSnapshot.data() } : null,
+          now: event.at,
+          providerConfig: {
+            accountSid: secretValue(HYBRID_TWILIO_ACCOUNT_SID),
+            authToken,
+            twimlAppSid: secretValue(HYBRID_TWILIO_TWIML_APP_SID),
+            statusCallbackUrl: hybridOutboundEventsUrl(),
+            hybridV2: true
+          }
+        });
+      }
+    }
     if (routed.controller === 'ai') {
       let runtime;
       try { runtime = await loadEffectiveRuntime(db, call); }
@@ -654,6 +965,21 @@ export const recordHybridCallEvent = onRequest({ secrets: [HYBRID_TWILIO_AUTH_TO
         if (next) await beginSmoothHandoff(db, call.sessionId, next.id, { repUid: (await db.doc(`dialerSessions/${call.sessionId}`).get()).get('userUid') }).catch(() => {});
       }
     }
+    await maintainHybridCapacity(db, call.sessionId, {
+      providerConfig: {
+        accountSid: secretValue(HYBRID_TWILIO_ACCOUNT_SID),
+        authToken,
+        twimlAppSid: secretValue(HYBRID_TWILIO_TWIML_APP_SID),
+        statusCallbackUrl: hybridOutboundEventsUrl(),
+        hybridV2: true
+      }
+    }).catch(async error => {
+      console.error('[hybrid-capacity] terminal refill failed', clean(error?.message, 300));
+      await db.doc(`dialerSessions/${call.sessionId}`).set({
+        autoDial: { state: 'error', lastError: clean(error?.message, 300) },
+        updatedAt: FieldValue.serverTimestamp()
+      }, { merge: true });
+    });
   }
 
   res.status(200).json({ ok: true, callId: call.id, type: event.type });
