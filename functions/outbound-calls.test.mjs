@@ -73,7 +73,7 @@ check('concurrency above a provider’s ceiling is refused',
 
 let refusedCampaign = false;
 try {
-  await createCampaign(db, { name: 'Bad', mode: 'parallel', provider: 'kixie', concurrency: 3, callerId: '+15551234567' }, { createdBy: 'test' });
+  await createCampaign(db, { accountId: 'bitesites', name: 'Bad', mode: 'parallel', provider: 'kixie', concurrency: 3, callerId: '+15551234567' }, { createdBy: 'test' });
 } catch { refusedCampaign = true; }
 check('a campaign cannot be created on a provider that cannot run its mode', refusedCampaign);
 
@@ -94,6 +94,7 @@ check('the campaign keeps its default Hybrid agent profile', sanitized.agentProf
 console.log('\nbuilding a parallel campaign');
 
 const campaignId = await createCampaign(db, {
+  accountId: 'bitesites',
   name: 'Bergen plumbers',
   mode: 'parallel',
   provider: 'mock',
@@ -327,6 +328,7 @@ await stopDialerSession(db, third.sessionId, { reason: 'test', now: NOW });
 console.log('\ndo-not-call applies across every campaign');
 
 const otherCampaign = await createCampaign(db, {
+  accountId: 'bitesites',
   name: 'Second campaign', mode: 'power', provider: 'mock',
   callerId: '+15551234567', requireResearchApproval: false
 }, { createdBy: 'test' });
@@ -349,6 +351,7 @@ check('and the prospect itself is marked',
 console.log('\ncompliance blocks a call outside local hours');
 
 const nightCampaign = await createCampaign(db, {
+  accountId: 'bitesites',
   name: 'Night shift', mode: 'power', provider: 'mock',
   callerId: '+15551234567', requireResearchApproval: false,
   localStartTime: '09:00', localEndTime: '10:00'
@@ -385,6 +388,7 @@ await stopDialerSession(db, nightSession.sessionId, { reason: 'test', now: NOW }
 console.log('\nresearch approval gates the dial');
 
 const gatedCampaign = await createCampaign(db, {
+  accountId: 'bitesites',
   name: 'Approval required', mode: 'power', provider: 'mock',
   callerId: '+15551234567', requireResearchApproval: true
 }, { createdBy: 'test' });
@@ -414,6 +418,7 @@ check('once approved, the call proceeds', afterApproval.started.length === 1, JS
 await stopDialerSession(db, gatedSession.sessionId, { reason: 'test', now: NOW });
 
 const toggledCampaign = await createCampaign(db, {
+  accountId: 'bitesites',
   name: 'Approval switched off', mode: 'power', provider: 'mock',
   callerId: '+15551234567', requireResearchApproval: true
 }, { createdBy: 'test' });
@@ -428,6 +433,7 @@ check('turning approval off releases existing pending targets',
   (await toggledTarget.ref.get()).get('state') === 'ready');
 
 const bulkCampaign = await createCampaign(db, {
+  accountId: 'bitesites',
   name: 'Bulk research', mode: 'power', provider: 'mock',
   callerId: '+15551234567', requireResearchApproval: true
 }, { createdBy: 'test' });
@@ -536,6 +542,156 @@ check('a webhook with the wrong secret is refused',
   mock.verifyWebhook({ get: () => 'wrong-value-here-long' }, 'a-long-enough-test-secret') === false);
 check('a webhook with the right secret is accepted',
   mock.verifyWebhook({ get: () => 'a-long-enough-test-secret' }, 'a-long-enough-test-secret') === true);
+
+// ---------------------------------------------------------------------------
+console.log('\ntwo books of business cannot bleed into each other');
+
+// BiteSites and its commission clients share one GoHighLevel sub-account, so
+// `accountId` is the only thing keeping them apart. Each check below is a route
+// by which a client's contact could be called by the wrong persona.
+
+let refusedWithoutAccount = false;
+try {
+  await createCampaign(db, { name: 'No account', provider: 'mock', mode: 'power' }, { createdBy: 'test' });
+} catch (error) {
+  refusedWithoutAccount = /accountId is required/.test(error.message);
+}
+check('a campaign cannot be created without naming its account', refusedWithoutAccount);
+
+let refusedUnknownAccount = false;
+try {
+  await createCampaign(db, { accountId: 'not-a-client', name: 'Bad', provider: 'mock' }, { createdBy: 'test' });
+} catch (error) {
+  refusedUnknownAccount = /not a known account/.test(error.message);
+}
+check('an unknown account is refused rather than created', refusedUnknownAccount);
+
+const fineLineCampaign = await createCampaign(db, {
+  accountId: 'fine-line-group',
+  name: 'FL — Hudson property managers',
+  mode: 'power',
+  provider: 'mock',
+  requireResearchApproval: false
+}, { createdBy: 'test@bitesites.org' });
+check('a client campaign can be created when it names its account', Boolean(fineLineCampaign));
+
+// The load-bearing case. These prospects carry no `accountId` at all, exactly
+// like every record written before the boundary existed, so they read as the
+// house account.
+const houseProspects = await importProspects(db, [
+  { name: 'Legacy Roofing', phone: '2015550777', address: 'Ridgewood, NJ' }
+], { source: { system: 'csv', provider: 'csv' } });
+
+const crossImport = await importTargets(db, fineLineCampaign, { prospectIds: houseProspects.written, now: NOW });
+check('a BiteSites prospect cannot be imported into a client campaign',
+  crossImport.added === 0 && crossImport.skipped[0]?.reason === 'account_mismatch_bitesites',
+  JSON.stringify(crossImport.skipped));
+
+// ...and the same record is still perfectly usable by its own account, so the
+// guard blocks the crossing rather than the work.
+const sameAccountImport = await importTargets(db, campaignId, { prospectIds: houseProspects.written, now: NOW });
+check('the same prospect still imports into a BiteSites campaign', sameAccountImport.added === 1,
+  JSON.stringify(sameAccountImport.skipped));
+
+check('targets are stamped with the account that admitted them',
+  (await db.doc(`outboundTargets/${sameAccountImport.added ? (await db.collection('outboundTargets')
+    .where('campaignId', '==', campaignId).where('prospectId', '==', houseProspects.written[0]).limit(1).get())
+    .docs[0].id : 'missing'}`).get()).get('accountId') === 'bitesites');
+
+// The same business can legitimately be a prospect for both books — a web-design
+// prospect for BiteSites and a restoration prospect for the client. Neither may
+// suppress the other as a duplicate, and neither may become the other.
+const sharedBusiness = [{ name: 'Hudson Property Group', phone: '2015550444', address: 'Union City, NJ' }];
+const houseCopy = await importProspects(db, sharedBusiness, { source: { system: 'csv', provider: 'csv' } });
+const clientCopy = await importProspects(db, sharedBusiness, {
+  source: { system: 'csv', provider: 'csv' }, accountId: 'fine-line-group'
+});
+check('the same business imports into a second account rather than deduplicating away',
+  houseCopy.counts.created === 1 && clientCopy.counts.created === 1,
+  `house=${JSON.stringify(houseCopy.counts)} client=${JSON.stringify(clientCopy.counts)}`);
+check('the two copies are separate documents', houseCopy.written[0] !== clientCopy.written[0]);
+check('each copy carries its own account',
+  (await db.doc(`prospects/${houseCopy.written[0]}`).get()).get('accountId') === 'bitesites'
+  && (await db.doc(`prospects/${clientCopy.written[0]}`).get()).get('accountId') === 'fine-line-group');
+check('neither copy was flagged as a duplicate of the other',
+  (await db.doc(`prospects/${clientCopy.written[0]}`).get()).get('duplicate')?.status === 'unique',
+  JSON.stringify((await db.doc(`prospects/${clientCopy.written[0]}`).get()).get('duplicate')));
+
+// ...and the client's copy is the one its own campaign accepts.
+const clientImport = await importTargets(db, fineLineCampaign, { prospectIds: clientCopy.written, now: NOW });
+check('the client copy imports into the client campaign', clientImport.added === 1,
+  JSON.stringify(clientImport.skipped));
+
+// A re-import must refresh facts without moving the record between books.
+await importProspects(db, sharedBusiness, {
+  source: { system: 'csv', provider: 'csv' }, accountId: 'fine-line-group'
+});
+check('a re-import never moves a prospect between accounts',
+  (await db.doc(`prospects/${clientCopy.written[0]}`).get()).get('accountId') === 'fine-line-group');
+
+let refusedAccountChange = false;
+try {
+  await updateCampaign(db, fineLineCampaign, { accountId: 'bitesites' });
+} catch (error) {
+  refusedAccountChange = /cannot change account/.test(error.message);
+}
+check('a campaign cannot be moved to another account', refusedAccountChange);
+
+// A persona belonging to the house account must not be selectable by a client
+// campaign — this is the check that stops a web-design agent introducing itself
+// to a restoration lead.
+await db.doc('aiAgentProfiles/house-persona').set({ name: 'BiteSites growth', accountId: 'bitesites' });
+let refusedForeignProfile = false;
+try {
+  await updateCampaign(db, fineLineCampaign, { agentProfileId: 'house-persona' });
+} catch (error) {
+  refusedForeignProfile = /agent profile belongs to a different account/i.test(error.message);
+}
+check('a client campaign refuses another account’s agent persona', refusedForeignProfile);
+
+await db.doc('aiAgentProfiles/fl-persona').set({ name: 'FL intake', accountId: 'fine-line-group' });
+await updateCampaign(db, fineLineCampaign, { agentProfileId: 'fl-persona' });
+check('its own persona is accepted',
+  (await db.doc(`outboundCampaigns/${fineLineCampaign}`).get()).get('agentProfileId') === 'fl-persona');
+
+// Last line of defence: a target that reaches the queue with the wrong account
+// — a half-applied migration, an older build — must not be dialled even though
+// the import gate already passed once. This needs its own campaign, because the
+// earlier ones have been paused and cancelled by the sections above.
+const guardCampaign = await createCampaign(db, {
+  accountId: 'bitesites',
+  name: 'Account guard',
+  mode: 'power',
+  provider: 'mock',
+  callerId: '+15551234567',
+  requireResearchApproval: false
+}, { createdBy: 'test@bitesites.org' });
+await setCampaignStatus(db, guardCampaign, 'running', { actor: 'test' });
+
+const guardProspects = await importProspects(db, [
+  { name: 'Guard Contracting', phone: '2015550888', address: 'Ridgewood, NJ' }
+], { source: { system: 'csv', provider: 'csv' } });
+await importTargets(db, guardCampaign, { prospectIds: guardProspects.written, now: NOW });
+
+const tamperTargets = await db.collection('outboundTargets').where('campaignId', '==', guardCampaign).limit(1).get();
+const tamperedId = tamperTargets.docs[0].id;
+await db.doc(`outboundTargets/${tamperedId}`).set({
+  accountId: 'fine-line-group', state: 'ready', lockedBySessionId: '', lockedAt: null,
+  nextAttemptAt: Timestamp.fromDate(NOW)
+}, { merge: true });
+
+const guardSession = await startDialerSession(db, {
+  campaignId: guardCampaign, userUid: 'account-guard-rep', mode: 'power', concurrency: 1, now: NOW
+});
+const guarded = await dialNext(db, guardSession.sessionId ?? guardSession.id, { now: NOW });
+const tamperedAfter = await db.doc(`outboundTargets/${tamperedId}`).get();
+check('a mismatched target is not dialled even after passing import',
+  !guarded.started.some(entry => entry.targetId === tamperedId));
+check('and it is parked as failed rather than retried',
+  tamperedAfter.get('state') === 'failed'
+  && tamperedAfter.get('accountMismatch')?.found === 'fine-line-group',
+  `state=${tamperedAfter.get('state')}`);
+await stopDialerSession(db, guardSession.sessionId ?? guardSession.id, { now: NOW });
 
 // ---------------------------------------------------------------------------
 const failed = results.filter(entry => !entry.pass);

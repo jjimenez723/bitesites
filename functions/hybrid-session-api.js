@@ -21,6 +21,29 @@ import { clean } from './prospect-normalization.js';
 import { recordCallAuditEvent, releaseRepFromCall } from './hybrid-call-orchestration.js';
 import { maintainHybridCapacity } from './hybrid-capacity.js';
 import { hybridOutboundEventsUrl } from './hybrid-urls.js';
+import { LEGACY_ACCOUNT_ID, readAccountId, checkAccountAlignment, accountMismatchLabel } from './accounts.js';
+
+/**
+ * A persona may only speak to the account its campaign serves.
+ *
+ * The campaign builder already refuses a cross-account default, but the profile
+ * for a live session is chosen again here and can be supplied straight by the
+ * caller — so a rep on a client campaign could otherwise start a session with
+ * the house persona. This is that same check at the point the override happens.
+ */
+function assertProfileServesAccount(profileSnapshot, campaignAccountId) {
+  if (!profileSnapshot?.exists) return;
+  const verdict = checkAccountAlignment({
+    expected: readAccountId(campaignAccountId, { fallback: LEGACY_ACCOUNT_ID }),
+    profile: readAccountId(profileSnapshot.get('accountId'), { fallback: LEGACY_ACCOUNT_ID })
+  });
+  if (!verdict.aligned) {
+    throw new HttpsError(
+      'failed-precondition',
+      `${accountMismatchLabel(verdict.reason)} — this campaign serves "${verdict.expected}".`
+    );
+  }
+}
 
 const TWILIO_ACCOUNT_SID = defineSecret('TWILIO_ACCOUNT_SID');
 const TWILIO_AUTH_TOKEN = defineSecret('TWILIO_AUTH_TOKEN');
@@ -140,6 +163,7 @@ export const startHybridDialerSession = onCall({ ...callOptions, secrets: HYBRID
   if (requestedProfileId && (!profileSnapshot?.exists || profileSnapshot.get('status') === 'archived')) {
     throw new HttpsError('failed-precondition', 'The selected AI agent profile is unavailable.');
   }
+  assertProfileServesAccount(profileSnapshot, campaign.accountId);
 
   const { sessionId } = await startDialerSession(db, {
     campaignId,
@@ -208,6 +232,12 @@ export const setHybridOperatingMode = onCall({ ...callOptions, secrets: HYBRID_S
   const profileSnapshot = agentProfileId ? await db.doc(`aiAgentProfiles/${agentProfileId}`).get() : null;
   if (agentProfileId && (!profileSnapshot?.exists || profileSnapshot.get('status') === 'archived')) {
     throw new HttpsError('failed-precondition', 'The selected AI agent profile is unavailable.');
+  }
+  // Switching operating mode mid-session re-picks the persona, so the account
+  // check has to run again here and not only at session start.
+  if (profileSnapshot?.exists) {
+    const sessionCampaign = await db.doc(`outboundCampaigns/${session.campaignId}`).get();
+    assertProfileServesAccount(profileSnapshot, sessionCampaign.get('accountId'));
   }
   const agentProfileName = clean(profileSnapshot?.get('name'), 120);
   const agentProfileVersion = Math.max(1, Number(profileSnapshot?.get('version')) || 1);

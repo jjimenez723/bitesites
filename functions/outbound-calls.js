@@ -30,6 +30,11 @@ import {
 import { promoteProspect } from './prospect-conversion.js';
 import { contactKey, loadResearch, saveResearch, researchContact, buildCallBrief } from './lead-enrichment.js';
 import { clean, normalizePhone, resolveTimezone, deterministicId } from './prospect-normalization.js';
+import { normalizeOfferTrackKeys } from './offer-tracks.js';
+import {
+  LEGACY_ACCOUNT_ID, requireAccountId, readAccountId,
+  checkAccountAlignment, accountMismatchLabel
+} from './accounts.js';
 
 export const CAMPAIGN_STATUSES = ['draft', 'researching', 'ready', 'running', 'paused', 'completed', 'cancelled', 'failed'];
 export const CAMPAIGN_MODES = ['ai', 'power', 'parallel'];
@@ -54,6 +59,11 @@ export function sanitizeCampaign(input = {}, { existing = null } = {}) {
 
   return {
     name: clean(input.name, 120) || existing?.name || 'Untitled campaign',
+    // Which book of business this campaign serves. Campaigns created before
+    // the account boundary existed carry none, so an update falls back rather
+    // than failing; `createCampaign` demands an explicit one, which is what
+    // stops a new campaign from ever being ambiguous.
+    accountId: readAccountId(input.accountId ?? existing?.accountId, { fallback: LEGACY_ACCOUNT_ID }),
     mode,
     provider: clean(input.provider, 40) || existing?.provider || 'mock',
     // Power and AI modes are one call at a time by definition; storing a higher
@@ -65,6 +75,12 @@ export function sanitizeCampaign(input = {}, { existing = null } = {}) {
     // default for every new dialer session.
     agentProfileId: clean(input.agentProfileId ?? existing?.agentProfileId, 200),
     agentId: clean(input.agentId ?? existing?.agentId, 120),
+    // A campaign may re-aim its shared persona at a different service without
+    // editing the profile. Only server-owned track keys survive, so this can
+    // never become a free-text prompt channel.
+    agentOverride: {
+      offerTracks: normalizeOfferTrackKeys(input.agentOverride?.offerTracks ?? existing?.agentOverride?.offerTracks)
+    },
     script: clean(input.script, 8000),
     objective: clean(input.objective, 500),
     bookingRules: clean(input.bookingRules, 500),
@@ -88,12 +104,53 @@ export function sanitizeCampaign(input = {}, { existing = null } = {}) {
   };
 }
 
+/**
+ * Everything that will speak on a campaign's behalf must belong to the same
+ * account as the campaign.
+ *
+ * Run on create and on every update, because the second one is the dangerous
+ * one: a campaign built correctly and then re-pointed at another account's
+ * persona is exactly how a client's contacts get called by the wrong voice.
+ */
+async function assertCampaignBindings(db, campaign) {
+  const profileId = campaign.agentProfileId;
+  let profileAccountId;
+
+  if (profileId) {
+    const snapshot = await db.doc(`aiAgentProfiles/${profileId}`).get();
+    if (!snapshot.exists) throw new Error('The selected agent profile no longer exists');
+    // A profile written before the boundary existed belongs to the house
+    // account. That makes it usable by BiteSites campaigns and refused by
+    // every client campaign, which is the safe direction for the mistake.
+    profileAccountId = readAccountId(snapshot.get('accountId'), { fallback: LEGACY_ACCOUNT_ID });
+  }
+
+  const verdict = checkAccountAlignment({
+    expected: campaign.accountId,
+    profile: profileAccountId,
+    callerId: campaign.callerId
+  });
+
+  if (!verdict.aligned) {
+    throw new Error(
+      `${accountMismatchLabel(verdict.reason)} — campaign is "${verdict.expected || 'unset'}", `
+      + `found "${verdict.found || 'unset'}"`
+    );
+  }
+}
+
 export async function createCampaign(db, input, { createdBy }) {
+  // Deliberate on create, tolerant on update: a new campaign that does not say
+  // which book it serves is a bug waiting to happen, and there is no legacy
+  // record to protect here.
+  requireAccountId(input?.accountId, { field: 'accountId' });
+
   const campaign = sanitizeCampaign(input);
   const support = assertSupports(campaign.provider, campaign.mode, campaign.concurrency);
   if (!support.ok) {
     throw new Error(`Provider "${campaign.provider}" cannot run a ${campaign.mode} campaign: missing ${support.missing.join(', ')}`);
   }
+  await assertCampaignBindings(db, campaign);
 
   const ref = db.collection('outboundCampaigns').doc();
   await ref.set({
@@ -121,6 +178,20 @@ export async function updateCampaign(db, campaignId, input) {
   if (!support.ok) {
     throw new Error(`Provider "${campaign.provider}" cannot run a ${campaign.mode} campaign: missing ${support.missing.join(', ')}`);
   }
+
+  // A campaign's account is fixed for life. Its targets were admitted by
+  // comparing them against it, so moving the campaign would silently reclassify
+  // every one of them — and the targets are the records that carry attribution
+  // and, eventually, commission.
+  const settledAccountId = readAccountId(existing.accountId, { fallback: LEGACY_ACCOUNT_ID });
+  if (campaign.accountId !== settledAccountId) {
+    throw new Error(
+      `A campaign cannot change account (it is "${settledAccountId}"). `
+      + 'Create a new campaign under the other account and import its targets there.'
+    );
+  }
+  await assertCampaignBindings(db, campaign);
+
   await ref.set({ ...campaign, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
 
   // Targets imported while approval was required intentionally start in a
@@ -214,6 +285,47 @@ export const targetId = (campaignId, contactType, contactId) =>
   deterministicId('tgt', campaignId, contactType, contactId);
 
 /**
+ * Re-verify a claimed target's account immediately before it is dialled.
+ *
+ * The import gate already checked this, but a queue can outlive the
+ * assumptions it was built under — a campaign edited, a target written by an
+ * older build, a migration half-applied. Both dial paths call this after
+ * claiming and before anything reaches a provider, so it is the check that
+ * actually has to be true.
+ *
+ * Returns true when the target was rejected, and the caller moves on.
+ */
+async function rejectedForAccountMismatch(db, { target, campaign, campaignAccountId, now, rejected }) {
+  const verdict = checkAccountAlignment({
+    expected: campaignAccountId,
+    target: readAccountId(target.accountId, { fallback: LEGACY_ACCOUNT_ID })
+  });
+  if (verdict.aligned) return false;
+
+  // Terminal, and deliberately not requeued: this is a data fault rather than
+  // a bad moment to call, and a target that silently retries is a target
+  // nobody ever investigates.
+  await releaseTarget(db, target.id, {
+    state: 'failed',
+    extra: {
+      complianceStatus: 'blocked',
+      complianceReasons: ['account_mismatch'],
+      accountMismatch: {
+        expected: verdict.expected,
+        found: verdict.found,
+        at: Timestamp.fromDate(now)
+      }
+    }
+  });
+  console.error(
+    `[outbound] target ${target.id} belongs to "${verdict.found || 'unresolved'}" but campaign `
+    + `${campaign.id} serves "${verdict.expected}" — not dialled`
+  );
+  rejected.push({ targetId: target.id, reason: 'account_mismatch' });
+  return true;
+}
+
+/**
  * Add prospects and/or leads to a campaign.
  *
  * A prospect that is not `ready` is refused rather than quietly added: §20's
@@ -225,6 +337,7 @@ export async function importTargets(db, campaignId, { prospectIds = [], leadIds 
   const campaignSnapshot = await db.doc(`outboundCampaigns/${campaignId}`).get();
   if (!campaignSnapshot.exists) throw new Error('Campaign not found');
   const campaign = campaignSnapshot.data();
+  const campaignAccountId = readAccountId(campaign.accountId, { fallback: LEGACY_ACCOUNT_ID });
 
   const added = [];
   const skipped = [];
@@ -236,6 +349,18 @@ export async function importTargets(db, campaignId, { prospectIds = [], leadIds 
     const snapshot = await db.doc(`${collection}/${contactId}`).get();
     if (!snapshot.exists) { skipped.push({ contactId, reason: 'not_found' }); return; }
     const contact = snapshot.data();
+
+    // The account gate, ahead of every other check: a contact from another book
+    // is not a candidate that failed to qualify, it is one that should never
+    // have been offered. Records predating the boundary read as house-account,
+    // so they stay available to BiteSites campaigns and are refused by every
+    // client campaign — the mistake only fails in the safe direction.
+    const contactAccountId = readAccountId(contact.accountId, { fallback: LEGACY_ACCOUNT_ID });
+    const verdict = checkAccountAlignment({ expected: campaignAccountId, contact: contactAccountId });
+    if (!verdict.aligned) {
+      skipped.push({ contactId, reason: `account_mismatch_${verdict.found || 'unresolved'}` });
+      return;
+    }
 
     if (contactType === 'prospect') {
       const status = contact.lifecycle?.status;
@@ -262,6 +387,10 @@ export async function importTargets(db, campaignId, { prospectIds = [], leadIds 
 
     batch.set(db.doc(`outboundTargets/${id}`), {
       campaignId,
+      // Stamped rather than inferred from the campaign at dial time. The
+      // dialer re-checks this against the campaign before every call, and a
+      // check that reads the same field twice is not a check.
+      accountId: campaignAccountId,
       contactType,
       // Exactly one is populated (§24). The other is null, not absent, so a
       // query on it behaves the same for every document.
@@ -670,6 +799,7 @@ export async function dialNext(db, sessionId, {
   if (campaign.status === 'paused' || campaign.status === 'cancelled') {
     return { started: [], reason: `campaign_${campaign.status}` };
   }
+  const campaignAccountId = readAccountId(campaign.accountId, { fallback: LEGACY_ACCOUNT_ID });
 
   const configured = session.mode === 'parallel' ? Math.max(1, Math.min(5, Number(session.concurrency) || 1)) : 1;
   const wanted = maxNewCalls === null
@@ -697,6 +827,8 @@ export async function dialNext(db, sessionId, {
     const claim = await claimTarget(db, candidate.id, sessionId, { now });
     if (!claim.claimed) { rejected.push({ targetId: candidate.id, reason: claim.reason }); continue; }
     const target = claim.target;
+
+    if (await rejectedForAccountMismatch(db, { target, campaign, campaignAccountId, now, rejected })) continue;
 
     const contact = await loadContactForTarget(db, target);
     if (!contact) {
@@ -845,6 +977,7 @@ export async function runAICampaignSlice(db, campaignId, {
   const campaign = { id: campaignId, ...campaignSnapshot.data() };
   if (campaign.status !== 'running') return { started: [], reason: `campaign_${campaign.status}` };
   if (campaign.mode !== 'ai') return { started: [], reason: 'not_an_ai_campaign' };
+  const campaignAccountId = readAccountId(campaign.accountId, { fallback: LEGACY_ACCOUNT_ID });
 
   const support = assertSupports(campaign.provider, 'ai', 1);
   if (!support.ok) throw new Error(`Provider "${campaign.provider}" cannot place AI calls: missing ${support.missing.join(', ')}`);
@@ -871,6 +1004,8 @@ export async function runAICampaignSlice(db, campaignId, {
     const claim = await claimTarget(db, candidate.id, sessionId, { now });
     if (!claim.claimed) { rejected.push({ targetId: candidate.id, reason: claim.reason }); continue; }
     const target = claim.target;
+
+    if (await rejectedForAccountMismatch(db, { target, campaign, campaignAccountId, now, rejected })) continue;
 
     const contact = await loadContactForTarget(db, target);
     if (!contact) {
