@@ -26,9 +26,57 @@ export const activeInMonth = (entry, month) => {
   return true;
 };
 
-export const expenseAmount = expense => moneyRound(
-  numberValue(expense.unitAmount ?? expense.amount) * Math.max(1, numberValue(expense.quantity) || 1)
-);
+// Metered API spend. Unlike a subscription there is no fixed unit price, so the
+// billed dollars are stored per month and read back by reporting month. The
+// provider ids match the vendors that publish a usage/cost API, so a month can
+// be filled in by hand today and synced later without changing the shape.
+export const USAGE_PROVIDERS = Object.freeze([
+  { id: 'openai', label: 'OpenAI' },
+  { id: 'anthropic', label: 'Anthropic' },
+  { id: 'fal', label: 'fal.ai' },
+  { id: 'other', label: 'Other metered API' }
+]);
+
+export const usageAmount = (expense, month) =>
+  moneyRound(numberValue(expense?.monthlyAmounts?.[month]));
+
+export const expenseAmount = (expense, month) => expense?.cadence === 'usage'
+  ? usageAmount(expense, month)
+  : moneyRound(
+    numberValue(expense.unitAmount ?? expense.amount) * Math.max(1, numberValue(expense.quantity) || 1)
+  );
+
+/** True when an expense lands in the given reporting month. */
+export const expenseInMonth = (expense, month) => {
+  if (!expense) return false;
+  if (expense.cadence === 'usage') return usageAmount(expense, month) > 0;
+  if (expense.cadence === 'monthly') return activeInMonth(expense, month);
+  return monthOf(expense.effectiveDate || expense.effectiveMonth) === month;
+};
+
+/** Every month an expense is known to have charged something. */
+export const expenseMonths = expense => {
+  if (!expense) return [];
+  if (expense.cadence === 'usage') {
+    return Object.keys(expense.monthlyAmounts || {}).filter(month => usageAmount(expense, month) > 0);
+  }
+  if (expense.cadence === 'monthly') return expense.startMonth ? [expense.startMonth] : [];
+  return [monthOf(expense.effectiveDate || expense.effectiveMonth)].filter(Boolean);
+};
+
+/** Inclusive list of `YYYY-MM` strings from start to end. */
+export const monthRange = (start, end) => {
+  if (!start || !end || start > end) return [];
+  const months = [];
+  let [year, month] = start.split('-').map(Number);
+  const [endYear, endMonth] = end.split('-').map(Number);
+  while (year < endYear || (year === endYear && month <= endMonth)) {
+    months.push(`${year}-${String(month).padStart(2, '0')}`);
+    month += 1;
+    if (month > 12) { month = 1; year += 1; }
+  }
+  return months;
+};
 
 const allocationValue = (revenue, allocation) => {
   const value = numberValue(allocation.value);
@@ -45,6 +93,19 @@ const splitEvenly = (amount, ids) => {
     split.set(id, (baseCents + (index < remainder ? 1 : 0)) / 100);
   });
   return split;
+};
+
+/**
+ * Who pays for one already-priced expense: an explicit override split when the
+ * expense carries one, otherwise an even split across the participants passed
+ * in. Shared by the monthly snapshot and the running team tab so the two can
+ * never disagree about who owes what.
+ */
+export const splitExpense = (expense, participantIds) => {
+  const explicit = (expense.expenseAllocations || []).filter(allocation => allocation.memberId);
+  return explicit.length
+    ? new Map(explicit.map(allocation => [allocation.memberId, allocationValue(expense.total, allocation)]))
+    : splitEvenly(expense.total, participantIds);
 };
 
 const allocateRevenue = (revenue, allocations, accountId, kind, payoutMap) => {
@@ -71,16 +132,15 @@ const allocateRevenue = (revenue, allocations, accountId, kind, payoutMap) => {
  *   - Income records are dated; commissions use the account's commission split.
  * Expense rules:
  *   - Monthly costs recur while active; one-time costs land in their dated month.
+ *   - Metered API spend lands in whichever months have a recorded amount.
  *   - Client tags drive account profitability. Costs use an explicit override
  *     split when present, otherwise they are shared evenly by team members
  *     explicitly marked as expense participants.
  */
 export function calculateFinanceSnapshot({ accounts = [], team = [], expenses = [], income = [] }, month) {
   const activeExpenses = expenses
-    .filter(expense => expense.cadence === 'monthly'
-      ? activeInMonth(expense, month)
-      : monthOf(expense.effectiveDate || expense.effectiveMonth) === month)
-    .map(expense => ({ ...expense, total: expenseAmount(expense) }));
+    .filter(expense => expenseInMonth(expense, month))
+    .map(expense => ({ ...expense, total: expenseAmount(expense, month) }));
 
   const universalExpenses = moneyRound(activeExpenses
     .filter(expense => expense.scope !== 'client')
@@ -146,14 +206,14 @@ export function calculateFinanceSnapshot({ accounts = [], team = [], expenses = 
   const recurringExpenses = moneyRound(activeExpenses
     .filter(expense => expense.cadence === 'monthly')
     .reduce((sum, expense) => sum + expense.total, 0));
+  const usageExpenses = moneyRound(activeExpenses
+    .filter(expense => expense.cadence === 'usage')
+    .reduce((sum, expense) => sum + expense.total, 0));
   const expenseParticipants = team.filter(member => member.status !== 'inactive' && member.sharesExpenses);
   const expensesByMember = new Map();
   let allocatedExpenses = 0;
   for (const expense of activeExpenses) {
-    const explicit = expense.expenseAllocations || [];
-    const split = explicit.length
-      ? new Map(explicit.map(allocation => [allocation.memberId, allocationValue(expense.total, allocation)]))
-      : splitEvenly(expense.total, expenseParticipants.map(member => member.id));
+    const split = splitExpense(expense, expenseParticipants.map(member => member.id));
     for (const [memberId, amount] of split) {
       expensesByMember.set(memberId, moneyRound((expensesByMember.get(memberId) || 0) + amount));
       allocatedExpenses = moneyRound(allocatedExpenses + amount);
@@ -185,6 +245,7 @@ export function calculateFinanceSnapshot({ accounts = [], team = [], expenses = 
     expenses: activeExpenses,
     recurringRevenue,
     recurringExpenses,
+    usageExpenses,
     totalRevenue,
     totalExpenses,
     netRevenue: moneyRound(totalRevenue - totalExpenses),
@@ -196,3 +257,113 @@ export function calculateFinanceSnapshot({ accounts = [], team = [], expenses = 
     universalExpenses
   };
 }
+
+/**
+ * The running tab: what each person owes the finance owner, month by month.
+ *
+ * Costs accrue to a person in the month they were charged, using the same split
+ * rules as the monthly snapshot. Settlements are cash that person has actually
+ * handed over, dated to the month it was received. The balance is everything
+ * accrued minus everything settled, carried forward — so an untouched ledger
+ * reads as "nothing has been paid yet" without anyone having to say so.
+ *
+ * The window starts at the first month any cost or payment is on record and
+ * runs through the reporting month. Only costs and settlements are in scope:
+ * revenue splits are what the business owes the team, tracked separately in the
+ * monthly payout panel, and netting the two would need firm retainer start
+ * dates the account records do not all carry.
+ *
+ * The owner is the counterparty, so their own share is reported separately as
+ * absorbed cost rather than as a debt to themselves.
+ */
+export function calculateSettlementLedger(
+  { team = [], expenses = [], settlements = [] }, throughMonth
+) {
+  // Historical months are split using today's participant list; nobody has left
+  // the pool yet, and a per-month roster would need join and leave dates.
+  const participants = team.filter(member => member.status !== 'inactive' && member.sharesExpenses);
+  const participantIds = participants.map(member => member.id);
+  const owner = team.find(member => member.isOwner);
+
+  const dated = [
+    ...expenses.flatMap(expenseMonths),
+    ...settlements.map(settlement => monthOf(settlement.date))
+  ].filter(month => month && month <= throughMonth).sort();
+  const months = monthRange(dated[0], throughMonth);
+
+  const byMember = new Map(team
+    .filter(member => member.status !== 'inactive')
+    .map(member => [member.id, {
+      id: member.id,
+      name: member.name,
+      role: member.role,
+      isOwner: Boolean(member.isOwner),
+      accrued: 0,
+      paid: 0,
+      balance: 0,
+      monthly: []
+    }]));
+  const rowFor = memberId => byMember.get(memberId);
+
+  const monthRows = months.map(month => {
+    const monthExpenses = expenses
+      .filter(expense => expenseInMonth(expense, month))
+      .map(expense => ({ ...expense, total: expenseAmount(expense, month) }));
+
+    const accruedBy = new Map();
+    for (const expense of monthExpenses) {
+      for (const [memberId, amount] of splitExpense(expense, participantIds)) {
+        accruedBy.set(memberId, moneyRound((accruedBy.get(memberId) || 0) + amount));
+      }
+    }
+
+    const paidBy = new Map();
+    for (const settlement of settlements.filter(entry => monthOf(entry.date) === month)) {
+      if (!settlement.memberId) continue;
+      paidBy.set(settlement.memberId, moneyRound(
+        (paidBy.get(settlement.memberId) || 0) + numberValue(settlement.amount)
+      ));
+    }
+
+    for (const memberId of new Set([...accruedBy.keys(), ...paidBy.keys()])) {
+      const row = rowFor(memberId);
+      if (!row) continue;
+      const accrued = accruedBy.get(memberId) || 0;
+      const paid = paidBy.get(memberId) || 0;
+      row.accrued = moneyRound(row.accrued + accrued);
+      row.paid = moneyRound(row.paid + paid);
+      row.balance = moneyRound(row.accrued - row.paid);
+      row.monthly.push({ month, accrued, paid, balance: row.balance });
+    }
+
+    const totalAccrued = moneyRound([...accruedBy.values()].reduce((sum, value) => sum + value, 0));
+    const totalPaid = moneyRound([...paidBy.values()].reduce((sum, value) => sum + value, 0));
+    return {
+      month,
+      totalAccrued,
+      totalPaid,
+      accrued: accruedBy,
+      paid: paidBy,
+      costs: monthExpenses
+    };
+  });
+
+  const members = [...byMember.values()].filter(row => !row.isOwner);
+  const ownerRow = [...byMember.values()].find(row => row.isOwner) || null;
+
+  return {
+    months: monthRows,
+    members,
+    owner: ownerRow,
+    ownerAbsorbed: ownerRow ? ownerRow.balance : 0,
+    totalAccrued: moneyRound(members.reduce((sum, row) => sum + row.accrued, 0)),
+    totalPaid: moneyRound(members.reduce((sum, row) => sum + row.paid, 0)),
+    totalOutstanding: moneyRound(members.reduce((sum, row) => sum + row.balance, 0))
+  };
+}
+
+/** Balance for one member at the end of a month, for a month-by-month table. */
+export const balanceAt = (memberRow, month) => {
+  const entries = memberRow.monthly.filter(entry => entry.month <= month);
+  return entries.length ? entries[entries.length - 1].balance : 0;
+};

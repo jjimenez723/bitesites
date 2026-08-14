@@ -1,10 +1,13 @@
 import React, { useMemo, useState } from 'react';
 import { Panel, Pill } from './Panel';
-import { calculateFinanceSnapshot, expenseAmount, monthOf, moneyRound, numberValue } from './finance-calculations';
 import {
-  deleteFinanceAccount, deleteFinanceExpense, deleteFinanceIncome, deleteFinanceTeamMember,
-  saveFinanceAccount, saveFinanceExpense, saveFinanceIncome, saveFinanceTeamMember,
-  useFinanceLedger
+  balanceAt, calculateFinanceSnapshot, calculateSettlementLedger, expenseAmount,
+  monthOf, moneyRound, numberValue, USAGE_PROVIDERS, usageAmount
+} from './finance-calculations';
+import {
+  deleteFinanceAccount, deleteFinanceExpense, deleteFinanceIncome, deleteFinanceSettlement,
+  deleteFinanceTeamMember, saveFinanceAccount, saveFinanceExpense, saveFinanceIncome,
+  saveFinanceSettlement, saveFinanceTeamMember, useFinanceLedger
 } from './finance-data';
 
 const dollars = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
@@ -28,6 +31,12 @@ const monthsInclusive = (start, end) => {
 
 const memberName = (team, id) => team.find(member => member.id === id)?.name || 'Unassigned';
 const accountName = (accounts, id) => accounts.find(account => account.id === id)?.name || 'Unknown account';
+const providerLabel = id => USAGE_PROVIDERS.find(provider => provider.id === id)?.label || 'Metered API';
+const initials = name => name.split(/\s+/).map(part => part[0]).slice(0, 2).join('');
+
+const cadenceLabel = expense => expense.cadence === 'monthly'
+  ? 'Monthly'
+  : expense.cadence === 'usage' ? 'Metered' : 'One time';
 
 function FinanceStat({ label, value, foot, tone = '' }) {
   return (
@@ -175,8 +184,11 @@ function ExpenseForm({ expense, accounts, team, month, onSave, onDelete, busy })
     name: expense?.name || '',
     category: expense?.category || 'Software',
     cadence: expense?.cadence || 'monthly',
+    provider: expense?.provider || 'openai',
     unitAmount: expense?.unitAmount ?? expense?.amount ?? 0,
     quantity: expense?.quantity || 1,
+    monthlyAmounts: { ...(expense?.monthlyAmounts || {}) },
+    monthAmount: expense?.monthlyAmounts?.[month] ?? '',
     scope: expense?.scope || 'universal',
     accountId: expense?.accountId || '',
     startMonth: expense?.startMonth || '',
@@ -186,14 +198,30 @@ function ExpenseForm({ expense, accounts, team, month, onSave, onDelete, busy })
     notes: expense?.notes || ''
   }));
   const field = (key, value) => setForm(current => ({ ...current, [key]: value }));
+
+  // Metered spend is entered against the reporting month you are looking at, so
+  // the stored map only ever gains the month you actually typed a bill into.
+  const monthlyAmounts = () => {
+    const next = { ...form.monthlyAmounts };
+    if (form.monthAmount === '' || numberValue(form.monthAmount) <= 0) delete next[month];
+    else next[month] = moneyRound(form.monthAmount);
+    return next;
+  };
+  const recordedMonths = Object.entries(form.monthlyAmounts)
+    .filter(([recorded]) => recorded !== month)
+    .sort(([a], [b]) => b.localeCompare(a));
+
   const submit = event => {
     event.preventDefault();
     const customPercent = form.expenseAllocations.reduce((sum, row) => sum + numberValue(row.value), 0);
     if (form.expenseAllocations.length && Math.abs(customPercent - 100) > .001) return;
+    const { monthAmount, ...rest } = form;
     onSave({
-      ...form,
-      unitAmount: moneyRound(form.unitAmount),
-      quantity: Math.max(1, numberValue(form.quantity)),
+      ...rest,
+      provider: form.cadence === 'usage' ? form.provider : '',
+      unitAmount: form.cadence === 'usage' ? 0 : moneyRound(form.unitAmount),
+      quantity: form.cadence === 'usage' ? 1 : Math.max(1, numberValue(form.quantity)),
+      monthlyAmounts: form.cadence === 'usage' ? monthlyAmounts() : {},
       accountId: form.scope === 'client' ? form.accountId : '',
       effectiveDate: form.cadence === 'one_time' ? form.effectiveDate : '',
       expenseAllocations: form.expenseAllocations.map(row => ({
@@ -217,20 +245,42 @@ function ExpenseForm({ expense, accounts, team, month, onSave, onDelete, busy })
     <form className="finance-form" onSubmit={submit}>
       <div className="finance-form-grid">
         <label className="wide"><span>Expense name</span><input value={form.name} onChange={event => field('name', event.target.value)} required /></label>
-        <label><span>Category</span><select value={form.category} onChange={event => field('category', event.target.value)}><option>Software</option><option>Equipment</option><option>Marketing</option><option>Contractor</option><option>Operations</option><option>Other</option></select></label>
-        <label><span>Cadence</span><select value={form.cadence} onChange={event => field('cadence', event.target.value)}><option value="monthly">Monthly</option><option value="one_time">One time</option></select></label>
-        <label><span>Unit cost</span><div className="finance-input-affix"><i>$</i><input type="number" min="0" step="0.01" value={form.unitAmount} onChange={event => field('unitAmount', event.target.value)} required /></div></label>
-        <label><span>Quantity / users</span><input type="number" min="1" step="1" value={form.quantity} onChange={event => field('quantity', event.target.value)} required /></label>
+        <label><span>Category</span><select value={form.category} onChange={event => field('category', event.target.value)}><option>Software</option><option>AI usage</option><option>Equipment</option><option>Marketing</option><option>Contractor</option><option>Operations</option><option>Other</option></select></label>
+        <label><span>Cadence</span><select value={form.cadence} onChange={event => field('cadence', event.target.value)}><option value="monthly">Monthly</option><option value="usage">Metered API usage</option><option value="one_time">One time</option></select></label>
+        {form.cadence === 'usage' ? (
+          <>
+            <label><span>Provider</span><select value={form.provider} onChange={event => field('provider', event.target.value)}>{USAGE_PROVIDERS.map(provider => <option key={provider.id} value={provider.id}>{provider.label}</option>)}</select></label>
+            <label><span>Billed in {monthLabel(month)}</span><div className="finance-input-affix"><i>$</i><input type="number" min="0" step="0.01" value={form.monthAmount} placeholder="0.00" onChange={event => field('monthAmount', event.target.value)} /></div></label>
+          </>
+        ) : (
+          <>
+            <label><span>Unit cost</span><div className="finance-input-affix"><i>$</i><input type="number" min="0" step="0.01" value={form.unitAmount} onChange={event => field('unitAmount', event.target.value)} required /></div></label>
+            <label><span>Quantity / users</span><input type="number" min="1" step="1" value={form.quantity} onChange={event => field('quantity', event.target.value)} required /></label>
+          </>
+        )}
         <label><span>Tag</span><select value={form.scope} onChange={event => field('scope', event.target.value)}><option value="universal">Universal</option><option value="client">Client-specific</option></select></label>
         {form.scope === 'client' && <label><span>Client</span><select value={form.accountId} onChange={event => field('accountId', event.target.value)} required><option value="">Choose an account</option>{accounts.map(account => <option key={account.id} value={account.id}>{account.name}</option>)}</select></label>}
-        {form.cadence === 'monthly' ? (
+        {form.cadence === 'monthly' && (
           <>
             <label><span>Starts (blank = always)</span><input type="month" value={form.startMonth} onChange={event => field('startMonth', event.target.value)} /></label>
             <label><span>Ends (optional)</span><input type="month" value={form.endMonth} onChange={event => field('endMonth', event.target.value)} /></label>
           </>
-        ) : <label><span>Purchase date</span><input type="date" value={form.effectiveDate} onChange={event => field('effectiveDate', event.target.value)} required /></label>}
+        )}
+        {form.cadence === 'one_time' && <label><span>Purchase date</span><input type="date" value={form.effectiveDate} onChange={event => field('effectiveDate', event.target.value)} required /></label>}
         <label className="wide"><span>Notes</span><textarea rows="3" value={form.notes} onChange={event => field('notes', event.target.value)} /></label>
       </div>
+      {form.cadence === 'usage' && (
+        <div className="finance-usage-history">
+          <strong>Recorded months</strong>
+          {recordedMonths.length ? (
+            <div className="finance-usage-months">
+              {recordedMonths.map(([recorded, amount]) => (
+                <span key={recorded}>{monthLabel(recorded)} <b>{money(amount)}</b></span>
+              ))}
+            </div>
+          ) : <p className="finance-inline-empty">No other months recorded yet. Switch the reporting month at the top of the page to enter a different one.</p>}
+        </div>
+      )}
       <label className="finance-check"><input type="checkbox" checked={form.expenseAllocations.length > 0} onChange={event => toggleCustom(event.target.checked)} /><span>Use a custom paycheck split for this expense</span></label>
       {form.expenseAllocations.length > 0 && (
         <>
@@ -239,7 +289,11 @@ function ExpenseForm({ expense, accounts, team, month, onSave, onDelete, busy })
           {Math.abs(customPercent - 100) > .001 && <p className="finance-warning">Expense shares total {customPercent}%; they need to equal 100% before this can be saved.</p>}
         </>
       )}
-      <div className="finance-form-preview"><span>Total</span><strong>{money(expenseAmount(form))}</strong><small>{form.cadence === 'monthly' ? 'per month' : 'one time'}</small></div>
+      <div className="finance-form-preview">
+        <span>Total</span>
+        <strong>{money(form.cadence === 'usage' ? form.monthAmount : expenseAmount(form, month))}</strong>
+        <small>{form.cadence === 'monthly' ? 'per month' : form.cadence === 'usage' ? `metered · ${monthLabel(month)}` : 'one time'}</small>
+      </div>
       <div className="finance-form-actions">
         <button className="btn-admin primary" type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save expense'}</button>
         {expense?.id && <button className="btn-admin danger" type="button" disabled={busy} onClick={onDelete}>Delete expense</button>}
@@ -301,12 +355,44 @@ function IncomeForm({ entry, accounts, month, onSave, onDelete, busy }) {
   );
 }
 
+function SettlementForm({ settlement, team, month, onSave, onDelete, busy }) {
+  const payers = team.filter(member => member.status !== 'inactive' && !member.isOwner);
+  const [form, setForm] = useState(() => ({
+    id: settlement?.id,
+    memberId: settlement?.memberId || payers[0]?.id || '',
+    date: settlement?.date || `${month}-01`,
+    amount: settlement?.amount || 0,
+    method: settlement?.method || 'Cash',
+    notes: settlement?.notes || ''
+  }));
+  const field = (key, value) => setForm(current => ({ ...current, [key]: value }));
+  return (
+    <form className="finance-form" onSubmit={event => {
+      event.preventDefault();
+      onSave({ ...form, amount: moneyRound(form.amount) });
+    }}>
+      <div className="finance-form-grid">
+        <label className="wide"><span>Who paid</span><select value={form.memberId} onChange={event => field('memberId', event.target.value)} required><option value="">Choose a person</option>{payers.map(member => <option key={member.id} value={member.id}>{member.name}</option>)}</select></label>
+        <label><span>Date received</span><input type="date" value={form.date} onChange={event => field('date', event.target.value)} required /></label>
+        <label><span>Amount</span><div className="finance-input-affix"><i>$</i><input type="number" min="0" step="0.01" value={form.amount} onChange={event => field('amount', event.target.value)} required /></div></label>
+        <label className="wide"><span>Method</span><select value={form.method} onChange={event => field('method', event.target.value)}><option>Cash</option><option>Zelle</option><option>Venmo</option><option>Bank transfer</option><option>Other</option></select></label>
+        <label className="wide"><span>Notes</span><textarea rows="3" value={form.notes} onChange={event => field('notes', event.target.value)} /></label>
+      </div>
+      <div className="finance-form-actions">
+        <button className="btn-admin primary" type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save payment'}</button>
+        {settlement?.id && <button className="btn-admin danger" type="button" disabled={busy} onClick={onDelete}>Delete payment</button>}
+      </div>
+    </form>
+  );
+}
+
 function TeamForm({ member, onSave, onDelete, busy }) {
   const [form, setForm] = useState(() => ({
     id: member?.id,
     name: member?.name || '',
     role: member?.role || 'Account manager',
     sharesExpenses: member?.sharesExpenses ?? true,
+    isOwner: member?.isOwner ?? false,
     status: member?.status || 'active'
   }));
   const field = (key, value) => setForm(current => ({ ...current, [key]: value }));
@@ -317,6 +403,7 @@ function TeamForm({ member, onSave, onDelete, busy }) {
         <label><span>Role</span><input value={form.role} onChange={event => field('role', event.target.value)} required /></label>
         <label><span>Status</span><select value={form.status} onChange={event => field('status', event.target.value)}><option value="active">Active</option><option value="inactive">Inactive</option></select></label>
         <label className="wide finance-check"><input type="checkbox" checked={form.sharesExpenses} onChange={event => field('sharesExpenses', event.target.checked)} /><span>Include this person in the equal expense-sharing pool</span></label>
+        <label className="wide finance-check"><input type="checkbox" checked={form.isOwner} onChange={event => field('isOwner', event.target.checked)} /><span>This is the finance owner — costs are fronted by them, so the running tab is owed to them</span></label>
       </div>
       <div className="finance-form-actions">
         <button className="btn-admin primary" type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save team member'}</button>
@@ -333,6 +420,7 @@ export default function Finance({ canWrite }) {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
   const snapshot = useMemo(() => calculateFinanceSnapshot(ledger, month), [ledger, month]);
+  const tab = useMemo(() => calculateSettlementLedger(ledger, month), [ledger, month]);
   const maxAccountRevenue = Math.max(1, ...snapshot.accounts.map(account => account.grossRevenue));
 
   const persist = async (save, value) => {
@@ -368,6 +456,9 @@ export default function Finance({ canWrite }) {
 
   const open = (type, row = null) => canWrite && setPanel({ type, row });
   const monthIncome = ledger.income.filter(entry => monthOf(entry.date) === month);
+  const settlementHistory = [...(ledger.settlements || [])]
+    .filter(entry => monthOf(entry.date) <= month)
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)));
 
   return (
     <>
@@ -393,14 +484,14 @@ export default function Finance({ canWrite }) {
 
         <div className="finance-title-row">
           <div><span>Reporting period</span><strong>{monthLabel(month)}</strong></div>
-          {canWrite && <div className="finance-actions"><button className="btn-admin" type="button" onClick={() => open('team')}>+ Team member</button><button className="btn-admin" type="button" onClick={() => open('income')}>+ Record income</button><button className="btn-admin" type="button" onClick={() => open('expense')}>+ Expense</button><button className="btn-admin primary" type="button" onClick={() => open('account')}>+ Account</button></div>}
+          {canWrite && <div className="finance-actions"><button className="btn-admin" type="button" onClick={() => open('team')}>+ Team member</button><button className="btn-admin" type="button" onClick={() => open('settlement')}>+ Log payment</button><button className="btn-admin" type="button" onClick={() => open('income')}>+ Record income</button><button className="btn-admin" type="button" onClick={() => open('expense')}>+ Expense</button><button className="btn-admin primary" type="button" onClick={() => open('account')}>+ Account</button></div>}
         </div>
 
         <div className="admin-grid cols-4">
           <FinanceStat label="Total revenue" value={money(snapshot.totalRevenue)} foot={`${money(snapshot.recurringRevenue)} monthly recurring`} tone="revenue" />
-          <FinanceStat label="Total expenses" value={money(snapshot.totalExpenses)} foot={`${money(snapshot.recurringExpenses)} recurring · ${money(snapshot.totalExpenses - snapshot.recurringExpenses)} one time`} tone="expense" />
-          <FinanceStat label="Net after costs" value={money(snapshot.netRevenue)} foot="Revenue less all active expenses" tone="net" />
-          <FinanceStat label="Net margin" value={`${Math.round(snapshot.margin * 1000) / 10}%`} foot={`${money(snapshot.universalExpenses)} in universal costs`} />
+          <FinanceStat label="Total expenses" value={money(snapshot.totalExpenses)} foot={`${money(snapshot.recurringExpenses)} recurring · ${money(snapshot.usageExpenses)} API usage · ${money(snapshot.totalExpenses - snapshot.recurringExpenses - snapshot.usageExpenses)} one time`} tone="expense" />
+          <FinanceStat label="Net after costs" value={money(snapshot.netRevenue)} foot={`${Math.round(snapshot.margin * 1000) / 10}% margin · ${money(snapshot.universalExpenses)} universal costs`} tone="net" />
+          <FinanceStat label="Owed to you" value={money(tab.totalOutstanding)} foot={`${money(tab.totalAccrued)} accrued · ${money(tab.totalPaid)} settled`} tone="owed" />
         </div>
 
         {Math.abs(snapshot.unallocatedRevenue) > .01 && (
@@ -466,12 +557,121 @@ export default function Finance({ canWrite }) {
           </section>
         </div>
 
+        <section className="admin-card finance-tab-card">
+          <div className="card-head">
+            <div>
+              <h3>Running tab — what each person owes you</h3>
+              <p>Every cost each person has accrued since the ledger starts, less the cash they have handed over. Nothing is assumed paid; only logged payments reduce a balance.</p>
+            </div>
+            {canWrite && <div className="card-head-actions"><button className="btn-admin" type="button" onClick={() => open('settlement')}>Log payment</button></div>}
+          </div>
+
+          <div className="finance-tab-summary">
+            {tab.members.map(member => (
+              <div className="finance-tab-person" key={member.id}>
+                <span className="finance-person-mark">{initials(member.name)}</span>
+                <div>
+                  <strong>{member.name}</strong>
+                  <small>{money(member.accrued)} accrued · {money(member.paid)} paid</small>
+                </div>
+                <b className={member.balance > 0 ? 'finance-negative' : 'finance-positive'}>{money(member.balance)}</b>
+              </div>
+            ))}
+            {!tab.members.length && <div className="finance-inline-empty">No one is in the expense-sharing pool yet.</div>}
+          </div>
+
+          {tab.months.length ? (
+            <div className="admin-table-scroll">
+              <table className="admin-table finance-table finance-tab-table">
+                <thead>
+                  <tr>
+                    <th>Month</th>
+                    <th className="num">Costs that month</th>
+                    {tab.members.map(member => <th className="num" key={member.id}>{member.name}</th>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {tab.months.map(row => (
+                    <tr key={row.month}>
+                      <td className="cell-strong">{monthLabel(row.month)}</td>
+                      <td className="num">{money(row.totalAccrued)}{row.totalPaid > 0 && <div className="cell-dim">{money(row.totalPaid)} received</div>}</td>
+                      {tab.members.map(member => {
+                        const accrued = row.accrued.get(member.id) || 0;
+                        const paid = row.paid.get(member.id) || 0;
+                        return (
+                          <td className="num" key={member.id}>
+                            <b>{money(balanceAt(member, row.month))}</b>
+                            <div className="cell-dim">
+                              +{money(accrued)}{paid > 0 ? ` · −${money(paid)}` : ''}
+                            </div>
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr>
+                    <td className="cell-strong">Owed now</td>
+                    <td className="num cell-strong">{money(tab.totalOutstanding)}</td>
+                    {tab.members.map(member => (
+                      <td className="num cell-strong" key={member.id}>{money(member.balance)}</td>
+                    ))}
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          ) : <div className="admin-empty"><strong>No costs on record yet</strong>The tab starts in the first month an expense or payment is dated.</div>}
+
+          <p className="finance-method-note">
+            Balances carry forward month to month and count costs only. {tab.owner
+              ? `${tab.owner.name} is the finance owner, so their own ${money(tab.ownerAbsorbed)} share is absorbed rather than owed.`
+              : 'No team member is marked as the finance owner yet, so every share is shown as owed.'} Revenue splits sit on the other side of the ledger and are shown in the monthly team payout panel above.
+          </p>
+
+          {settlementHistory.length > 0 && (
+            <div className="finance-tab-payments">
+              <strong>Payments received</strong>
+              <div className="finance-cost-list">
+                {settlementHistory.map(entry => (
+                  <button key={entry.id} type="button" onClick={() => open('settlement', entry)} disabled={!canWrite}>
+                    <span><i />{memberName(ledger.team, entry.memberId)}<small>{entry.date} · {entry.method || 'Payment'}{entry.notes ? ` · ${entry.notes}` : ''}</small></span>
+                    <b className="finance-positive">{money(entry.amount)}</b>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </section>
+
         <section className="admin-card">
-          <div className="card-head"><div><h3>Expense ledger</h3><p>Monthly subscriptions and one-time purchases, tagged to the company or a client.</p></div></div>
+          <div className="card-head"><div><h3>Expense ledger</h3><p>Monthly subscriptions, metered API usage, and one-time purchases, tagged to the company or a client.</p></div></div>
           <div className="admin-table-scroll">
             <table className="admin-table finance-table">
               <thead><tr><th>Expense</th><th>Tag</th><th>Cadence</th><th>Paycheck split</th><th className="num">Rate</th><th className="num">Qty</th><th className="num">Total</th>{canWrite && <th />}</tr></thead>
-              <tbody>{ledger.expenses.map(expense => <tr key={expense.id}><td><div className="cell-strong">{expense.name}</div><div className="cell-dim">{expense.notes}</div></td><td><Pill kind={expense.scope === 'client' ? 'finance-client' : 'finance-universal'}>{expense.scope === 'client' ? accountName(ledger.accounts, expense.accountId) : 'Universal'}</Pill></td><td><div>{expense.cadence === 'monthly' ? 'Monthly' : 'One time'}</div><div className="cell-dim">{expense.cadence === 'monthly' && expense.startMonth ? `${monthsInclusive(expense.startMonth, month)} charge${monthsInclusive(expense.startMonth, month) === 1 ? '' : 's'} through period` : expense.effectiveDate || 'No start date'}</div></td><td><div className="finance-splits">{expense.expenseAllocations?.length ? expense.expenseAllocations.map((allocation, index) => <span key={`${allocation.memberId}-${index}`}>{memberName(ledger.team, allocation.memberId)} <b>{allocation.value}%</b></span>) : <span>Account managers <b>equal</b></span>}</div></td><td className="num">{money(expense.unitAmount ?? expense.amount)}</td><td className="num">{expense.quantity || 1}</td><td className="num cell-strong">{money(expenseAmount(expense))}</td>{canWrite && <td className="num"><button className="view-toggle" type="button" onClick={() => open('expense', expense)}>Edit</button></td>}</tr>)}</tbody>
+              <tbody>{ledger.expenses.map(expense => {
+                const metered = expense.cadence === 'usage';
+                const charges = metered ? Object.keys(expense.monthlyAmounts || {}).length : 0;
+                return (
+                  <tr key={expense.id}>
+                    <td><div className="cell-strong">{expense.name}</div><div className="cell-dim">{expense.notes}</div></td>
+                    <td><Pill kind={expense.scope === 'client' ? 'finance-client' : 'finance-universal'}>{expense.scope === 'client' ? accountName(ledger.accounts, expense.accountId) : 'Universal'}</Pill></td>
+                    <td>
+                      <div>{cadenceLabel(expense)}</div>
+                      <div className="cell-dim">{metered
+                        ? `${providerLabel(expense.provider)} · ${charges} month${charges === 1 ? '' : 's'} recorded`
+                        : expense.cadence === 'monthly' && expense.startMonth
+                          ? `${monthsInclusive(expense.startMonth, month)} charge${monthsInclusive(expense.startMonth, month) === 1 ? '' : 's'} through period`
+                          : expense.effectiveDate || 'No start date'}</div>
+                    </td>
+                    <td><div className="finance-splits">{expense.expenseAllocations?.length ? expense.expenseAllocations.map((allocation, index) => <span key={`${allocation.memberId}-${index}`}>{memberName(ledger.team, allocation.memberId)} <b>{allocation.value}%</b></span>) : <span>Account managers <b>equal</b></span>}</div></td>
+                    <td className="num">{metered ? 'metered' : money(expense.unitAmount ?? expense.amount)}</td>
+                    <td className="num">{metered ? '—' : expense.quantity || 1}</td>
+                    <td className="num cell-strong">{money(expenseAmount(expense, month))}</td>
+                    {canWrite && <td className="num"><button className="view-toggle" type="button" onClick={() => open('expense', expense)}>Edit</button></td>}
+                  </tr>
+                );
+              })}</tbody>
             </table>
           </div>
         </section>
@@ -486,6 +686,7 @@ export default function Finance({ canWrite }) {
       {panel?.type === 'account' && <Panel title={panel.row ? 'Edit account' : 'Add account'} subtitle="Retainer, initial payment, and payout rules" onClose={() => setPanel(null)}><AccountForm account={panel.row} team={ledger.team} busy={busy} onSave={value => persist(saveFinanceAccount, value)} onDelete={() => remove(deleteFinanceAccount, panel.row.id, panel.row.name)} /></Panel>}
       {panel?.type === 'expense' && <Panel title={panel.row ? 'Edit expense' : 'Add expense'} subtitle="Recurring or one-time, universal or client-specific" onClose={() => setPanel(null)}><ExpenseForm expense={panel.row} accounts={ledger.accounts} team={ledger.team} month={month} busy={busy} onSave={value => persist(saveFinanceExpense, value)} onDelete={() => remove(deleteFinanceExpense, panel.row.id, panel.row.name)} /></Panel>}
       {panel?.type === 'income' && <Panel title={panel.row ? 'Edit income' : 'Record income'} subtitle="Closed-sale commissions and one-time revenue" onClose={() => setPanel(null)}><IncomeForm entry={panel.row} accounts={ledger.accounts} month={month} busy={busy} onSave={value => persist(saveFinanceIncome, value)} onDelete={() => remove(deleteFinanceIncome, panel.row.id, 'this income record')} /></Panel>}
+      {panel?.type === 'settlement' && <Panel title={panel.row ? 'Edit payment' : 'Log a payment'} subtitle="Cash a team member has handed over against their share of costs" onClose={() => setPanel(null)}><SettlementForm settlement={panel.row} team={ledger.team} month={month} busy={busy} onSave={value => persist(saveFinanceSettlement, value)} onDelete={() => remove(deleteFinanceSettlement, panel.row.id, 'this payment')} /></Panel>}
       {panel?.type === 'team' && <Panel title={panel.row ? 'Edit team member' : 'Add team member'} subtitle="Control payout labels and equal expense sharing" onClose={() => setPanel(null)}><TeamForm member={panel.row} busy={busy} onSave={value => persist(saveFinanceTeamMember, value)} onDelete={() => remove(deleteFinanceTeamMember, panel.row.id, panel.row.name)} /></Panel>}
     </>
   );

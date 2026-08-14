@@ -475,6 +475,14 @@ service cloud.firestore {
       allow write: if isFinanceOwner();
     }
 
+    // Money team members have actually handed over against their share of
+    // costs. Same posture as the rest of the ledger: auditable by any admin,
+    // writable only by the finance owner who receives the payments.
+    match /financeSettlements/{settlementId} {
+      allow read: if isAdmin();
+      allow write: if isFinanceOwner();
+    }
+
     // ------------------------------------------------------- outbound calling
     //
     // Everything in this block is admin-only for READS and effectively

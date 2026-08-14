@@ -4,7 +4,7 @@
 export const FINANCE_OWNER_EMAILS = ['jensyjimenez723@gmail.com', 'jensy@bitesites.org'];
 
 export const STARTER_TEAM = [
-  { id: 'jensy-jimenez', name: 'Jensy Jimenez', role: 'Account manager', sharesExpenses: true, status: 'active' },
+  { id: 'jensy-jimenez', name: 'Jensy Jimenez', role: 'Account manager', sharesExpenses: true, status: 'active', isOwner: true },
   { id: 'nussein-iounakov', name: 'Nussein Iounakov', role: 'Account manager', sharesExpenses: true, status: 'active' },
   { id: 'eidan-jimenez', name: 'Eidan Jimenez', role: 'Developer', sharesExpenses: true, status: 'active' },
   { id: 'jonathan-arroyo', name: 'Jonathan Arroyo', role: 'Account manager', sharesExpenses: true, status: 'active' }
@@ -112,6 +112,27 @@ export const STARTER_EXPENSES = [
     notes: '13 monthly charges through August 2026; cloud-code access through the Archive Studios partnership.'
   },
   {
+    id: 'openai-api',
+    name: 'OpenAI API', category: 'AI usage', cadence: 'usage', provider: 'openai',
+    unitAmount: 0, quantity: 1, scope: 'universal', accountId: '',
+    startMonth: '', endMonth: '', effectiveDate: '', monthlyAmounts: {}, expenseAllocations: [],
+    notes: 'Metered Realtime, transcription, and agent spend for the dialer. Record the billed dollars for each month; the figure is on the Costs page in the OpenAI dashboard, or from GET /v1/organization/costs with an admin key.'
+  },
+  {
+    id: 'anthropic-api',
+    name: 'Anthropic API', category: 'AI usage', cadence: 'usage', provider: 'anthropic',
+    unitAmount: 0, quantity: 1, scope: 'universal', accountId: '',
+    startMonth: '', endMonth: '', effectiveDate: '', monthlyAmounts: {}, expenseAllocations: [],
+    notes: 'Metered Claude spend. Record the billed dollars for each month; the figure is on the Cost page in the Claude Console, or from GET /v1/organizations/cost_report with an admin key.'
+  },
+  {
+    id: 'fal-api',
+    name: 'fal.ai API', category: 'AI usage', cadence: 'usage', provider: 'fal',
+    unitAmount: 0, quantity: 1, scope: 'universal', accountId: '',
+    startMonth: '', endMonth: '', effectiveDate: '', monthlyAmounts: {}, expenseAllocations: [],
+    notes: 'Metered media generation spend. Record the billed dollars for each month; the figure is in the fal billing dashboard, or from GET /v1/models/usage with an admin key.'
+  },
+  {
     id: 'stockroom-lightbox',
     name: 'StockRoom NJ light box', category: 'Equipment', cadence: 'one_time',
     unitAmount: 101.07, quantity: 1, scope: 'client', accountId: 'stockroom-nj',
@@ -134,9 +155,24 @@ export const STARTER_INCOME = [
   }
 ];
 
+// Cash the team has actually handed over. Everything else in the ledger is
+// treated as unpaid, which is the current reality: this single $45 is the only
+// money that has changed hands.
+export const STARTER_SETTLEMENTS = [
+  {
+    id: 'jonathan-gohighlevel-2026-04',
+    memberId: 'jonathan-arroyo',
+    date: '2026-04-01',
+    amount: 45,
+    method: 'Cash',
+    notes: 'Jonathan\'s contribution toward the first month of GoHighLevel.'
+  }
+];
+
 export const STARTER_LEDGER = {
   team: STARTER_TEAM,
   accounts: STARTER_ACCOUNTS,
   expenses: STARTER_EXPENSES,
-  income: STARTER_INCOME
+  income: STARTER_INCOME,
+  settlements: STARTER_SETTLEMENTS
 };

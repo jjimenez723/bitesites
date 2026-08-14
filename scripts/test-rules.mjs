@@ -358,7 +358,8 @@ await it('finance owner can initialize every ledger collection', () =>
     setDoc(doc(financeOwner, 'financeAccounts', 'owner_account'), { name: 'Account' }),
     setDoc(doc(financeOwner, 'financeTeam', 'owner_member'), { name: 'Member' }),
     setDoc(doc(financeOwner, 'financeExpenses', 'owner_expense'), { name: 'Expense' }),
-    setDoc(doc(financeOwner, 'financeIncome', 'owner_income'), { amount: 600 })
+    setDoc(doc(financeOwner, 'financeIncome', 'owner_income'), { amount: 600 }),
+    setDoc(doc(financeOwner, 'financeSettlements', 'owner_payment'), { memberId: 'x', amount: 45 })
   ])));
 await it('another admin can read the finance ledger', () =>
   assertSucceeds(getDocs(collection(adminByDoc, 'financeAccounts'))));
@@ -366,9 +367,14 @@ await it('the documented Gmail owner login can also edit the ledger', () =>
   assertSucceeds(updateDoc(doc(financeOwnerGmail, 'financeAccounts', 'seeded_account'), { monthlyRetainer: 450 })));
 await it('another admin cannot change the finance ledger', () =>
   assertFails(updateDoc(doc(adminByDoc, 'financeAccounts', 'seeded_account'), { monthlyRetainer: 999 })));
+await it('another admin can audit but not forge a team payment', async () => {
+  await assertSucceeds(getDocs(collection(adminByDoc, 'financeSettlements')));
+  await assertFails(setDoc(doc(adminByDoc, 'financeSettlements', 'forged'), { memberId: 'x', amount: 500 }));
+});
 await it('clients and the public cannot read finance data', async () => {
   await assertFails(getDocs(collection(clientOk, 'financeAccounts')));
   await assertFails(getDocs(collection(anon, 'financeExpenses')));
+  await assertFails(getDocs(collection(anon, 'financeSettlements')));
 });
 
 describe('search metrics — server-written, admin-readable');
