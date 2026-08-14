@@ -322,7 +322,7 @@ export const outbound = {
   pauseDiscoveryJob: jobId => callable('pauseLeadDiscoveryJob', { jobId }),
   cancelDiscoveryJob: jobId => callable('cancelLeadDiscoveryJob', { jobId }),
 
-  importCsv: (csvText, dryRun = true) => callable('importProspectCsv', { csvText, dryRun }),
+  importCsv: (csvText, dryRun = true, accountId = '') => callable('importProspectCsv', { csvText, dryRun, accountId }),
   resolveDuplicate: (prospectId, action) => callable('resolveProspectDuplicate', { prospectId, action }),
   promoteProspect: (prospectId, trigger, context = {}) =>
     callable('promoteProspectToLead', { prospectId, trigger, ...context }),

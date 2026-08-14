@@ -208,7 +208,15 @@ service cloud.firestore {
       allow update: if isAdmin()
                     // Admins triage status/notes but never rewrite history.
                     && request.resource.data.createdAt == resource.data.createdAt
-                    && request.resource.data.email == resource.data.email;
+                    && request.resource.data.email == resource.data.email
+                    // Which book of business this lead belongs to is server-owned.
+                    // It decides which campaigns may call this person and, for a
+                    // commission client, whose revenue it eventually claims — so
+                    // it is stamped by the ingest path and never edited from a
+                    // browser. `get` with a default keeps leads written before the
+                    // boundary existed updatable; they carry no accountId and
+                    // still must not gain one here.
+                    && request.resource.data.get('accountId', '') == resource.data.get('accountId', '');
       allow delete: if isAdmin();
 
       match /activities/{activityId} {

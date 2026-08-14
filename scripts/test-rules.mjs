@@ -244,6 +244,18 @@ await it('visitor cannot append or read lead activity', async () => {
 await it('admin cannot rewrite a lead email (audit integrity)', () =>
   assertFails(updateDoc(doc(adminByDoc, 'leads', 'seeded_lead'), { email: 'changed@example.com' })));
 
+// Which book of business a lead belongs to decides which campaigns may call the
+// person and, for a commission client, whose revenue it eventually claims. A
+// browser that could set it could move a house lead into a client's book.
+await it('admin cannot assign a lead to an account from the browser', () =>
+  assertFails(updateDoc(doc(adminByDoc, 'leads', 'seeded_lead'), { accountId: 'fine-line-group' })));
+
+await it('admin cannot move a lead between accounts', async () => {
+  await assertFails(updateDoc(doc(adminByDoc, 'leads', 'seeded_lead'), { accountId: 'bitesites' }));
+  // ...and an ordinary triage edit still works alongside the new check.
+  await assertSucceeds(updateDoc(doc(adminByDoc, 'leads', 'seeded_lead'), { status: 'qualified' }));
+});
+
 // The update rule compares `email` against the stored value, so a Byte lead has
 // to carry the key even when the call captured only a phone number — a missing
 // one would error the rule out and leave the lead permanently un-triageable.

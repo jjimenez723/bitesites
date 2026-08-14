@@ -1,9 +1,15 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { outbound, useAction } from './data';
 import AgentPreviewControls from './AgentPreviewControls';
+// The server's registry, imported rather than mirrored — see CampaignBuilder.
+import { ACCOUNTS, ACCOUNT_IDS, LEGACY_ACCOUNT_ID, readAccountId } from '../../../functions/accounts.js';
 
 const EMPTY = {
   name: '',
+  // Whose customers this persona may speak to. Deliberately blank: a persona
+  // that inherits an account by default is the one that ends up introducing a
+  // web-design agency to a restoration lead.
+  accountId: '',
   description: '',
   personality: {
     preset: 'friendly_consultant',
@@ -256,7 +262,9 @@ export default function AgentProfiles() {
           <div className="card-head-actions">
             {selected && <button className="btn-admin" type="button" onClick={duplicate}>Duplicate</button>}
             {selected && <button className="btn-admin danger" type="button" onClick={archive}>Archive</button>}
-            <button className="btn-admin primary" type="button" disabled={action.busy || !draft.name.trim() || customVoiceInvalid} onClick={save}>Save</button>
+            <button className="btn-admin primary" type="button"
+              disabled={action.busy || !draft.name.trim() || (!selected && !draft.accountId) || customVoiceInvalid}
+              onClick={save}>Save</button>
           </div>
         </div>
 
@@ -265,6 +273,22 @@ export default function AgentProfiles() {
             <legend>Agent identity & model</legend>
             <div className="outbound-form-grid">
               <label><span>Name</span><input value={draft.name} maxLength={120} onChange={event => setField(['name'], event.target.value)} placeholder="Friendly Website Consultant" /></label>
+              <label>
+                <span>Account</span>
+                <select
+                  value={selected ? readAccountId(draft.accountId, { fallback: LEGACY_ACCOUNT_ID }) : draft.accountId}
+                  disabled={Boolean(selected)}
+                  onChange={event => setField(['accountId'], event.target.value)}
+                >
+                  <option value="">Select an account…</option>
+                  {ACCOUNT_IDS.map(id => <option key={id} value={id}>{ACCOUNTS[id].label}</option>)}
+                </select>
+                <small>
+                  {selected
+                    ? 'Fixed once saved — campaigns were allowed to select this agent because of it.'
+                    : 'Only this account’s campaigns can use this agent. It cannot be changed later.'}
+                </small>
+              </label>
               <label><span>Personality preset</span>
                 <select className="admin-select" value={draft.personality.preset} onChange={event => applyPreset(event.target.value)}>
                   <option value="friendly_consultant">Friendly consultant</option>
