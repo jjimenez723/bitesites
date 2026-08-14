@@ -27,6 +27,7 @@ import {
   submitDiscoveryResults, finishJob, recoverStaleJobs, pruneRawResults
 } from './lead-discovery.js';
 import { importProspects, createImportRun, finishImportRun, resolveDuplicate } from './prospect-import.js';
+import { requireAccountId } from './accounts.js';
 import { csvToRecords } from './providers/lead-sources/csv-source.js';
 import { promoteProspect } from './prospect-conversion.js';
 import {
@@ -306,16 +307,27 @@ export const importProspectCsv = onCall({ ...callOptions, timeoutSeconds: 300 },
   if (!csvText || csvText.length > 5_000_000) throw new HttpsError('invalid-argument', 'Provide a CSV under 5MB.');
 
   const dryRun = request.data?.dryRun !== false;
+  // Which book these prospects join. Explicit on every import: a spreadsheet of
+  // Hudson County property managers is a client list or a house list, and only
+  // the person uploading it knows which.
+  let accountId;
+  try {
+    accountId = requireAccountId(request.data?.accountId, { field: 'accountId' });
+  } catch (error) {
+    throw new HttpsError('invalid-argument', error.message);
+  }
+
   const { records, unmapped } = csvToRecords(csvText);
   if (!records.length) throw new HttpsError('invalid-argument', 'No data rows were found in that file.');
 
   const runId = dryRun ? '' : await createImportRun(db, {
-    sourceSystem: 'csv', mode: 'execute', collections: ['csv'], startedBy: email
+    sourceSystem: 'csv', mode: 'execute', collections: ['csv'], startedBy: email, accountId
   });
 
   const result = await importProspects(db, records, {
     source: { system: 'csv', provider: 'csv' },
     importRunId: runId,
+    accountId,
     dryRun
   });
 

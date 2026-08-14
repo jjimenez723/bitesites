@@ -15,6 +15,7 @@ import {
   normalizeCompanyKey, normalizeDomain, normalizeEmail, normalizePhone,
   emailDomain, isFreeEmailDomain, isDirectoryHost, hashKey
 } from './prospect-normalization.js';
+import { LEGACY_ACCOUNT_ID, readAccountId } from './accounts.js';
 
 /** Strong signals merge on their own; weak ones only ever suggest a review. */
 export const MATCH_WEIGHTS = {
@@ -165,12 +166,26 @@ async function firstMatch(query) {
  * is the query that quietly becomes the most expensive thing the dashboard
  * does. Fuzzy matching happens in-batch (above) or in Import Review.
  */
-export async function findDuplicates(db, prospect, { excludeId = '' } = {}) {
+export async function findDuplicates(db, prospect, { excludeId = '', accountId = '' } = {}) {
   const results = [];
   const seen = new Set([excludeId]);
 
+  // Duplicates are only duplicates within one book of business. The same NJ
+  // property manager can legitimately be a web-design prospect for BiteSites
+  // and a restoration prospect for a client — those are different
+  // relationships, and collapsing them would let one account's outreach
+  // suppress the other's.
+  //
+  // Filtering happens here in memory rather than as a second `where` clause:
+  // records written before the account boundary existed carry no `accountId`
+  // at all, and an equality filter would silently skip every one of them.
+  const wantAccountId = readAccountId(accountId, { fallback: LEGACY_ACCOUNT_ID });
+  const sameAccount = data =>
+    readAccountId(data?.accountId, { fallback: LEGACY_ACCOUNT_ID }) === wantAccountId;
+
   const record = (type, id, data) => {
     if (!id || seen.has(`${type}:${id}`)) return;
+    if (!sameAccount(data)) return;
     const verdict = classifyMatch(prospect, data);
     if (verdict.status === 'unique') return;
     seen.add(`${type}:${id}`);
@@ -181,7 +196,7 @@ export async function findDuplicates(db, prospect, { excludeId = '' } = {}) {
 
   if (prospect.dedupe?.canonicalKey) {
     for (const entry of await firstMatch(prospects.where('dedupe.canonicalKey', '==', prospect.dedupe.canonicalKey))) {
-      if (entry.id !== excludeId) {
+      if (entry.id !== excludeId && sameAccount(entry.data())) {
         // A canonical-key hit is the identity match by construction; it does
         // not need classifyMatch to agree about the individual fields.
         seen.add(`prospect:${entry.id}`);

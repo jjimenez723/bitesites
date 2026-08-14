@@ -15,6 +15,7 @@
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { buildProspect, validateProspect, deterministicId, clean } from './prospect-normalization.js';
 import { findDuplicates, duplicateVerdict, dedupeWithinBatch } from './prospect-deduplication.js';
+import { LEGACY_ACCOUNT_ID, requireAccountId, readAccountId } from './accounts.js';
 
 const BATCH_LIMIT = 400;   // Firestore allows 500 writes; leave room for activities.
 
@@ -87,16 +88,32 @@ function stripUndefined(value) {
  * falls back to the canonical dedupe key, so two CSV uploads of the same list
  * also converge rather than doubling the corpus.
  */
-export function prospectDocumentId(prospect) {
+/**
+ * The prospect's document id, scoped to its account.
+ *
+ * The house account keeps its historic, unprefixed ids so that every prospect
+ * imported before the account boundary existed still resolves to the same
+ * document — a re-import must update the record it created last time, not
+ * fork a second copy of the same business.
+ *
+ * Every other account gets its own id space, because the same NJ property
+ * manager can legitimately be a web-design prospect for BiteSites and a
+ * restoration prospect for a client. Those are two relationships with separate
+ * outreach, separate dispositions and separate attribution; one document
+ * cannot hold both.
+ */
+export function prospectDocumentId(prospect, { accountId = '' } = {}) {
+  const resolved = readAccountId(accountId ?? prospect?.accountId, { fallback: LEGACY_ACCOUNT_ID });
+  const scope = resolved === LEGACY_ACCOUNT_ID ? [] : [resolved];
   const source = prospect.source || {};
   if (source.sourceCollection && source.sourceDocumentId) {
-    return deterministicId('watcher', source.sourceCollection, source.sourceDocumentId);
+    return deterministicId(...scope, 'watcher', source.sourceCollection, source.sourceDocumentId);
   }
   if (source.provider && source.providerRecordId) {
-    return deterministicId(source.provider, source.providerRecordId);
+    return deterministicId(...scope, source.provider, source.providerRecordId);
   }
   if (prospect.dedupe?.canonicalKey) {
-    return deterministicId('prospect', prospect.dedupe.canonicalKey);
+    return deterministicId(...scope, 'prospect', prospect.dedupe.canonicalKey);
   }
   return '';
 }
@@ -114,8 +131,15 @@ export async function importProspects(db, records, {
   dryRun = false,
   now = new Date(),
   classify = null,
-  onSample = null
+  onSample = null,
+  // Which book of business these prospects belong to. Defaults to the house
+  // account so every existing caller keeps its current behaviour, and because
+  // that is the safe direction for the mistake: a record that lands on
+  // BiteSites by accident simply cannot enter a client campaign, whereas the
+  // reverse would put a client's name on outreach they never asked for.
+  accountId = LEGACY_ACCOUNT_ID
 } = {}) {
+  const account = requireAccountId(accountId, { field: 'accountId' });
   const counts = emptyCounts();
   const samples = [];
   const errors = [];
@@ -145,7 +169,8 @@ export async function importProspects(db, records, {
       // A record that arrived already contacted keeps that history as an
       // activity rather than as a lifecycle status it did not earn here.
       prospect.__classification = record.__classification || 'cold_prospect';
-      prospect.__batchId = prospectDocumentId(prospect);
+      prospect.accountId = account;
+      prospect.__batchId = prospectDocumentId(prospect, { accountId: account });
       built.push(prospect);
       counts.mapped += 1;
     } catch (error) {
@@ -165,12 +190,12 @@ export async function importProspects(db, records, {
   const written = [];
 
   for (const prospect of unique) {
-    const docId = prospect.__batchId || prospectDocumentId(prospect);
+    const docId = prospect.__batchId || prospectDocumentId(prospect, { accountId: account });
     if (!docId) { counts.invalid += 1; continue; }
 
     let matches = [];
     try {
-      matches = await findDuplicates(db, prospect, { excludeId: docId });
+      matches = await findDuplicates(db, prospect, { excludeId: docId, accountId: account });
     } catch (error) {
       counts.failed += 1;
       errors.push({ sourceDocumentId: docId, reason: 'dedupe_failed', detail: String(error?.message || error) });
@@ -222,6 +247,10 @@ export async function importProspects(db, records, {
       const merged = stripUndefined({
         ...prospect,
         createdAt: previous.createdAt || Timestamp.fromDate(now),
+        // A re-import refreshes source-derived facts; it must never move a
+        // prospect between books. Ids are account-scoped so this should be
+        // unreachable — which is exactly why it is cheap to make certain of.
+        accountId: readAccountId(previous.accountId, { fallback: LEGACY_ACCOUNT_ID }),
         lifecycle: {
           ...prospect.lifecycle,
           ...previous.lifecycle,
