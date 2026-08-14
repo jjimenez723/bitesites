@@ -123,6 +123,7 @@ export async function routeVerifiedHumanAnswer(db, sessionId, callId, {
     if (decision.controller === 'human') {
       transaction.set(callRef, {
         status: 'connected', answeredBy: 'human', connectedAt: stamp,
+        operator: 'human', humanHandled: true,
         control: {
           controller: 'human', repUid: clean(session.userUid, 160), aiSessionId: '',
           changedAt: stamp, revision: nextRevision
@@ -135,6 +136,7 @@ export async function routeVerifiedHumanAnswer(db, sessionId, callId, {
     } else if (decision.controller === 'ai') {
       transaction.set(callRef, {
         status: 'connected', answeredBy: 'human', connectedAt: stamp,
+        operator: 'ai', aiHandled: true,
         control: {
           controller: 'ai', repUid: '', aiSessionId: '', changedAt: stamp, revision: nextRevision
         }
@@ -142,6 +144,7 @@ export async function routeVerifiedHumanAnswer(db, sessionId, callId, {
     } else {
       transaction.set(callRef, {
         status: 'completed', answeredBy: 'human', connectedAt: stamp, endedAt: stamp,
+        operator: 'none',
         control: {
           controller: 'none', repUid: '', aiSessionId: '', changedAt: stamp, revision: nextRevision
         }
@@ -176,6 +179,8 @@ export async function attachAIController(db, callId, aiSessionId, {
   if (current.controller !== 'ai') throw new Error(`Call is controlled by ${current.controller}, not ai`);
 
   await ref.set({
+    operator: 'ai',
+    aiHandled: true,
     control: {
       controller: 'ai', repUid: '', aiSessionId: clean(aiSessionId, 240),
       changedAt: timestamp(now), revision: current.revision + 1
@@ -307,6 +312,8 @@ export async function completeSmoothHandoff(db, sessionId, callId, {
     const stamp = timestamp(now);
     const current = control(call);
     transaction.set(callRef, {
+      operator: 'human',
+      humanHandled: true,
       control: {
         controller: 'human', repUid: clean(repUid, 160), aiSessionId: '',
         changedAt: stamp, revision: current.revision + 1
@@ -343,6 +350,8 @@ export async function failSmoothHandoff(db, sessionId, callId, {
     if (current.controller !== 'transitioning') return;
     const stamp = timestamp(now);
     transaction.set(callRef, {
+      operator: 'ai',
+      aiHandled: true,
       control: {
         controller: 'ai', repUid: '', aiSessionId: current.aiSessionId,
         changedAt: stamp, revision: current.revision + 1

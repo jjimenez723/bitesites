@@ -285,6 +285,15 @@ export const dialHybridTargets = onCall({ ...callOptions, timeoutSeconds: 180, s
   const sessionId = requireId(request.data?.sessionId, 'session id');
   const session = await requireOwnedSession(db, sessionId, uid);
   if (session.hybridV2 !== true) throw new HttpsError('failed-precondition', 'This is not a Hybrid Dialer V2 session.');
+  // A session without an explicit mode routes as Hybrid inside `routeDecision`,
+  // which silently puts the rep on the first answered call. Sessions started
+  // before calling modes existed must be replaced, not guessed at.
+  if (!['human', 'hybrid', 'ai'].includes(session.operatingMode)) {
+    throw new HttpsError(
+      'failed-precondition',
+      'This session was started before calling modes existed and has no Human/Hybrid/AI ownership. End it and start a new session before dialing.'
+    );
+  }
   if (session.status !== 'active') return { started: [], reason: `session_${session.status}`, verifiedState: 'blocked' };
 
   const nonTerminal = [];

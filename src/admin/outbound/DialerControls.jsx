@@ -270,6 +270,7 @@ export default function DialerControls({ campaignId, campaigns = [], onSelectCam
       <CallPlanFlow
         campaign={sessionCampaign}
         session={session}
+        operatingMode={session?.operatingMode || operatingMode}
         canManage={!guidedMode}
         onOpenQueue={onOpenQueue}
         onStartSession={start}

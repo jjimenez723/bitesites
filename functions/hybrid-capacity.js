@@ -39,6 +39,14 @@ async function initializeHybridCalls(db, session, started, actorId) {
   for (const entry of started) {
     await db.doc(`calls/${entry.callId}`).set({
       hybridV2: true,
+      // `dialNext` stamps every leg it places as human-operated because it is
+      // also the V1 power/parallel dialer. A Hybrid V2 leg has no operator until
+      // a verified human answer is routed, so undo that guess here and record
+      // the session's ownership mode rather than the transport mode.
+      operator: 'unassigned',
+      humanHandled: false,
+      aiHandled: false,
+      dialerMode: ['human', 'hybrid', 'ai'].includes(session.operatingMode) ? session.operatingMode : 'hybrid',
       control: { controller: 'unassigned', repUid: '', aiSessionId: '', revision: 0 },
       handoff: { requestedBy: '', requestedAt: null, state: 'none', priority: 0, completedAt: null },
       media: {

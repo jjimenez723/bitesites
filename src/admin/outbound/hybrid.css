@@ -271,6 +271,25 @@
 .bs-admin .call-plan-steps small { display: block; color: var(--ink-3); font-size: 9px; font-weight: 750; letter-spacing: .1em; }
 .bs-admin .call-plan-steps strong { display: block; margin-top: 3px; font-size: 12.5px; }
 .bs-admin .call-plan-steps span:not(.plan-step-check) { display: block; max-width: 190px; margin-top: 4px; color: var(--ink-3); font-size: 10.5px; line-height: 1.45; }
+/* Ownership is the one setting a rep cannot discover from the phone ringing, so
+   it is restated next to the button that locks it in. */
+.bs-admin .call-plan-mode {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  margin: 0 0 14px;
+  padding: 10px 13px;
+  border: 1px solid rgba(255,255,255,.12);
+  border-left-width: 3px;
+  border-radius: 9px;
+  background: rgba(255,255,255,.03);
+}
+.bs-admin .call-plan-mode strong { font-size: 12px; }
+.bs-admin .call-plan-mode span { color: var(--ink-3); font-size: 10.5px; line-height: 1.45; }
+.bs-admin .call-plan-mode.mode-human { border-left-color: #6575ff; }
+.bs-admin .call-plan-mode.mode-hybrid { border-left-color: #9a62ed; }
+.bs-admin .call-plan-mode.mode-ai { border-left-color: #38c78a; }
 .bs-admin .call-plan-actions { display: flex; gap: 9px; flex-wrap: wrap; }
 .bs-admin .call-plan-hint, .bs-admin .call-attempt-status {
   margin-top: 14px;

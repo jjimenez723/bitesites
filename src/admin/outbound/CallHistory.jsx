@@ -13,6 +13,41 @@ import Transcript from '../Transcript';
 import { StatusPill, formatWhen, formatDuration, providerLabel, Empty, QueryState } from './SourceBadge';
 import { receivingAgent, receivingAgentLabel } from '../voice-attribution';
 
+const MODE_LABELS = {
+  human: 'Human only', hybrid: 'Hybrid', ai: 'AI only',
+  parallel: 'Parallel dial', power: 'Power dial'
+};
+
+/**
+ * Who actually spoke on this call.
+ *
+ * `operator` is stamped when the leg is placed, before anybody answers, so it
+ * cannot be trusted on its own — every Hybrid V2 leg used to be written as
+ * "human" regardless of who took it. `control.controller` is the routed owner
+ * and the sticky `humanHandled`/`aiHandled` flags survive a takeover, so a call
+ * an AI opened and a rep finished reads as both.
+ */
+function operatorLabel(call) {
+  if (!call) return '—';
+  const controller = call.control?.controller;
+  const human = call.humanHandled === true || controller === 'human' || controller === 'transitioning';
+  const ai = call.aiHandled === true || controller === 'ai' || Boolean(call.aiStartedAt);
+  if (human && ai) return 'AI → human takeover';
+  if (human) return 'Human rep';
+  if (ai) return 'AI agent';
+  if (controller === 'none') return 'Ended unattended';
+  if (controller === 'unassigned' || !controller) {
+    // Legacy rows: pre-Hybrid V2 legs really were rep-driven.
+    if (call.hybridV2 !== true && call.operator === 'human') return 'Human rep';
+    if (call.operator === 'ai') return 'AI agent';
+    if (call.answeredBy === 'machine') return 'Voicemail';
+    // A verified human answer with no controller means routing never landed —
+    // worth showing as its own state rather than hiding it in "never connected".
+    return call.answeredBy === 'human' ? 'Answered, unrouted' : 'Never connected';
+  }
+  return call.operator || '—';
+}
+
 export default function CallHistory({ campaignId, campaigns = [], onSelectCampaign }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const [openId, setOpenId] = useState(() => searchParams.get('call'));
@@ -69,8 +104,8 @@ export default function CallHistory({ campaignId, campaigns = [], onSelectCampai
                     <td className="cell-strong">{formatWhen(row.startedAt)}</td>
                     <td className="cell-dim cell-wrap">{(row.prospectId || row.leadId || row.targetId || '').slice(0, 24)}</td>
                     <td className="cell-dim cell-wrap">{receivingAgentLabel(row)}</td>
-                    <td className="cell-dim">{row.operator || '—'}</td>
-                    <td className="cell-dim">{row.dialerMode || '—'}</td>
+                    <td className="cell-dim">{operatorLabel(row)}</td>
+                    <td className="cell-dim">{MODE_LABELS[row.dialerMode] || row.dialerMode || '—'}</td>
                     <td className="cell-dim">{providerLabel(row.provider)}</td>
                     <td><StatusPill status={row.status} /></td>
                     <td className="cell-dim">{row.disposition || '—'}</td>
@@ -101,8 +136,8 @@ export default function CallHistory({ campaignId, campaigns = [], onSelectCampai
               ['Disposition', open.disposition],
               ['Agent', receivingAgent(open).agentName],
               ['Client', receivingAgent(open).clientName],
-              ['Operator', open.operator],
-              ['Dialer mode', open.dialerMode],
+              ['Operator', operatorLabel(open)],
+              ['Session mode', MODE_LABELS[open.dialerMode] || open.dialerMode],
               ['Provider', providerLabel(open.provider)],
               ['Provider call id', open.providerCallId],
               ['Campaign', open.campaignId],

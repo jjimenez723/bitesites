@@ -7,13 +7,25 @@ const Check = ({ done }) => (
   </span>
 );
 
-export default function CallPlanFlow({ campaign, session, onOpenQueue, onStartSession, onStartCalls, startDisabled, startBlocker = '', interactive = true, canManage = true }) {
+// The Calling mode select sits in the Session configuration card below this
+// flow, so the mode has to be restated at the point of no return — a rep who
+// works the numbered steps downwards would otherwise start a session on the
+// default and only discover the ownership rule when the phone rings.
+const MODE_NAMES = { human: 'Human only', hybrid: 'Hybrid', ai: 'AI only' };
+const MODE_SUMMARY = {
+  human: 'Every answered call is routed to you.',
+  hybrid: 'The first answered call is routed to you; the rest are handled by AI.',
+  ai: 'No call is routed to you. The session runs server-side and keeps dialing if this browser disconnects.'
+};
+
+export default function CallPlanFlow({ campaign, session, operatingMode = 'hybrid', onOpenQueue, onStartSession, onStartCalls, startDisabled, startBlocker = '', interactive = true, canManage = true }) {
   const action = useAction();
   const counts = campaign?.counts || {};
   const ready = Number(counts.ready) || 0;
   const pending = Number(counts.pending) || 0;
   const approvalRequired = campaign?.requireResearchApproval === true;
   const sessionReady = session?.status === 'active';
+  const mode = ['human', 'hybrid', 'ai'].includes(operatingMode) ? operatingMode : 'hybrid';
   const autoDialActive = session?.autoDial?.enabled === true;
   const lastDial = session?.lastDialAttempt || null;
 
@@ -70,6 +82,14 @@ export default function CallPlanFlow({ campaign, session, onOpenQueue, onStartSe
           <div><small>04</small><strong>Start calls</strong><span>Only a provider-accepted call is labeled as placed.</span></div>
         </li>
       </ol>
+
+      <p className={`call-plan-mode mode-${mode}`}>
+        <strong>Calling mode: {MODE_NAMES[mode]}</strong>
+        <span>
+          {MODE_SUMMARY[mode]}
+          {!sessionReady && ' Set it in Session configuration below — it is locked in when you run preflight.'}
+        </span>
+      </p>
 
       <div className="call-plan-actions">
         <button className="btn-admin" type="button" disabled={!interactive || !canManage || action.busy || !campaign?.id} onClick={generate}
