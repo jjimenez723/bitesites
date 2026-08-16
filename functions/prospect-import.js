@@ -16,13 +16,14 @@ import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { buildProspect, validateProspect, deterministicId, clean } from './prospect-normalization.js';
 import { findDuplicates, duplicateVerdict, dedupeWithinBatch } from './prospect-deduplication.js';
 import { LEGACY_ACCOUNT_ID, requireAccountId, readAccountId } from './accounts.js';
+import { loadSuppressedNumbers } from './inbound-compliance.js';
 
 const BATCH_LIMIT = 400;   // Firestore allows 500 writes; leave room for activities.
 
 /** The counters an import run reports. One shape everywhere. */
 export const emptyCounts = () => ({
   scanned: 0, mapped: 0, created: 0, updated: 0, skipped: 0,
-  duplicates: 0, invalid: 0, failed: 0, airbnbExcluded: 0
+  duplicates: 0, invalid: 0, failed: 0, airbnbExcluded: 0, suppressed: 0
 });
 
 export async function createImportRun(db, { sourceSystem, sourceProjectId = '', mode = 'dry_run', collections = [], startedBy = '' }) {
@@ -184,6 +185,14 @@ export async function importProspects(db, records, {
   const { unique, duplicates } = dedupeWithinBatch(built);
   counts.duplicates += duplicates.length;
 
+  // 2b. Anyone who has asked us to stop is suppressed by number, so a fresh
+  //     import cannot launder them back into a dialable state. This is the
+  //     check that makes an opt-out permanent: without it, buying a list that
+  //     happens to contain someone who opted out last quarter would create a
+  //     brand new prospect document with no memory of the request, marked
+  //     `ready`, and the next campaign would call them.
+  const suppressedNumbers = await loadSuppressedNumbers(db, unique.map(entry => entry.phoneE164));
+
   // 3. Dedupe against live prospects and leads, then write.
   let batch = dryRun ? null : db.batch();
   let pending = 0;
@@ -222,6 +231,17 @@ export async function importProspects(db, records, {
 
     if (prospect.__classification === 'existing_customer' || prospect.__classification === 'qualified_opportunity') {
       prospect.lifecycle.status = 'needs_review';
+    }
+
+    // Suppression outranks every status decided above, including the ones that
+    // route a record to a human. Import Review is where an operator can release
+    // a record for dialling, and a number on the suppression list is not theirs
+    // to release — reversing an opt-out is a deliberate act, not a side effect
+    // of someone clearing a review queue.
+    if (prospect.phoneE164 && suppressedNumbers.has(prospect.phoneE164)) {
+      counts.suppressed += 1;
+      prospect.contactability = { ...prospect.contactability, doNotCall: true, complianceStatus: 'blocked' };
+      prospect.lifecycle.status = 'do_not_contact';
     }
 
     delete prospect.__batchId;

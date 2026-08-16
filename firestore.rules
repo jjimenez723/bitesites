@@ -559,6 +559,17 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    match /suppressedNumbers/{phoneHash} {
+      // The record of someone having asked us to stop calling. Server-only in
+      // both directions and deliberately more locked down than the collections
+      // above: this is the one list where a browser bug that deletes a document
+      // does not lose data, it resumes calling a person who opted out. The
+      // document id is a hash, so a reader could confirm a number they already
+      // hold but cannot enumerate the list as a directory of opt-outs.
+      allow read: if isOutboundStaff();
+      allow write: if false;
+    }
+
     match /dialerSessions/{sessionId} {
       // A rep watches their own session live; the transitions are all written
       // server-side inside transactions.

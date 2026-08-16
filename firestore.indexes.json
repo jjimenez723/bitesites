@@ -141,7 +141,7 @@
       ]
     },
     {
-      "//": "Outbound calling. Every index below backs a query that exists in the code — see the module named in each comment. Firestore serves single-field equality from automatic indexes, so nothing here duplicates one.",
+      "//": "Outbound calling. Every index below backs a query that exists in the code \u2014 see the module named in each comment. Firestore serves single-field equality from automatic indexes, so nothing here duplicates one.",
       "collectionGroup": "calls",
       "queryScope": "COLLECTION",
       "fields": [
@@ -156,7 +156,7 @@
       ]
     },
     {
-      "//": "Conversations.jsx — the Inbound/Outbound/All filter on the voice tab.",
+      "//": "Conversations.jsx \u2014 the Inbound/Outbound/All filter on the voice tab.",
       "collectionGroup": "calls",
       "queryScope": "COLLECTION",
       "fields": [
@@ -171,7 +171,7 @@
       ]
     },
     {
-      "//": "TransferInbox — live outbound warm handoffs addressed to one staff member.",
+      "//": "TransferInbox \u2014 live outbound warm handoffs addressed to one staff member.",
       "collectionGroup": "calls",
       "queryScope": "COLLECTION",
       "fields": [
@@ -186,7 +186,7 @@
       ]
     },
     {
-      "//": "TeamCallCoach — currently connected outbound calls for supervisor monitoring.",
+      "//": "TeamCallCoach \u2014 currently connected outbound calls for supervisor monitoring.",
       "collectionGroup": "calls",
       "queryScope": "COLLECTION",
       "fields": [
@@ -201,7 +201,7 @@
       ]
     },
     {
-      "//": "outbound-calls.recordCallEvent — matching a webhook back to its call.",
+      "//": "outbound-calls.recordCallEvent \u2014 matching a webhook back to its call.",
       "collectionGroup": "calls",
       "queryScope": "COLLECTION",
       "fields": [
@@ -216,7 +216,25 @@
       ]
     },
     {
-      "//": "ProspectList — the default review queue ordering.",
+      "collectionGroup": "calls",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "direction",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "phoneE164",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "startedAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "//": "ProspectList \u2014 the default review queue ordering.",
       "collectionGroup": "prospects",
       "queryScope": "COLLECTION",
       "fields": [
@@ -231,7 +249,7 @@
       ]
     },
     {
-      "//": "ProspectList — filtering an import batch by where it came from.",
+      "//": "ProspectList \u2014 filtering an import batch by where it came from.",
       "collectionGroup": "prospects",
       "queryScope": "COLLECTION",
       "fields": [
@@ -246,7 +264,7 @@
       ]
     },
     {
-      "//": "ImportReview — possible duplicates awaiting a human decision.",
+      "//": "ImportReview \u2014 possible duplicates awaiting a human decision.",
       "collectionGroup": "prospects",
       "queryScope": "COLLECTION",
       "fields": [
@@ -261,7 +279,7 @@
       ]
     },
     {
-      "//": "prospect-deduplication.findDuplicates — the cross-batch fuzzy pass, an exact match on the normalised company key. Equality-only, so Firestore's automatic single-field index serves it; listed here as documentation of the dependency.",
+      "//": "prospect-deduplication.findDuplicates \u2014 the cross-batch fuzzy pass, an exact match on the normalised company key. Equality-only, so Firestore's automatic single-field index serves it; listed here as documentation of the dependency.",
       "collectionGroup": "prospects",
       "queryScope": "COLLECTION",
       "fields": [
@@ -276,7 +294,7 @@
       ]
     },
     {
-      "//": "prospect-import — reviewing one import run's output.",
+      "//": "prospect-import \u2014 reviewing one import run's output.",
       "collectionGroup": "prospects",
       "queryScope": "COLLECTION",
       "fields": [
@@ -305,7 +323,7 @@
       ]
     },
     {
-      "//": "lead-discovery.claimJobForWorker — oldest job awaiting a worker.",
+      "//": "lead-discovery.claimJobForWorker \u2014 oldest job awaiting a worker.",
       "collectionGroup": "scrapeJobs",
       "queryScope": "COLLECTION",
       "fields": [
@@ -352,7 +370,7 @@
       ]
     },
     {
-      "//": "runAICampaigns — running AI campaigns only.",
+      "//": "runAICampaigns \u2014 running AI campaigns only.",
       "collectionGroup": "outboundCampaigns",
       "queryScope": "COLLECTION",
       "fields": [
@@ -367,7 +385,7 @@
       ]
     },
     {
-      "//": "outbound-contacts.eligibleTargets — the queue's ordering key.",
+      "//": "outbound-contacts.eligibleTargets \u2014 the queue's ordering key.",
       "collectionGroup": "outboundTargets",
       "queryScope": "COLLECTION",
       "fields": [
@@ -417,7 +435,7 @@
       ]
     },
     {
-      "//": "LeadQueue / CallLaterQueue — a campaign's list, newest schedule first.",
+      "//": "LeadQueue / CallLaterQueue \u2014 a campaign's list, newest schedule first.",
       "collectionGroup": "outboundTargets",
       "queryScope": "COLLECTION",
       "fields": [
@@ -432,7 +450,7 @@
       ]
     },
     {
-      "//": "releaseDueTargets — Call Later entries whose retry time has arrived.",
+      "//": "releaseDueTargets \u2014 Call Later entries whose retry time has arrived.",
       "collectionGroup": "outboundTargets",
       "queryScope": "COLLECTION",
       "fields": [

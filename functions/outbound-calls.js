@@ -32,6 +32,7 @@ import { contactKey, loadResearch, saveResearch, researchContact, buildCallBrief
 import { clean, normalizePhone, resolveTimezone, deterministicId } from './prospect-normalization.js';
 import { normalizeOfferTrackKeys } from './offer-tracks.js';
 import { warmSidebandForSession } from './hybrid-sideband-warmup.js';
+import { isSuppressed, suppressNumber } from './inbound-compliance.js';
 import {
   LEGACY_ACCOUNT_ID, requireAccountId, readAccountId,
   checkAccountAlignment, accountMismatchLabel
@@ -878,18 +879,24 @@ export async function dialNext(db, sessionId, {
       continue;
     }
 
+    // One read per leg actually being dialled, deliberately not batched: the
+    // suppression list is the record of someone having asked us to stop, and it
+    // is worth a document read to be sure we are reading it for the number we
+    // are about to ring rather than one resolved earlier in the slice.
     const compliance = evaluateCompliance({
       target, contact, campaign, now,
-      internalDoNotCall: contact.contactability?.doNotCall === true || contact.doNotCall === true
+      internalDoNotCall: contact.contactability?.doNotCall === true || contact.doNotCall === true,
+      suppressed: await isSuppressed(db, contact.phoneE164 || target.phoneE164)
     });
 
     if (!compliance.eligible) {
       const terminal = compliance.reasons.some(reason =>
-        ['do_not_call', 'do_not_contact', 'max_attempts_reached', 'no_valid_phone', 'invalid_number'].includes(reason));
+        ['do_not_call', 'do_not_contact', 'suppressed', 'max_attempts_reached', 'no_valid_phone', 'invalid_number'].includes(reason));
       const requeueAt = terminal ? null : nextWindowOpening(now, compliance.timezone, campaign) || new Date(now.getTime() + 3600_000);
       await releaseTarget(db, target.id, {
         state: terminal
-          ? (compliance.reasons.includes('do_not_call') || compliance.reasons.includes('do_not_contact') ? 'do_not_call' : 'completed')
+          ? (compliance.reasons.includes('do_not_call') || compliance.reasons.includes('do_not_contact')
+            || compliance.reasons.includes('suppressed') ? 'do_not_call' : 'completed')
           : 'call_later',
         nextAttemptAt: requeueAt,
         extra: { complianceStatus: 'blocked', complianceReasons: compliance.reasons.slice(0, 8) }
@@ -1062,13 +1069,19 @@ export async function runAICampaignSlice(db, campaignId, {
 
     const compliance = evaluateCompliance({
       target, contact, campaign, now,
-      internalDoNotCall: contact.contactability?.doNotCall === true || contact.doNotCall === true
+      internalDoNotCall: contact.contactability?.doNotCall === true || contact.doNotCall === true,
+      suppressed: await isSuppressed(db, contact.phoneE164 || target.phoneE164)
     });
     if (!compliance.eligible) {
       const terminal = compliance.reasons.some(reason =>
-        ['do_not_call', 'do_not_contact', 'max_attempts_reached', 'no_valid_phone', 'invalid_number'].includes(reason));
+        ['do_not_call', 'do_not_contact', 'suppressed', 'max_attempts_reached', 'no_valid_phone', 'invalid_number'].includes(reason));
+      const optedOut = ['do_not_call', 'do_not_contact', 'suppressed']
+        .some(reason => compliance.reasons.includes(reason));
       await releaseTarget(db, target.id, {
-        state: terminal ? 'completed' : 'call_later',
+        // An opt-out is not a completed call. Recording it as `completed` made
+        // the autonomous runner's queue disagree with the interactive dialer's
+        // about the same person, and hid opt-outs from the campaign counters.
+        state: terminal ? (optedOut ? 'do_not_call' : 'completed') : 'call_later',
         nextAttemptAt: terminal ? null : (nextWindowOpening(now, compliance.timezone, campaign) || new Date(now.getTime() + 3600_000)),
         extra: { complianceStatus: 'blocked', complianceReasons: compliance.reasons.slice(0, 8) }
       });
@@ -1522,6 +1535,15 @@ export async function markDoNotCall(db, id, { actor = '', now = new Date() } = {
     );
     await recordContactActivity(db, contact, { type: 'do_not_contact', actor: clean(actor, 128), at: Timestamp.fromDate(now) });
   }
+
+  // An opt-out that only survives as long as the record we happen to hold is
+  // not an opt-out either. Marking the contact covers this prospect document;
+  // suppressing the number covers the person, including the case where they are
+  // re-imported months later from a different list under a brand new document
+  // that has never heard of this request.
+  await suppressNumber(db, contact?.phoneE164 || target.phoneE164, {
+    actor, reason: 'do_not_call', source: 'outbound', now, FieldValue
+  }).catch(error => console.warn('[outbound] number suppression failed', clean(error?.message, 200)));
 
   // Every other campaign gets the same answer. An opt-out that only applies to
   // the campaign the person happened to be called from is not an opt-out.
