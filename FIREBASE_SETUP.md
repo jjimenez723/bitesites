@@ -506,6 +506,39 @@ curl -X POST -H "x-webhook-secret: $SECRET" \
 only) writing into the emulator, so it catches drift in the real payload shape. It skips
 itself if `~/.ghl-token` is absent.
 
+## Fine Line CRM dashboard — `/admin/crm`
+
+Read-only view of the Fine Line Group HighLevel pipelines (Client Acquisition
+`wGaMTdRFAzIElK5EQUIZ` and Referral Partners `pAjQijCNlnKNmb70H3ip` in location
+`LDL5wuJlnVnqk9vn6taD`). The `getFineLineCrm` callable in
+[`functions/flg-crm.js`](functions/flg-crm.js) is the only path: admin role
+required, App Check enforced, all HighLevel calls server-side. The response is
+sanitized — contact emails, phones, property addresses and note fields never
+leave the function — and the module contains no write path, so the dashboard
+cannot touch the live FLG workflows, stages or tags.
+
+The token is its own secret, separate from the Voice AI poller's
+`GHL_API_TOKEN`, so either can be rotated independently:
+
+```bash
+firebase functions:secrets:set GHL_CRM_DASHBOARD_TOKEN   # scoped: pipelines + opportunities read
+npm run deploy:functions
+```
+
+Commission due to BiteSites is read from the `flg__bitesites_commission_*`
+opportunity fields plus the `flg - commission due` contact tag; when the due
+amount is not stored the dashboard computes collected revenue × rate.
+`npm run test:crm` covers the client (pagination, 429/5xx retry, timeouts,
+token scrubbing), the sanitizer, and the page's summary/filter/aging maths.
+
+`syncFineLineCommissions` ([`functions/flg-commission-sync.js`](functions/flg-commission-sync.js))
+rolls the same commission fields into the Finance board daily: one
+deterministic `financeIncome` row per opportunity, joined to the
+`fine-line-group` account (created on first run — set its allocations in the
+board). `amount` is commission *actually paid*; due-but-unpaid stays in
+`expected`/`outstanding` and the notes so monthly revenue is never inflated.
+Workflow QA records are filtered out. Heartbeat: `systemHealth/flg-commission-sync`.
+
 ## Commercial analytics and CRM return path
 
 Every new website lead now carries its random browser/session ids, first- and last-touch

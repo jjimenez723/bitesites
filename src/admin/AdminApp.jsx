@@ -17,6 +17,7 @@ import Overview from './Overview';
 import Performance from './Performance';
 import Finance from './Finance';
 import Leads from './Leads';
+import Crm from './Crm';
 import Conversations from './Conversations';
 import Users from './Users';
 import EmailStudio from './EmailStudio';
@@ -46,6 +47,7 @@ const NAV = [
   { to: '/admin/performance', label: 'Performance', icon: 'M3 18l5-6 4 3 8-10M16 5h4v4' },
   { to: '/admin/finance', label: 'Finance', icon: 'M4 18V8m6 10V4m6 14v-6m4 6H2M17 5.5c0-1-1-1.5-2-1.5s-2 .5-2 1.5 1 1.5 2 1.5 2 .5 2 1.5S16 9 15 9s-2-.5-2-1.5' },
   { to: '/admin/leads', label: 'Leads', icon: 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z' },
+  { to: '/admin/crm', label: 'Fine Line CRM', icon: 'M3 4h18v4H3zM3 10h12v4H3zM3 16h8v4H3z' },
   { to: '/admin/conversations', label: 'Conversations', icon: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z' },
   { to: '/admin/outbound', label: 'Outbound Calls', icon: 'M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8.1 9.8a16 16 0 0 0 6 6l1.3-1.2a2 2 0 0 1 2.1-.5c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.8 2.1z' },
   { to: '/admin/email', label: 'Email', icon: 'M3 5h18v14H3zM3 6l9 7 9-7' },
@@ -225,6 +227,7 @@ function AuthenticatedAdminApp() {
             {isAdminUser && <Route path="performance" element={<Performance />} />}
             {isAdminUser && <Route path="finance" element={<Finance canWrite={canWriteFinance} />} />}
             {isAdminUser && <Route path="leads" element={<Leads />} />}
+            {isAdminUser && <Route path="crm" element={<Crm />} />}
             {isAdminUser && <Route path="conversations" element={<Conversations />} />}
             <Route path="outbound" element={<OutboundCalls role={session.role} currentUid={session.user.uid} />} />
             {isAdminUser && <Route path="email" element={<EmailStudio />} />}

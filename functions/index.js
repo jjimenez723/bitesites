@@ -285,10 +285,12 @@ export const syncLeadToGoHighLevel = onDocumentCreated(
     const lead = snapshot.data();
     const { leadId } = event.params;
 
-    // A Byte lead was created *by* GoHighLevel (see recordVoiceCall below), so
-    // it is already a contact over there. Pushing it back would duplicate it —
-    // and, since that workflow posts to us, could bounce between the two.
-    if (lead.source === 'byte_voice') {
+    // A Byte lead created *by* GoHighLevel (see recordVoiceCall below) is
+    // already a contact over there. Pushing it back would duplicate it — and,
+    // since that workflow posts to us, could bounce between the two. Leads
+    // from the native homepage engine (byte-web-session.js) carry no such
+    // origin marker and sync forward like any other lead.
+    if (lead.source === 'byte_voice' && lead.crm?.reason === 'origin-gohighlevel') {
       console.log(`[lead ${leadId}] originated in GoHighLevel (Voice AI call) — not syncing back`);
       return;
     }
@@ -2502,6 +2504,11 @@ export const monitorOperations = onSchedule(
 );
 
 // ---------------------------------------------------------------------------
+
+// Fine Line Group CRM dashboard — read-only HighLevel feed for /admin/crm.
+export { getFineLineCrm } from './flg-crm.js';
+// Daily roll-up of FLG commission fields into the financeIncome ledger.
+export { syncFineLineCommissions } from './flg-commission-sync.js';
 
 export {
   // Configuration and capability reporting.
