@@ -9,6 +9,9 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAppointments, calendar, useAction, toDate } from './data';
+// Standalone-safe: this view is also mounted directly at /admin/calendar,
+// where OutboundCalls' stylesheet imports never run.
+import './outbound.css';
 import { Empty, QueryState } from './SourceBadge';
 import { ACCOUNTS, ACCOUNT_IDS, LEGACY_ACCOUNT_ID, readAccountId } from '../../../functions/accounts.js';
 

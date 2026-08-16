@@ -22,6 +22,7 @@ import Conversations from './Conversations';
 import Users from './Users';
 import EmailStudio from './EmailStudio';
 import OutboundCalls from './OutboundCalls';
+import AppointmentCalendar from './outbound/AppointmentCalendar';
 import OutboundExperiencePreview from './outbound/OutboundExperiencePreview';
 import { FINANCE_OWNER_EMAILS } from './finance-seed';
 import adminLogo from '../assets/bitesites-admin-logo.svg';
@@ -49,6 +50,7 @@ const NAV = [
   { to: '/admin/leads', label: 'Leads', icon: 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z' },
   { to: '/admin/crm', label: 'Fine Line CRM', icon: 'M3 4h18v4H3zM3 10h12v4H3zM3 16h8v4H3z' },
   { to: '/admin/conversations', label: 'Conversations', icon: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z' },
+  { to: '/admin/calendar', label: 'Calendar', icon: 'M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z' },
   { to: '/admin/outbound', label: 'Outbound Calls', icon: 'M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8.1 9.8a16 16 0 0 0 6 6l1.3-1.2a2 2 0 0 1 2.1-.5c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.8 2.1z' },
   { to: '/admin/email', label: 'Email', icon: 'M3 5h18v14H3zM3 6l9 7 9-7' },
   { to: '/admin/users', label: 'Users', icon: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75' }
@@ -229,6 +231,7 @@ function AuthenticatedAdminApp() {
             {isAdminUser && <Route path="leads" element={<Leads />} />}
             {isAdminUser && <Route path="crm" element={<Crm />} />}
             {isAdminUser && <Route path="conversations" element={<Conversations />} />}
+            {isAdminUser && <Route path="calendar" element={<AppointmentCalendar canManage />} />}
             <Route path="outbound" element={<OutboundCalls role={session.role} currentUid={session.user.uid} />} />
             {isAdminUser && <Route path="email" element={<EmailStudio />} />}
             {isAdminUser && <Route path="users" element={<Users />} />}

@@ -121,6 +121,20 @@ export const DEFAULT_EMAIL_TEMPLATES = {
     }),
     text: 'Hi {{first_name}},\n\nThanks for speaking with {{source_label}}. We received your BiteSites inquiry and will review it shortly.\n\nInterested in: {{service_names}}\n\nSchedule a consultation: {{consultation_url}}\n\nNeed to correct or add something? Reply to this email.'
   },
+  meeting_booked: {
+    name: 'Meeting confirmed',
+    description: 'Confirms a consultation booked by a voice agent or rep, with the day, time, and reference.',
+    category: 'transactional',
+    subject: 'Confirmed: your BiteSites call — {{meeting_time}}',
+    html: shell({
+      preheader: 'Your consultation is booked. Here are the details.',
+      title: 'Your call is booked',
+      body: '<p style="margin:0 0 16px;">Hi {{first_name}},</p><p style="margin:0 0 16px;">Your {{meeting_title}} is confirmed. A {{host_name}} will call you at the time below.</p><p style="margin:0 0 16px;padding:14px 16px;border:1px solid #e5e5e5;border-radius:10px;background:#fafafa;"><span style="display:block;color:#777777;font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;">Meeting time</span><strong style="display:block;margin-top:3px;color:#222222;font-size:15px;">{{meeting_time}}</strong><span style="display:block;margin-top:8px;color:#777777;font-size:12px;">Confirmation reference: <strong style="color:#222222;">{{confirmation_ref}}</strong></span></p><p style="margin:0;color:#6b6b6b;font-size:13px;line-height:20px;">There is nothing to prepare. If the time stops working, reply to this email and we will move it.</p>',
+      cta: null,
+      footer: 'This confirms a meeting you booked with BiteSites. Reply to this email to reschedule or cancel.'
+    }),
+    text: 'Hi {{first_name}},\n\nYour {{meeting_title}} is confirmed. A {{host_name}} will call you at the time below.\n\nMeeting time: {{meeting_time}}\nConfirmation reference: {{confirmation_ref}}\n\nThere is nothing to prepare. If the time stops working, reply to this email and we will move it.'
+  },
   conversation_feedback: {
     name: 'Conversation feedback',
     description: 'Asks a visitor to rate a completed conversation with Bit or Byte.',

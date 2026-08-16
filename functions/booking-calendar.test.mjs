@@ -8,6 +8,7 @@ import {
   encodeSlotId,
   generateConfirmationRef,
   normalizeCalendarSettings,
+  parseSpokenClockTime,
   resolveRequestedWindow,
   timeZoneOffsetMs,
   zonedParts,
@@ -228,6 +229,32 @@ test('a part-of-day qualifier narrows the window', () => {
   const afternoon = resolveRequestedWindow('tuesday afternoon', { nowMs: MONDAY_8AM_EDT, settings: settings() });
   assert.ok(zonedParts(morning.toMs, ZONE).hour <= 12);
   assert.ok(zonedParts(afternoon.fromMs, ZONE).hour >= 12);
+});
+
+test('a spoken clock time parses the way a caller means it', () => {
+  assert.deepEqual(parseSpokenClockTime('can we do 2 p.m.'), { hour: 14, minute: 0 });
+  assert.deepEqual(parseSpokenClockTime('wednesday at 2pm'), { hour: 14, minute: 0 });
+  // Bare business hours: 1–7 reads as afternoon, 8–12 as morning.
+  assert.deepEqual(parseSpokenClockTime('2:30'), { hour: 14, minute: 30 });
+  assert.deepEqual(parseSpokenClockTime('9:30'), { hour: 9, minute: 30 });
+  assert.deepEqual(parseSpokenClockTime('noon works'), { hour: 12, minute: 0 });
+  assert.deepEqual(parseSpokenClockTime('12am'), { hour: 0, minute: 0 });
+  // A bare number with no time marker is a date or a stray word, not a time.
+  assert.equal(parseSpokenClockTime('wednesday the 19'), null);
+  assert.equal(parseSpokenClockTime('lets do 10'), null);
+  assert.equal(parseSpokenClockTime('thursday afternoon'), null);
+});
+
+test('a specific spoken time yields a target instant on the requested day', () => {
+  const window = resolveRequestedWindow('wednesday at 2pm', {
+    nowMs: MONDAY_8AM_EDT, settings: settings()
+  });
+  const target = zonedParts(window.targetMs, ZONE);
+  assert.equal(target.weekday, 3);
+  assert.equal(target.hour, 14);
+  assert.equal(target.minute, 0);
+  // The day window stays whole so closest alternatives can come from either side.
+  assert.ok(window.fromMs <= window.targetMs && window.targetMs < window.toMs);
 });
 
 test('an unparseable window falls back to the whole horizon rather than failing', () => {

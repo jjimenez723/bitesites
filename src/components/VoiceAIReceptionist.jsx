@@ -161,6 +161,7 @@ const STATUS_TEXT = {
   idle: 'Click to speak',
   connecting: 'Connecting…',
   listening: 'Listening…',
+  thinking: 'Byte is checking that…',
   speaking: 'Byte is speaking…',
   ended: 'Call ended — click to talk again',
   unavailable: 'Voice agent unavailable',
@@ -176,6 +177,10 @@ export function VoiceAIReceptionist({ open, onClose, onComplete }) {
   const [completedCallId, setCompletedCallId] = useState('');
   const shellRef = useRef(null);
   const sawConnectingRef = useRef(false);
+  // The close gate needs the completed-call id synchronously, before React has
+  // flushed the state update the same click produced.
+  const completedCallRef = useRef('');
+  const feedbackDoneRef = useRef(false);
   // Call logging state. Refs rather than state: nothing here renders, and the
   // cleanup paths (unmount, page close) need the current value, not a snapshot.
   const callIdRef = useRef('');
@@ -183,7 +188,7 @@ export function VoiceAIReceptionist({ open, onClose, onComplete }) {
   const callConnectedRef = useRef(false);
 
   const live = isLiveState(callState);
-  const connected = callState === 'listening' || callState === 'speaking';
+  const connected = ['listening', 'thinking', 'speaking'].includes(callState);
 
   // Closes the open call record exactly once, whichever path got us here.
   const closeCallRecord = (outcome, message = '') => {
@@ -202,21 +207,58 @@ export function VoiceAIReceptionist({ open, onClose, onComplete }) {
       reason: message ? String(message).slice(0, 200) : undefined,
       value: Math.max(0, Math.round(durationSec))
     });
+    // The thank-you redirect used to fire here, which yanked the visitor away
+    // before the rating screen could ever render. Now the call end reveals the
+    // rating; onComplete waits until that flow finishes in finishFeedback.
     if (resolvedOutcome === 'completed' && durationSec >= 10) {
+      completedCallRef.current = callId;
+      feedbackDoneRef.current = false;
       setCompletedCallId(callId);
-      onComplete?.();
     }
     callStartRef.current = 0;
     callConnectedRef.current = false;
+  };
+
+  const clearFeedbackScreen = () => {
+    completedCallRef.current = '';
+    setCompletedCallId('');
   };
 
   const stopSession = () => {
     setStarting(false);
     setElapsed(0);
     setError('');
-    setCompletedCallId('');
+    clearFeedbackScreen();
     closeCallRecord('auto');
     endVoiceCall();
+  };
+
+  // The post-call flow is done — rated or explicitly skipped. Hand the visitor
+  // to the thank-you page and close the panel.
+  const finishFeedback = () => {
+    feedbackDoneRef.current = true;
+    clearFeedbackScreen();
+    onComplete?.();
+    onClose();
+  };
+
+  // Close button and Escape route through here: ending a completed call opens
+  // the rating screen instead of discarding it, and only a second close (or
+  // the skip link) actually dismisses the panel.
+  const requestClose = () => {
+    if (live) {
+      setStarting(false);
+      setElapsed(0);
+      setError('');
+      closeCallRecord('auto');
+      endVoiceCall();
+      if (completedCallRef.current && !feedbackDoneRef.current) return;
+    } else if (completedCallRef.current && !feedbackDoneRef.current) {
+      finishFeedback();
+      return;
+    }
+    clearFeedbackScreen();
+    onClose();
   };
 
   const startSession = async () => {
@@ -253,9 +295,12 @@ export function VoiceAIReceptionist({ open, onClose, onComplete }) {
     } catch { /* fullscreen can be unavailable inside embedded browsers */ }
   };
 
+  const requestCloseRef = useRef(requestClose);
+  requestCloseRef.current = requestClose;
+
   useEffect(() => {
     if (!open) return undefined;
-    const onKeyDown = event => { if (event.key === 'Escape' && !document.fullscreenElement) onClose(); };
+    const onKeyDown = event => { if (event.key === 'Escape' && !document.fullscreenElement) requestCloseRef.current(); };
     const onFullscreenChange = () => setIsFullscreen(Boolean(document.fullscreenElement));
     document.body.classList.add('voice-agent-open');
     document.addEventListener('keydown', onKeyDown);
@@ -326,18 +371,22 @@ export function VoiceAIReceptionist({ open, onClose, onComplete }) {
   }, [connected]);
 
   // Never leave a call running — or a call record open — behind a closed panel.
+  // The feedback screen state is cleared too, so a later reopen starts fresh
+  // instead of resurrecting the previous call's rating card.
   useEffect(() => {
     if (!open) return undefined;
     return () => {
       closeCallRecord('auto');
       endVoiceCall();
+      clearFeedbackScreen();
     };
   }, [open]);
 
   if (!open) return null;
   const statusText = error ? 'Call not connected' : STATUS_TEXT[starting && callState === 'idle' ? 'connecting' : callState] ?? STATUS_TEXT.idle;
-  const intensity = callState === 'speaking' ? 1 : callState === 'listening' ? .45 : callState === 'connecting' || starting ? .2 : 0;
+  const intensity = callState === 'speaking' ? 1 : callState === 'thinking' ? .3 : callState === 'listening' ? .45 : callState === 'connecting' || starting ? .2 : 0;
   const actionText = live ? 'End conversation' : starting ? 'Connecting…' : 'Start talking to Byte';
+  const showFeedback = Boolean(completedCallId) && !live && !starting;
 
   return <aside className="voice-agent-shell" ref={shellRef} role="dialog" aria-modal="true" aria-labelledby="voice-agent-title" tabIndex="-1">
     <h2 id="voice-agent-title" className="sr-only">Talk with Byte, BiteSites' Voice AI sales agent</h2>
@@ -345,22 +394,32 @@ export function VoiceAIReceptionist({ open, onClose, onComplete }) {
     <div className="voice-agent-tools">
       <button type="button" onClick={toggleFullscreen} aria-label={isFullscreen ? 'Exit full screen' : 'Enter full screen'} title={isFullscreen ? 'Exit full screen' : 'Full screen'}><ExpandIcon collapse={isFullscreen} /></button>
       <button type="button" className={settingsOpen ? 'active' : ''} onClick={() => setSettingsOpen(value => !value)} aria-expanded={settingsOpen} aria-controls="voice-agent-settings" aria-label="Voice settings" title="Voice settings"><SettingsIcon /></button>
-      <button type="button" onClick={() => stopSession()} aria-label="Restart conversation" title="Restart conversation"><RestartIcon /></button>
+      <button type="button" onClick={() => { stopSession(); clearFeedbackScreen(); }} aria-label="Restart conversation" title="Restart conversation"><RestartIcon /></button>
     </div>
-    <button className="voice-agent-close" type="button" onClick={() => { stopSession(); onClose(); }} aria-label="Close voice agent"><CloseIcon /></button>
+    <button className="voice-agent-close" type="button" onClick={requestClose} aria-label="Close voice agent"><CloseIcon /></button>
 
     {settingsOpen && <div className="voice-agent-settings" id="voice-agent-settings">
       <p>Conversation settings</p>
       <dl><div><dt>Agent</dt><dd>Byte</dd></div><div><dt>Specialty</dt><dd>Voice AI solutions</dd></div><div><dt>Connection</dt><dd>{callState === 'unavailable' ? 'Offline' : callState === 'loading' ? 'Connecting' : 'Live'}</dd></div></dl>
     </div>}
 
-    <div className={`voice-agent-center is-${callState}`}>
+    {showFeedback ? <div className="voice-agent-center voice-agent-feedback is-ended">
+      <p className="voice-agent-kicker"><i /> Byte · Voice AI receptionist</p>
+      <span className="voice-agent-portrait">
+        <span className="voice-agent-halo" />
+        <ByteAvatar state="idle" decorative={false} />
+      </span>
+      <h3 className="voice-agent-feedback-title">Thanks for talking with Byte</h3>
+      <p className="voice-agent-feedback-sub">Before you go — how was the conversation?</p>
+      <ConversationRating agent="byte" sourceType="call" sourceId={completedCallId} variant="panel" onDone={finishFeedback} />
+      <button className="voice-agent-feedback-skip" type="button" onClick={finishFeedback}>Skip for now</button>
+    </div> : <div className={`voice-agent-center is-${callState}`}>
       <p className="voice-agent-kicker"><i /> Byte · Voice AI receptionist</p>
       <span className="voice-agent-portrait">
         <span className="voice-agent-halo" />
         <ByteAvatar state={callState === 'speaking' ? 'speaking' : connected ? 'listening' : 'idle'} decorative={false} />
       </span>
-      <p className="voice-agent-turn" aria-hidden="true">{callState === 'speaking' ? 'Byte is talking' : connected ? 'Byte is listening' : 'Byte is ready'}</p>
+      <p className="voice-agent-turn" aria-hidden="true">{callState === 'speaking' ? 'Byte is talking' : callState === 'thinking' ? 'Byte is checking that' : connected ? 'Byte is listening' : 'Byte is ready'}</p>
       <time className="voice-agent-time" dateTime={`PT${elapsed}S`}>{formatTime(elapsed)}</time>
       <VoiceWaveform intensity={intensity} />
       <p className="voice-agent-status" aria-live="polite">{statusText}</p>
@@ -369,8 +428,7 @@ export function VoiceAIReceptionist({ open, onClose, onComplete }) {
         <strong>{actionText}</strong>
       </button>
       {error && <p className="voice-agent-error">{error}</p>}
-      {completedCallId && !live && <ConversationRating agent="byte" sourceType="call" sourceId={completedCallId} compact />}
-    </div>
+    </div>}
 
     <div className="voice-agent-signoff"><span><i /> Byte by BiteSites</span><small>Your browser will ask before the microphone turns on.</small></div>
   </aside>;

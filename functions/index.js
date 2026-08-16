@@ -13,7 +13,7 @@
 // The outcome is written back onto the lead document under `crm`, so a failed
 // sync is visible in the console rather than silently lost.
 
-import { onDocumentCreated } from 'firebase-functions/v2/firestore';
+import { onDocumentCreated, onDocumentWritten } from 'firebase-functions/v2/firestore';
 import { onRequest, onCall, HttpsError } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { defineSecret, defineString } from 'firebase-functions/params';
@@ -33,6 +33,7 @@ import {
   sendPostmark
 } from './email.js';
 import { aggregateFunnelData } from './aggregate-funnel.js';
+import { describeSlotForSpeech, loadCalendarSettings } from './booking-calendar.js';
 
 initializeApp();
 setGlobalOptions({ region: 'us-central1', maxInstances: 10 });
@@ -1778,6 +1779,62 @@ export const sendLeadLifecycleEmails = onDocumentCreated(
         sourceId: lead.voice.callId, sourceType: 'call', leadId,
         email: lead.email, name: lead.name, agent: 'byte',
         agentName: lead.voice.receivingAgent?.agentName
+      });
+    }
+  }
+);
+
+// The attendee's booking confirmation. Triggered by the appointment flipping
+// to `booked` — the one moment a meeting truly exists — so voice-agent and rep
+// bookings alike produce an email that states the real day, time, and
+// reference instead of the generic "schedule a consultation" receipt.
+export const sendMeetingBookedEmails = onDocumentWritten(
+  { document: 'appointments/{appointmentId}', secrets: [POSTMARK_SERVER_TOKEN], maxInstances: 10 },
+  async event => {
+    const after = event.data?.after?.data();
+    if (!after || after.status !== 'booked') return;
+    const before = event.data?.before?.data() || {};
+    if (before.status === 'booked') return;
+
+    const email = normalizedEmail(after.attendee?.email);
+    if (!EMAIL_PATTERN.test(email)) return;
+
+    const db = getFirestore();
+    const ref = event.data.after.ref;
+    // Claim before sending: trigger retries and echo writes must never mean a
+    // second confirmation in the attendee's inbox.
+    const claimed = await db.runTransaction(async tx => {
+      const snapshot = await tx.get(ref);
+      if (snapshot.get('confirmationEmailAt')) return false;
+      tx.set(ref, { confirmationEmailAt: FieldValue.serverTimestamp() }, { merge: true });
+      return true;
+    });
+    if (!claimed) return;
+
+    const settings = await loadCalendarSettings(db, after.accountId).catch(() => null);
+    const startMs = after.startAt?.toMillis?.() || 0;
+    const meetingTime = startMs
+      ? describeSlotForSpeech(startMs, after.timezone || settings?.timezone || 'America/New_York')
+      : 'the time you agreed on the call';
+
+    try {
+      await sendLifecycleEmail({
+        db, templateId: 'meeting_booked', to: email,
+        variables: {
+          first_name: str(after.attendee?.name, 120).split(/\s+/)[0] || 'there',
+          meeting_title: settings?.meetingTitle || 'BiteSites strategy call',
+          host_name: settings?.hostName || 'BiteSites specialist',
+          meeting_time: meetingTime,
+          confirmation_ref: str(after.confirmationRef, 40) || '—'
+        },
+        tag: 'meeting-booked', kind: 'meeting-booked'
+      });
+    } catch (error) {
+      await createOperationalAlert(db, {
+        key: `meeting-email:${event.params.appointmentId}`,
+        title: 'Meeting confirmation email failed',
+        message: error.message, component: 'Postmark',
+        reference: event.params.appointmentId, notify: false
       });
     }
   }
