@@ -14,6 +14,7 @@ import CallLaterQueue from './outbound/CallLaterQueue';
 import CallHistory from './outbound/CallHistory';
 import ProviderStatus from './outbound/ProviderStatus';
 import AgentProfiles from './outbound/AgentProfiles';
+import AppointmentCalendar from './outbound/AppointmentCalendar';
 import TransferInbox from './outbound/TransferInbox';
 import TeamCallCoach from './outbound/TeamCallCoach';
 import './outbound/outbound.css';
@@ -29,12 +30,13 @@ const TABS = [
   ['dialer', 'Live Dialer'],
   ['coaching', 'Team Coaching'],
   ['agents', 'AI Agents'],
+  ['calendar', 'Calendar'],
   ['later', 'Call Later'],
   ['history', 'History'],
   ['settings', 'Settings']
 ];
 
-const REP_TAB_KEYS = new Set(['queue', 'dialer', 'later', 'history']);
+const REP_TAB_KEYS = new Set(['queue', 'dialer', 'calendar', 'later', 'history']);
 
 export default function OutboundCalls({ role = 'admin', currentUid = '' }) {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -188,6 +190,7 @@ export default function OutboundCalls({ role = 'admin', currentUid = '' }) {
           )}
           {tab === 'coaching' && <TeamCallCoach />}
           {tab === 'agents' && <AgentProfiles />}
+          {tab === 'calendar' && <AppointmentCalendar canManage={canManage} />}
           {tab === 'later' && (
             <CallLaterQueue campaignId={campaignId} campaigns={campaigns.rows} onSelectCampaign={setCampaignId} />
           )}

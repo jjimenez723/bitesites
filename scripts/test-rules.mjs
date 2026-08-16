@@ -244,6 +244,18 @@ await it('visitor cannot append or read lead activity', async () => {
 await it('admin cannot rewrite a lead email (audit integrity)', () =>
   assertFails(updateDoc(doc(adminByDoc, 'leads', 'seeded_lead'), { email: 'changed@example.com' })));
 
+// Which book of business a lead belongs to decides which campaigns may call the
+// person and, for a commission client, whose revenue it eventually claims. A
+// browser that could set it could move a house lead into a client's book.
+await it('admin cannot assign a lead to an account from the browser', () =>
+  assertFails(updateDoc(doc(adminByDoc, 'leads', 'seeded_lead'), { accountId: 'fine-line-group' })));
+
+await it('admin cannot move a lead between accounts', async () => {
+  await assertFails(updateDoc(doc(adminByDoc, 'leads', 'seeded_lead'), { accountId: 'bitesites' }));
+  // ...and an ordinary triage edit still works alongside the new check.
+  await assertSucceeds(updateDoc(doc(adminByDoc, 'leads', 'seeded_lead'), { status: 'qualified' }));
+});
+
 // The update rule compares `email` against the stored value, so a Byte lead has
 // to carry the key even when the call captured only a phone number — a missing
 // one would error the rule out and leave the lead permanently un-triageable.
@@ -358,7 +370,8 @@ await it('finance owner can initialize every ledger collection', () =>
     setDoc(doc(financeOwner, 'financeAccounts', 'owner_account'), { name: 'Account' }),
     setDoc(doc(financeOwner, 'financeTeam', 'owner_member'), { name: 'Member' }),
     setDoc(doc(financeOwner, 'financeExpenses', 'owner_expense'), { name: 'Expense' }),
-    setDoc(doc(financeOwner, 'financeIncome', 'owner_income'), { amount: 600 })
+    setDoc(doc(financeOwner, 'financeIncome', 'owner_income'), { amount: 600 }),
+    setDoc(doc(financeOwner, 'financeSettlements', 'owner_payment'), { memberId: 'x', amount: 45 })
   ])));
 await it('another admin can read the finance ledger', () =>
   assertSucceeds(getDocs(collection(adminByDoc, 'financeAccounts'))));
@@ -366,9 +379,14 @@ await it('the documented Gmail owner login can also edit the ledger', () =>
   assertSucceeds(updateDoc(doc(financeOwnerGmail, 'financeAccounts', 'seeded_account'), { monthlyRetainer: 450 })));
 await it('another admin cannot change the finance ledger', () =>
   assertFails(updateDoc(doc(adminByDoc, 'financeAccounts', 'seeded_account'), { monthlyRetainer: 999 })));
+await it('another admin can audit but not forge a team payment', async () => {
+  await assertSucceeds(getDocs(collection(adminByDoc, 'financeSettlements')));
+  await assertFails(setDoc(doc(adminByDoc, 'financeSettlements', 'forged'), { memberId: 'x', amount: 500 }));
+});
 await it('clients and the public cannot read finance data', async () => {
   await assertFails(getDocs(collection(clientOk, 'financeAccounts')));
   await assertFails(getDocs(collection(anon, 'financeExpenses')));
+  await assertFails(getDocs(collection(anon, 'financeSettlements')));
 });
 
 describe('search metrics — server-written, admin-readable');

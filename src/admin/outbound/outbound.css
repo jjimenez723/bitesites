@@ -232,3 +232,122 @@
   .bs-admin .outbound-form-grid { grid-template-columns: minmax(0, 1fr); }
   .bs-admin .outbound-form-grid label.full { grid-column: auto; }
 }
+
+/* ---------------------------------------------------------------- calendar
+
+   The week grid the voice agents book into. Status is encoded in the left
+   edge as well as the label, because the thing a rep scans for is "what is
+   real and what is still being held", and that has to read at a glance. */
+
+.bs-admin .cal-summary {
+  display: flex; flex-wrap: wrap; gap: 18px; align-items: baseline;
+  padding: 10px 0 16px; color: var(--ink-3); font-size: 12px;
+}
+.bs-admin .cal-summary strong { color: var(--ink); font-size: 15px; font-variant-numeric: tabular-nums; }
+
+.bs-admin .cal-week {
+  display: grid; grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 1px; background: var(--line); border: 1px solid var(--line);
+  border-radius: 12px; overflow: hidden;
+}
+.bs-admin .cal-day {
+  background: var(--surface-1); min-height: 150px;
+  padding: 10px 8px; display: flex; flex-direction: column; gap: 8px;
+}
+.bs-admin .cal-day-today { background: var(--surface-2); }
+.bs-admin .cal-day-head {
+  color: var(--ink-3); font-size: 11px; font-weight: 650;
+  letter-spacing: .04em; text-transform: uppercase;
+}
+.bs-admin .cal-day-today .cal-day-head { color: var(--brand-blue); }
+.bs-admin .cal-day-empty { color: var(--ink-3); font-size: 12px; margin: 0; }
+
+.bs-admin .cal-event {
+  display: flex; flex-direction: column; gap: 3px;
+  background: var(--surface-2); border: 1px solid var(--line);
+  border-left: 3px solid var(--ink-3);
+  border-radius: 8px; padding: 8px; font-size: 12px;
+}
+.bs-admin .cal-day-today .cal-event { background: var(--surface-3); }
+.bs-admin .cal-event-booked { border-left-color: var(--good); }
+.bs-admin .cal-event-held { border-left-color: var(--warning); border-style: dashed; }
+.bs-admin .cal-event-completed { border-left-color: var(--s5); }
+.bs-admin .cal-event-no_show { border-left-color: var(--serious); }
+.bs-admin .cal-event-cancelled { border-left-color: var(--critical); opacity: .6; }
+
+.bs-admin .cal-event header { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; }
+.bs-admin .cal-event-time { color: var(--ink); font-weight: 650; font-variant-numeric: tabular-nums; }
+.bs-admin .cal-event-source {
+  color: var(--ink-3); font-size: 10px; font-weight: 650;
+  letter-spacing: .04em; border: 1px solid var(--line-strong);
+  border-radius: 4px; padding: 0 4px;
+}
+.bs-admin .cal-event strong { color: var(--ink); font-size: 12.5px; line-height: 1.3; }
+.bs-admin .cal-event-sub { color: var(--ink-2); }
+.bs-admin .cal-event-ref {
+  color: var(--ink-3); font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.bs-admin .cal-event-status { color: var(--ink-3); font-size: 11px; }
+.bs-admin .cal-event-warn { color: var(--warning); font-size: 11px; line-height: 1.35; }
+.bs-admin .cal-event-actions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+
+.bs-admin .cal-btn { padding: 3px 7px; font-size: 11px; border-radius: 6px; }
+
+.bs-admin .cal-booking {
+  display: flex; flex-direction: column; gap: 12px;
+  margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--line);
+}
+.bs-admin .cal-booking-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.bs-admin .cal-booking-head h4 { margin: 0; font-size: 13px; color: var(--ink); }
+.bs-admin .cal-booking-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px;
+}
+.bs-admin .cal-booking label { display: flex; min-width: 0; flex-direction: column; gap: 5px; }
+.bs-admin .cal-booking label > span { color: var(--ink-3); font-size: 11px; font-weight: 650; }
+.bs-admin .cal-booking input, .bs-admin .cal-booking select {
+  background: var(--surface-2); border: 1px solid var(--line-strong);
+  border-radius: 8px; color: var(--ink); padding: 8px 10px; font-size: 13px;
+}
+.bs-admin .cal-booking input:focus, .bs-admin .cal-booking select:focus {
+  outline: 2px solid var(--brand-violet); outline-offset: 1px;
+}
+.bs-admin .cal-booking button[type='submit'] { align-self: flex-start; }
+
+.bs-admin .cal-note { color: var(--ink-3); font-size: 12px; margin: 0; }
+.bs-admin .cal-ok { color: var(--good); font-size: 12px; margin: 0; }
+
+@media (max-width: 900px) {
+  .bs-admin .cal-week { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .bs-admin .cal-day { min-height: 0; }
+}
+
+.bs-admin .cal-settings {
+  margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line);
+  display: flex; flex-direction: column; gap: 14px; align-items: flex-start;
+}
+.bs-admin .cal-settings-body { display: flex; flex-direction: column; gap: 14px; width: 100%; }
+.bs-admin .cal-settings-body label { display: flex; min-width: 0; flex-direction: column; gap: 5px; }
+.bs-admin .cal-settings-body label > span { color: var(--ink-3); font-size: 11px; font-weight: 650; }
+.bs-admin .cal-settings-body input {
+  background: var(--surface-2); border: 1px solid var(--line-strong);
+  border-radius: 8px; color: var(--ink); padding: 8px 10px; font-size: 13px;
+}
+.bs-admin .cal-settings-body input:focus { outline: 2px solid var(--brand-violet); outline-offset: 1px; }
+.bs-admin .cal-settings-body .full { grid-column: 1 / -1; }
+
+.bs-admin .cal-hours { display: flex; flex-direction: column; gap: 6px; }
+.bs-admin .cal-hours-row {
+  display: grid; grid-template-columns: 120px 1fr 1fr;
+  gap: 10px; align-items: center;
+}
+.bs-admin .cal-hours-day { flex-direction: row !important; align-items: center; gap: 8px; }
+.bs-admin .cal-hours-day span { color: var(--ink-2); font-size: 12px; font-weight: 600; }
+.bs-admin .cal-hours-row input[type='time'] { font-variant-numeric: tabular-nums; }
+
+.bs-admin .cal-toggle { flex-direction: row !important; align-items: center; gap: 8px; }
+.bs-admin .cal-toggle span { color: var(--ink-2); font-size: 12.5px; }
+
+@media (max-width: 620px) {
+  .bs-admin .cal-hours-row { grid-template-columns: 1fr; }
+}

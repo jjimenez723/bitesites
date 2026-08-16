@@ -1,9 +1,15 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { outbound, useAction } from './data';
 import AgentPreviewControls from './AgentPreviewControls';
+// The server's registry, imported rather than mirrored — see CampaignBuilder.
+import { ACCOUNTS, ACCOUNT_IDS, LEGACY_ACCOUNT_ID, readAccountId } from '../../../functions/accounts.js';
 
 const EMPTY = {
   name: '',
+  // Whose customers this persona may speak to. Deliberately blank: a persona
+  // that inherits an account by default is the one that ends up introducing a
+  // web-design agency to a restoration lead.
+  accountId: '',
   description: '',
   personality: {
     preset: 'friendly_consultant',
@@ -21,9 +27,9 @@ const EMPTY = {
   },
   voiceSettings: { source: 'built_in', builtInVoice: 'marin', customVoiceId: '', playbackSpeed: 1 },
   turnTaking: {
-    mode: 'semantic_vad', eagerness: 'medium', allowInterruptions: true,
+    mode: 'semantic_vad', eagerness: 'low', allowInterruptions: true,
     noiseReduction: 'far_field', threshold: 0.5, prefixPaddingMs: 300,
-    silenceDurationMs: 500, idleTimeoutMs: 10000
+    silenceDurationMs: 700, idleTimeoutMs: 10000
   },
   responseSettings: { maxOutputTokens: 512, reasoningEffort: 'low' },
   objective: { mode: 'sell', primaryGoal: '', successCriteria: [] },
@@ -41,9 +47,30 @@ const EMPTY = {
   handoffPhrase: 'I’m going to bring a member of our team into the conversation now.',
   advancedInstructions: '',
   knowledgeBaseIds: [],
+  offerTracks: [],
+  auditionScript: '',
   model: 'gpt-realtime-2.1',
   voice: 'marin'
 };
+
+// Mirrors the server-owned catalogue in functions/offer-tracks.js. The server
+// drops anything not in its own list, so this is a picker, not a source.
+const OFFER_TRACKS = [
+  ['voice_agents', 'AI Voice Agents'],
+  ['websites', 'Custom Websites'],
+  ['leads', 'Lead Generation & Follow-Up'],
+  ['seo', 'SEO & Local Search'],
+  ['automation', 'AI Automation'],
+  ['custom_os', 'Custom Operating Systems'],
+  ['ai_optimization', 'AI Optimization'],
+  ['nfc', 'NFC Tag Integration'],
+  ['social', 'Social Media Management'],
+  ['photography', 'Photography'],
+  ['drone', 'Drone Photography'],
+  ['models', 'Models & Talent'],
+  ['fonts', 'Custom Fonts & Type']
+];
+const MAX_OFFER_TRACKS = 4;
 
 const VOICES = ['marin', 'cedar', 'alloy', 'ash', 'ballad', 'coral', 'echo', 'sage', 'shimmer', 'verse'];
 const REASONING_MODELS = new Set(['gpt-realtime-2', 'gpt-realtime-2.1', 'gpt-realtime-2.1-mini']);
@@ -71,7 +98,8 @@ function cloneProfile(profile = EMPTY) {
     objective: { ...EMPTY.objective, ...(profile.objective || {}) },
     permissions: { ...EMPTY.permissions, ...(profile.permissions || {}) },
     rules: { ...EMPTY.rules, ...(profile.rules || {}) },
-    knowledgeBaseIds: profile.knowledgeBaseIds || []
+    knowledgeBaseIds: profile.knowledgeBaseIds || [],
+    offerTracks: profile.offerTracks || []
   }));
 }
 
@@ -164,6 +192,17 @@ export default function AgentProfiles() {
     if (result) setPreview(result);
   };
 
+  // Order matters: the first selected track is the one the agent leads with.
+  const toggleOfferTrack = key => {
+    setDraft(current => {
+      const next = cloneProfile(current);
+      next.offerTracks = next.offerTracks.includes(key)
+        ? next.offerTracks.filter(track => track !== key)
+        : [...next.offerTracks, key].slice(0, MAX_OFFER_TRACKS);
+      return next;
+    });
+  };
+
   const toggleKnowledge = kbId => {
     setDraft(current => {
       const next = cloneProfile(current);
@@ -223,7 +262,9 @@ export default function AgentProfiles() {
           <div className="card-head-actions">
             {selected && <button className="btn-admin" type="button" onClick={duplicate}>Duplicate</button>}
             {selected && <button className="btn-admin danger" type="button" onClick={archive}>Archive</button>}
-            <button className="btn-admin primary" type="button" disabled={action.busy || !draft.name.trim() || customVoiceInvalid} onClick={save}>Save</button>
+            <button className="btn-admin primary" type="button"
+              disabled={action.busy || !draft.name.trim() || (!selected && !draft.accountId) || customVoiceInvalid}
+              onClick={save}>Save</button>
           </div>
         </div>
 
@@ -232,6 +273,22 @@ export default function AgentProfiles() {
             <legend>Agent identity & model</legend>
             <div className="outbound-form-grid">
               <label><span>Name</span><input value={draft.name} maxLength={120} onChange={event => setField(['name'], event.target.value)} placeholder="Friendly Website Consultant" /></label>
+              <label>
+                <span>Account</span>
+                <select
+                  value={selected ? readAccountId(draft.accountId, { fallback: LEGACY_ACCOUNT_ID }) : draft.accountId}
+                  disabled={Boolean(selected)}
+                  onChange={event => setField(['accountId'], event.target.value)}
+                >
+                  <option value="">Select an account…</option>
+                  {ACCOUNT_IDS.map(id => <option key={id} value={id}>{ACCOUNTS[id].label}</option>)}
+                </select>
+                <small>
+                  {selected
+                    ? 'Fixed once saved — campaigns were allowed to select this agent because of it.'
+                    : 'Only this account’s campaigns can use this agent. It cannot be changed later.'}
+                </small>
+              </label>
               <label><span>Personality preset</span>
                 <select className="admin-select" value={draft.personality.preset} onChange={event => applyPreset(event.target.value)}>
                   <option value="friendly_consultant">Friendly consultant</option>
@@ -346,8 +403,8 @@ export default function AgentProfiles() {
               </label>
               {draft.turnTaking.mode === 'semantic_vad' ? (
                 <label className="full"><span>Response eagerness</span><select className="admin-select" value={draft.turnTaking.eagerness} onChange={event => setField(['turnTaking', 'eagerness'], event.target.value)}>
-                  <option value="low">Patient · waits longer</option><option value="medium">Balanced</option><option value="high">Responsive · answers sooner</option><option value="auto">Automatic</option>
-                </select></label>
+                  <option value="low">Patient · waits longer · recommended</option><option value="medium">Balanced</option><option value="high">Responsive · answers sooner</option><option value="auto">Automatic</option>
+                </select><small>Answering the instant a prospect stops talking is the loudest tell that a caller is not human.</small></label>
               ) : (
                 <>
                   <label className="hybrid-range-field"><span>Speech threshold <strong>{Number(draft.turnTaking.threshold).toFixed(2)}</strong></span><input type="range" min="0" max="1" step="0.05" value={draft.turnTaking.threshold} onChange={event => setField(['turnTaking', 'threshold'], Number(event.target.value))} /><small>Higher values ignore more quiet background noise.</small></label>
@@ -381,6 +438,34 @@ export default function AgentProfiles() {
                   onChange={event => setField(['permissions', 'maxDiscountPercent'], Number(event.target.value))} />
               </label>
             )}
+          </fieldset>
+
+          <fieldset className="hybrid-fieldset hybrid-config-section">
+            <legend>Offer tracks & audition</legend>
+            <p className="hybrid-config-note">
+              Selected services get the full pitch, discovery questions, and objection handling. Every other BiteSites
+              service stays a one-line pointer the agent can acknowledge without inventing detail. The first track
+              selected is the one it leads with; pick up to {MAX_OFFER_TRACKS}.
+            </p>
+            <div className="hybrid-kb-choices">
+              {OFFER_TRACKS.map(([key, label]) => {
+                const position = draft.offerTracks.indexOf(key);
+                const atLimit = position < 0 && draft.offerTracks.length >= MAX_OFFER_TRACKS;
+                return (
+                  <label key={key} className={atLimit ? 'is-disabled' : ''}>
+                    <input type="checkbox" checked={position >= 0} disabled={atLimit} onChange={() => toggleOfferTrack(key)} />
+                    <span>{position === 0 ? `${label} · leads` : label}</span>
+                  </label>
+                );
+              })}
+            </div>
+            <div className="outbound-form-grid">
+              <label className="full"><span>Audition script <small>(spoken verbatim by “Play voice sample”)</small></span>
+                <textarea rows={3} maxLength={1200} value={draft.auditionScript || ''}
+                  onChange={event => setField(['auditionScript'], event.target.value)}
+                  placeholder="The persona’s real cold open, in character. Include the AI disclosure in the first sentence if your campaign requires one." />
+              </label>
+            </div>
           </fieldset>
 
           <fieldset className="hybrid-fieldset hybrid-config-section">
@@ -424,6 +509,7 @@ export default function AgentProfiles() {
               <span>{preview.sessionConfig?.audio?.input?.noise_reduction?.type?.replace('_', ' ') || 'Noise reduction off'}</span>
               <span>{preview.sessionConfig?.max_output_tokens || 512} token cap</span>
               <span>{preview.tools?.length || 0} permitted tools</span>
+              <span>{preview.offerTracks?.length || 0} offer tracks</span>
               <span>config {String(preview.effectiveConfigHash || '').slice(0, 10)}…</span>
             </div>
           )}

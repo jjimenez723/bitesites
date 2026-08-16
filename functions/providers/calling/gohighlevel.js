@@ -31,6 +31,9 @@
 import { timingSafeEqual } from 'node:crypto';
 import { CallingProviderAdapter, callEvent } from './adapter.js';
 import { clean, normalizePhone } from '../../prospect-normalization.js';
+import {
+  LEGACY_ACCOUNT_ID, readAccountId, crmTagForAccount, workflowAllowed, getAccount
+} from '../../accounts.js';
 
 const BASE_URL = 'https://services.leadconnectorhq.com';
 const CONTACTS_VERSION = '2021-07-28';
@@ -122,22 +125,45 @@ export class GoHighLevelDialer extends CallingProviderAdapter {
       String(settings[key]?.status || '').toLowerCase() === 'active');
   }
 
+  /**
+   * The account this call serves, from the target first and the campaign as a
+   * backstop. Both are stamped by the importer, so disagreeing is a bug — but
+   * the dialer has already refused a mismatch before anything reaches here.
+   */
+  static accountIdFor({ target, campaign }) {
+    return readAccountId(target?.accountId ?? campaign?.accountId, { fallback: LEGACY_ACCOUNT_ID });
+  }
+
   async upsertContact({ contact, target, campaign }) {
     const phone = target.phoneE164 || normalizePhone(contact.phone);
     if (!phone) throw new GoHighLevelError('Target has no dialable phone number');
 
+    const accountId = GoHighLevelDialer.accountIdFor({ target, campaign });
+    const account = getAccount(accountId);
+    const crmTag = crmTagForAccount(accountId);
+
     const payload = {
       locationId: this.locationId,
       phone,
-      source: 'BiteSites outbound',
+      source: `${account?.label || 'BiteSites'} outbound`,
       country: 'US',
       createNewIfDuplicateAllowed: false,
+      // Both books of business live in one sub-account, so the tag is what
+      // keeps a workflow from reaching across. Every contact this adapter
+      // touches is stamped on the way in, which is what lets each workflow's
+      // entry condition filter on it — an untagged contact is one a filtered
+      // workflow will never pick up, and that is the safe failure.
+      tags: crmTag ? [crmTag] : [],
       // Campaign/target metadata rides along so the completion webhook can be
       // matched deterministically rather than by timestamp proximity (§35).
       customFields: [
         { key: 'bitesites_campaign_id', field_value: clean(target.campaignId || campaign?.id, 160) },
         { key: 'bitesites_target_id', field_value: clean(target.id, 160) },
-        { key: 'bitesites_contact_type', field_value: clean(target.contactType, 20) }
+        { key: 'bitesites_contact_type', field_value: clean(target.contactType, 20) },
+        // Redundant with the tag by design. Tags are edited by hand in the GHL
+        // UI; a custom field is the copy that survives someone tidying up, and
+        // the reconciler compares the two to find contacts that drifted.
+        { key: 'bs_account', field_value: accountId }
       ]
     };
     const name = clean(contact.companyName || contact.name, 120);
@@ -155,6 +181,16 @@ export class GoHighLevelDialer extends CallingProviderAdapter {
 
   async startAICall({ target, contact, campaign, brief }) {
     if (!this.workflowId) throw new GoHighLevelError('GHL_OUTBOUND_WORKFLOW_ID is not configured');
+
+    // Enrolment is irreversible — §23 of this file's own header: once a contact
+    // is in a workflow there is nothing to cancel. So the account check happens
+    // before the upsert, not between the upsert and the enrolment.
+    const accountId = GoHighLevelDialer.accountIdFor({ target, campaign });
+    if (!workflowAllowed(accountId, this.workflowId)) {
+      throw new GoHighLevelError(
+        `Workflow ${this.workflowId} is not registered to account "${accountId}" — refusing to enrol`
+      );
+    }
 
     const { contactId, contact: remote } = await this.upsertContact({ contact, target, campaign });
     if (GoHighLevelDialer.contactIsDnd(remote)) {

@@ -10,34 +10,43 @@ import {
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import {
-  STARTER_ACCOUNTS, STARTER_EXPENSES, STARTER_INCOME, STARTER_LEDGER, STARTER_TEAM
+  STARTER_ACCOUNTS, STARTER_EXPENSES, STARTER_INCOME, STARTER_LEDGER,
+  STARTER_SETTLEMENTS, STARTER_TEAM
 } from './finance-seed';
 
 export { FINANCE_OWNER_EMAILS } from './finance-seed';
+
+// Bumped whenever the starter set gains rows an existing ledger should also
+// receive. `upgradeLedger` below backfills the gap exactly once.
+const LEDGER_VERSION = 2;
 
 const paths = {
   team: 'financeTeam',
   accounts: 'financeAccounts',
   expenses: 'financeExpenses',
-  income: 'financeIncome'
+  income: 'financeIncome',
+  settlements: 'financeSettlements'
 };
 
 const rows = snapshot => snapshot.docs.map(entry => ({ id: entry.id, ...entry.data() }));
 
 async function loadLedger() {
-  const [settings, team, accounts, expenses, income] = await Promise.all([
+  const [settings, team, accounts, expenses, income, settlements] = await Promise.all([
     getDoc(doc(db, 'financeSettings', 'ledger')),
     getDocs(collection(db, paths.team)),
     getDocs(collection(db, paths.accounts)),
     getDocs(collection(db, paths.expenses)),
-    getDocs(collection(db, paths.income))
+    getDocs(collection(db, paths.income)),
+    getDocs(collection(db, paths.settlements))
   ]);
   return {
     initialized: settings.exists(),
+    version: settings.data()?.version || 1,
     team: rows(team),
     accounts: rows(accounts),
     expenses: rows(expenses),
-    income: rows(income)
+    income: rows(income),
+    settlements: rows(settlements)
   };
 }
 
@@ -54,12 +63,53 @@ export async function initializeFinanceLedger() {
   writeRows('accounts', STARTER_ACCOUNTS);
   writeRows('expenses', STARTER_EXPENSES);
   writeRows('income', STARTER_INCOME);
+  writeRows('settlements', STARTER_SETTLEMENTS);
   batch.set(doc(db, 'financeSettings', 'ledger'), {
-    version: 1,
+    version: LEDGER_VERSION,
     initializedAt: serverTimestamp(),
     updatedAt: serverTimestamp()
   });
   await batch.commit();
+}
+
+/**
+ * Backfills rows added to the starter set after a ledger was first written.
+ * Version-gated so it runs once: a row the owner later deletes stays deleted.
+ */
+async function upgradeLedger(version) {
+  if (version >= LEDGER_VERSION) return false;
+  const batch = writeBatch(db);
+
+  if (version < 2) {
+    // Metered API cost lines and the settlement ledger, plus the owner flag
+    // that marks who the running tab is owed to.
+    STARTER_EXPENSES
+      .filter(expense => expense.cadence === 'usage')
+      .forEach(({ id, ...expense }) => {
+        batch.set(doc(db, paths.expenses, id), {
+          ...expense, createdAt: serverTimestamp(), updatedAt: serverTimestamp()
+        });
+      });
+    STARTER_SETTLEMENTS.forEach(({ id, ...settlement }) => {
+      batch.set(doc(db, paths.settlements, id), {
+        ...settlement, createdAt: serverTimestamp(), updatedAt: serverTimestamp()
+      });
+    });
+    STARTER_TEAM
+      .filter(member => member.isOwner)
+      .forEach(member => {
+        batch.set(doc(db, paths.team, member.id), {
+          isOwner: true, updatedAt: serverTimestamp()
+        }, { merge: true });
+      });
+  }
+
+  batch.set(doc(db, 'financeSettings', 'ledger'), {
+    version: LEDGER_VERSION,
+    updatedAt: serverTimestamp()
+  }, { merge: true });
+  await batch.commit();
+  return true;
 }
 
 export function useFinanceLedger(canWrite) {
@@ -73,6 +123,8 @@ export function useFinanceLedger(canWrite) {
       let ledger = await loadLedger();
       if (!ledger.initialized && canWrite) {
         await initializeFinanceLedger();
+        ledger = await loadLedger();
+      } else if (ledger.initialized && canWrite && await upgradeLedger(ledger.version)) {
         ledger = await loadLedger();
       }
       if (!ledger.initialized) {
@@ -111,8 +163,10 @@ export const saveFinanceAccount = account => saveRow(paths.accounts, account);
 export const saveFinanceExpense = expense => saveRow(paths.expenses, expense);
 export const saveFinanceIncome = income => saveRow(paths.income, income);
 export const saveFinanceTeamMember = member => saveRow(paths.team, member);
+export const saveFinanceSettlement = settlement => saveRow(paths.settlements, settlement);
 
 export const deleteFinanceAccount = id => deleteDoc(doc(db, paths.accounts, id));
 export const deleteFinanceExpense = id => deleteDoc(doc(db, paths.expenses, id));
 export const deleteFinanceIncome = id => deleteDoc(doc(db, paths.income, id));
 export const deleteFinanceTeamMember = id => deleteDoc(doc(db, paths.team, id));
+export const deleteFinanceSettlement = id => deleteDoc(doc(db, paths.settlements, id));

@@ -19,6 +19,7 @@ import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { getLeadSource, validateCriteria } from './providers/lead-sources/index.js';
 import { importProspects } from './prospect-import.js';
 import { clean, normalizeList } from './prospect-normalization.js';
+import { requireAccountId } from './accounts.js';
 
 export const JOB_STATUSES = [
   'draft', 'queued', 'running', 'paused', 'awaiting_local_worker',
@@ -54,8 +55,9 @@ export function sanitizeCriteria(input = {}) {
 }
 
 export async function createDiscoveryJob(db, {
-  provider, criteria, createdBy, executionMode = '', sourceOptions = {}
+  provider, criteria, accountId, createdBy, executionMode = '', sourceOptions = {}
 }) {
+  const account = requireAccountId(accountId, { field: 'accountId' });
   const clean_ = sanitizeCriteria(criteria);
   const validity = validateCriteria(clean_);
   if (!validity.valid) throw new Error(validity.errors.join(' '));
@@ -72,6 +74,7 @@ export async function createDiscoveryJob(db, {
   const ref = db.collection('scrapeJobs').doc();
   await ref.set({
     provider: source.constructor.id,
+    accountId: account,
     status: mode === 'local_runner' ? 'awaiting_local_worker' : 'queued',
     criteria: clean_,
     progress: emptyProgress(),
@@ -162,6 +165,7 @@ export async function runDiscoverySlice(db, jobId, { budgetMs = 240000, now = ()
         const result = await importProspects(db, normalized, {
           source: { system: 'scraper', provider: job.provider, searchJobId: jobId },
           importRunId: '',
+          accountId: requireAccountId(job.accountId, { field: 'job.accountId' }),
           now: now()
         });
 
@@ -233,7 +237,13 @@ export async function claimJobForWorker(db, workerId, { now = new Date() } = {})
           attempt: Number(job.execution?.attempt || 0) + 1
         }
       });
-      return { id: entry.id, provider: job.provider, criteria: job.criteria, cursor: job.execution?.cursor || null };
+      return {
+        id: entry.id,
+        provider: job.provider,
+        accountId: requireAccountId(job.accountId, { field: 'job.accountId' }),
+        criteria: job.criteria,
+        cursor: job.execution?.cursor || null
+      };
     });
     if (claimed) return claimed;
   }
@@ -274,6 +284,7 @@ export async function submitDiscoveryResults(db, jobId, workerId, records, { now
   const capped = Array.isArray(records) ? records.slice(0, 500) : [];
   const result = await importProspects(db, capped.map(record => ({ ...record, __source: { provider: job.provider, searchJobId: jobId } })), {
     source: { system: 'scraper', provider: job.provider, searchJobId: jobId },
+    accountId: requireAccountId(job.accountId, { field: 'job.accountId' }),
     now
   });
 

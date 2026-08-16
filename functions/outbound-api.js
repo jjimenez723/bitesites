@@ -27,6 +27,7 @@ import {
   submitDiscoveryResults, finishJob, recoverStaleJobs, pruneRawResults
 } from './lead-discovery.js';
 import { importProspects, createImportRun, finishImportRun, resolveDuplicate } from './prospect-import.js';
+import { requireAccountId, sanitizePartnerOutcomes } from './accounts.js';
 import { csvToRecords } from './providers/lead-sources/csv-source.js';
 import { promoteProspect } from './prospect-conversion.js';
 import {
@@ -198,6 +199,7 @@ export const createLeadDiscoveryJob = onCall({ ...callOptions, secrets: [LEAD_SO
   const jobId = await createDiscoveryJob(db, {
     provider: str(request.data?.provider, 40),
     criteria: request.data?.criteria || {},
+    accountId: request.data?.accountId,
     createdBy: email,
     sourceOptions: { apiKey: secretValue(LEAD_SOURCE_API_KEY) }
   }).catch(error => { throw new HttpsError('invalid-argument', clean(error?.message, 300)); });
@@ -306,16 +308,27 @@ export const importProspectCsv = onCall({ ...callOptions, timeoutSeconds: 300 },
   if (!csvText || csvText.length > 5_000_000) throw new HttpsError('invalid-argument', 'Provide a CSV under 5MB.');
 
   const dryRun = request.data?.dryRun !== false;
+  // Which book these prospects join. Explicit on every import: a spreadsheet of
+  // Hudson County property managers is a client list or a house list, and only
+  // the person uploading it knows which.
+  let accountId;
+  try {
+    accountId = requireAccountId(request.data?.accountId, { field: 'accountId' });
+  } catch (error) {
+    throw new HttpsError('invalid-argument', error.message);
+  }
+
   const { records, unmapped } = csvToRecords(csvText);
   if (!records.length) throw new HttpsError('invalid-argument', 'No data rows were found in that file.');
 
   const runId = dryRun ? '' : await createImportRun(db, {
-    sourceSystem: 'csv', mode: 'execute', collections: ['csv'], startedBy: email
+    sourceSystem: 'csv', mode: 'execute', collections: ['csv'], startedBy: email, accountId
   });
 
   const result = await importProspects(db, records, {
     source: { system: 'csv', provider: 'csv' },
     importRunId: runId,
+    accountId,
     dryRun
   });
 
@@ -521,6 +534,7 @@ export const submitCallDisposition = onCall({ ...callOptions, secrets: OUTBOUND_
   const { db, email } = await requireAdmin(request);
   const targetId = requireId(request.data?.targetId, 'target id');
   const disposition = str(request.data?.disposition, 40);
+  const partnerOutcomes = sanitizePartnerOutcomes(request.data?.partnerOutcomes);
 
   const targetSnapshot = await db.doc(`outboundTargets/${targetId}`).get();
   if (!targetSnapshot.exists) throw new HttpsError('not-found', 'Target not found.');
@@ -532,6 +546,7 @@ export const submitCallDisposition = onCall({ ...callOptions, secrets: OUTBOUND_
     callId: str(request.data?.callId, 200) || targetSnapshot.get('lastCallId') || '',
     disposition,
     notes: str(request.data?.notes, 2000),
+    partnerOutcomes,
     campaign,
     actor: email
   });
@@ -543,6 +558,7 @@ export const submitCallDisposition = onCall({ ...callOptions, secrets: OUTBOUND_
     await db.doc(`calls/${callId}`).set({
       disposition,
       summary: str(request.data?.notes, 2000),
+      partnerOutcomes,
       dispositionBy: email,
       updatedAt: FieldValue.serverTimestamp()
     }, { merge: true });

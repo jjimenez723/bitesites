@@ -12,11 +12,16 @@
 import React, { useState } from 'react';
 import { useNeedsReview, useReviewQueue, useImportRuns, outbound, useAction } from './data';
 import { SourceBadge, StatusPill, formatWhen, formatPhone, Empty, QueryState } from './SourceBadge';
+// The server's registry, imported rather than mirrored — see CampaignBuilder.
+import { ACCOUNTS, ACCOUNT_IDS } from '../../../functions/accounts.js';
 
 function CsvImport({ onImported }) {
   const [preview, setPreview] = useState(null);
   const [text, setText] = useState('');
   const [fileName, setFileName] = useState('');
+  // No default. A spreadsheet of Hudson County property managers is either a
+  // client list or a house list, and only the person uploading it knows which.
+  const [accountId, setAccountId] = useState('');
   const action = useAction();
 
   const readFile = async event => {
@@ -26,12 +31,12 @@ function CsvImport({ onImported }) {
     setPreview(null);
     const content = await file.text();
     setText(content);
-    const result = await action.run(() => outbound.importCsv(content, true), '');
+    const result = await action.run(() => outbound.importCsv(content, true, accountId), '');
     if (result) setPreview(result);
   };
 
   const commit = async () => {
-    const result = await action.run(() => outbound.importCsv(text, false), 'Imported.');
+    const result = await action.run(() => outbound.importCsv(text, false, accountId), 'Imported.');
     if (result) {
       setPreview(result);
       setText('');
@@ -49,9 +54,21 @@ function CsvImport({ onImported }) {
         </div>
       </div>
 
+      <label style={{ display: 'block', marginBottom: 12 }}>
+        <span>Import into</span>
+        <select value={accountId} onChange={event => { setAccountId(event.target.value); setPreview(null); }}>
+          <option value="">Select an account…</option>
+          {ACCOUNT_IDS.map(id => <option key={id} value={id}>{ACCOUNTS[id].label}</option>)}
+        </select>
+        <small>Only this account’s campaigns will be able to call these prospects.</small>
+      </label>
+
       <div className="outbound-drop">
-        Drop a CSV with columns like name, company, phone, email, website, city, state.
-        <input type="file" accept=".csv,text/csv" onChange={readFile} aria-label="Choose a CSV file" />
+        {accountId
+          ? 'Drop a CSV with columns like name, company, phone, email, website, city, state.'
+          : 'Choose an account above before uploading.'}
+        <input type="file" accept=".csv,text/csv" onChange={readFile} disabled={!accountId}
+          aria-label="Choose a CSV file" />
         {fileName && <div style={{ marginTop: 8 }}>{fileName}</div>}
       </div>
 

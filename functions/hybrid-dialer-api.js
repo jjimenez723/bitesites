@@ -22,10 +22,12 @@ import {
   recordCallAuditEvent
 } from './hybrid-call-orchestration.js';
 import { compileAgentRuntime, runtimePreview, sanitizeRealtimeSessionConfig } from './agent-runtime.js';
+import { normalizeOfferTrackKeys } from './offer-tracks.js';
 import { buildAgentPreviewRuntime, mintAgentPreviewClientSecret } from './agent-preview.js';
 import { applyDisposition, cancelLosingLegs, markDoNotCall } from './outbound-calls.js';
 import { getCallingProvider } from './providers/calling/index.js';
 import { clean } from './prospect-normalization.js';
+import { LEGACY_ACCOUNT_ID, requireAccountId, readAccountId } from './accounts.js';
 import { maintainHybridCapacity } from './hybrid-capacity.js';
 import { hybridOutboundEventsUrl } from './hybrid-urls.js';
 import { validHybridTwilioRequest } from './hybrid-twilio-signature.js';
@@ -511,6 +513,10 @@ const normalizeProfileInput = (input = {}, existing = {}) => ({
   name: clean(input.name ?? existing.name, 120) || 'Untitled agent',
   description: clean(input.description ?? existing.description, 1000),
   status: input.status === 'archived' ? 'archived' : 'active',
+  // The account whose contacts this persona is allowed to speak to. Profiles
+  // written before the boundary existed read as the house account, which keeps
+  // them usable by BiteSites campaigns and refused by every client campaign.
+  accountId: readAccountId(input.accountId ?? existing.accountId, { fallback: LEGACY_ACCOUNT_ID }),
   personality: {
     preset: clean(input.personality?.preset ?? existing.personality?.preset, 80),
     tone: clean(input.personality?.tone ?? existing.personality?.tone, 500),
@@ -527,12 +533,12 @@ const normalizeProfileInput = (input = {}, existing = {}) => ({
   },
   turnTaking: {
     mode: profileChoice(input.turnTaking?.mode ?? existing.turnTaking?.mode, ['semantic_vad', 'server_vad'], 'semantic_vad'),
-    eagerness: profileChoice(input.turnTaking?.eagerness ?? existing.turnTaking?.eagerness, ['low', 'medium', 'high', 'auto'], 'medium'),
+    eagerness: profileChoice(input.turnTaking?.eagerness ?? existing.turnTaking?.eagerness, ['low', 'medium', 'high', 'auto'], 'low'),
     allowInterruptions: input.turnTaking?.allowInterruptions ?? existing.turnTaking?.allowInterruptions ?? true,
     noiseReduction: profileChoice(input.turnTaking?.noiseReduction ?? existing.turnTaking?.noiseReduction, ['off', 'near_field', 'far_field'], 'far_field'),
     threshold: profileNumber(input.turnTaking?.threshold ?? existing.turnTaking?.threshold, 0, 1, 0.5),
     prefixPaddingMs: Math.round(profileNumber(input.turnTaking?.prefixPaddingMs ?? existing.turnTaking?.prefixPaddingMs, 0, 2000, 300)),
-    silenceDurationMs: Math.round(profileNumber(input.turnTaking?.silenceDurationMs ?? existing.turnTaking?.silenceDurationMs, 100, 5000, 500)),
+    silenceDurationMs: Math.round(profileNumber(input.turnTaking?.silenceDurationMs ?? existing.turnTaking?.silenceDurationMs, 100, 5000, 700)),
     idleTimeoutMs: Math.round(profileNumber(input.turnTaking?.idleTimeoutMs ?? existing.turnTaking?.idleTimeoutMs, 0, 120000, 10000))
   },
   responseSettings: {
@@ -564,6 +570,8 @@ const normalizeProfileInput = (input = {}, existing = {}) => ({
   handoffPhrase: clean(input.handoffPhrase ?? existing.handoffPhrase, 500) || 'I’m going to bring a member of our team into the conversation now.',
   advancedInstructions: clean(input.advancedInstructions ?? existing.advancedInstructions, 5000),
   knowledgeBaseIds: (input.knowledgeBaseIds ?? existing.knowledgeBaseIds ?? []).slice(0, 20).map(value => clean(value, 200)).filter(Boolean),
+  offerTracks: normalizeOfferTrackKeys(input.offerTracks ?? existing.offerTracks ?? []),
+  auditionScript: clean(input.auditionScript ?? existing.auditionScript, 1200),
   model: clean(input.model ?? existing.model, 120) || 'gpt-realtime-2.1',
   voice: profileChoice(input.voiceSettings?.builtInVoice ?? input.voice ?? existing.voiceSettings?.builtInVoice ?? existing.voice, ['alloy', 'ash', 'ballad', 'coral', 'echo', 'sage', 'shimmer', 'verse', 'marin', 'cedar'], 'marin'),
   voiceSettings: {
@@ -590,6 +598,13 @@ export const listAIAgentProfiles = onCall(callOptions, async request => {
 
 export const createAIAgentProfile = onCall(callOptions, async request => {
   const { db, uid, email } = await requireDialer(request, { manageAgents: true });
+  // Explicit on create: a persona that does not say whose customers it may
+  // speak to is the single most dangerous record in this system.
+  try {
+    requireAccountId(request.data?.accountId, { field: 'accountId' });
+  } catch (error) {
+    throw new HttpsError('invalid-argument', error.message);
+  }
   const ref = db.collection('aiAgentProfiles').doc();
   const profile = validateProfileInput(normalizeProfileInput(request.data || {}));
   await ref.set({
@@ -607,6 +622,18 @@ export const updateAIAgentProfile = onCall(callOptions, async request => {
   if (!snapshot.exists) throw new HttpsError('not-found', 'Agent profile not found.');
   const version = Math.max(1, Number(snapshot.get('version')) || 1) + 1;
   const profile = validateProfileInput(normalizeProfileInput(request.data?.profile || {}, snapshot.data()));
+
+  // A persona's account is fixed for life. Campaigns were allowed to select
+  // this profile because of the account it declared; moving it would
+  // retroactively legitimise every one of those bindings without re-checking
+  // any of them.
+  const settledAccountId = readAccountId(snapshot.get('accountId'), { fallback: LEGACY_ACCOUNT_ID });
+  if (profile.accountId !== settledAccountId) {
+    throw new HttpsError(
+      'failed-precondition',
+      `An agent profile cannot change account (it is "${settledAccountId}"). Create a separate profile instead.`
+    );
+  }
   await db.doc(`aiAgentProfiles/${profileId}/versions/${String(version - 1).padStart(6, '0')}`).set({
     ...snapshot.data(), archivedAt: FieldValue.serverTimestamp()
   });
@@ -929,6 +956,12 @@ export const recordHybridCallEvent = onRequest({
           sessionConfig: runtime.compiled.sessionConfig,
           instructions: runtime.compiled.instructions,
           tools: runtime.compiled.tools,
+          // Persisted so hybridSidebandControl can re-authorize each tool call
+          // against Firestore instead of trusting the media service, which
+          // holds only a shared secret and is not a trust boundary.
+          permissions: runtime.compiled.permissions,
+          offerTracks: runtime.compiled.offerTracks,
+          knowledgeBaseIds: runtime.compiled.knowledgeBaseIds,
           profileId: runtime.compiled.profileId,
           profileVersion: runtime.compiled.profileVersion,
           effectiveConfigHash: runtime.compiled.effectiveConfigHash,

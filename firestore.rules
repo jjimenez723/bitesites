@@ -208,7 +208,15 @@ service cloud.firestore {
       allow update: if isAdmin()
                     // Admins triage status/notes but never rewrite history.
                     && request.resource.data.createdAt == resource.data.createdAt
-                    && request.resource.data.email == resource.data.email;
+                    && request.resource.data.email == resource.data.email
+                    // Which book of business this lead belongs to is server-owned.
+                    // It decides which campaigns may call this person and, for a
+                    // commission client, whose revenue it eventually claims — so
+                    // it is stamped by the ingest path and never edited from a
+                    // browser. `get` with a default keeps leads written before the
+                    // boundary existed updatable; they carry no accountId and
+                    // still must not gain one here.
+                    && request.resource.data.get('accountId', '') == resource.data.get('accountId', '');
       allow delete: if isAdmin();
 
       match /activities/{activityId} {
@@ -475,6 +483,14 @@ service cloud.firestore {
       allow write: if isFinanceOwner();
     }
 
+    // Money team members have actually handed over against their share of
+    // costs. Same posture as the rest of the ledger: auditable by any admin,
+    // writable only by the finance owner who receives the payments.
+    match /financeSettlements/{settlementId} {
+      allow read: if isAdmin();
+      allow write: if isFinanceOwner();
+    }
+
     // ------------------------------------------------------- outbound calling
     //
     // Everything in this block is admin-only for READS and effectively
@@ -543,6 +559,17 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    match /suppressedNumbers/{phoneHash} {
+      // The record of someone having asked us to stop calling. Server-only in
+      // both directions and deliberately more locked down than the collections
+      // above: this is the one list where a browser bug that deletes a document
+      // does not lose data, it resumes calling a person who opted out. The
+      // document id is a hash, so a reader could confirm a number they already
+      // hold but cannot enumerate the list as a directory of opt-outs.
+      allow read: if isOutboundStaff();
+      allow write: if false;
+    }
+
     match /dialerSessions/{sessionId} {
       // A rep watches their own session live; the transitions are all written
       // server-side inside transactions.
@@ -578,6 +605,47 @@ service cloud.firestore {
         allow read: if isAdmin() || isOutboundManager();
         allow write: if false;
       }
+    }
+
+    // ------------------------------------------------------- calendar (§15)
+    //
+    // The console renders the calendar straight from these documents, but no
+    // browser may write one. Availability, holds and commits run through
+    // transactions in booking-calendar.js — a browser that could create an
+    // appointment could double-book a slot the voice agent is mid-way through
+    // confirming, which is exactly the race the hold exists to prevent.
+
+    match /appointments/{appointmentId} {
+      allow read: if isOutboundStaff();
+      allow write: if false;
+    }
+
+    match /calendarSettings/{documentId} {
+      // Working hours and capacity are what the availability engine trusts, so
+      // they are normalized by updateCalendarSettings before they land.
+      allow read: if isOutboundStaff();
+      allow write: if false;
+    }
+
+    match /pricingBook/{documentId} {
+      // The only source a pricing-permitted agent may quote from. Admin-owned
+      // because everything in it is spoken aloud on a live call.
+      allow read: if isOutboundStaff();
+      allow update, create: if isAdmin();
+      allow delete: if false;
+    }
+
+    match /followupTemplates/{templateId} {
+      // The agent picks which template goes out; it never writes one.
+      allow read: if isOutboundStaff();
+      allow update, create: if isAdmin();
+      allow delete: if false;
+    }
+
+    match /followupQueue/{entryId} {
+      // Queued sends, owned by the delivery worker.
+      allow read: if isAdmin() || isOutboundManager();
+      allow write: if false;
     }
 
     match /outboundCallEvents/{eventId} {

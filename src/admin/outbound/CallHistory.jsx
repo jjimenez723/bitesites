@@ -12,6 +12,7 @@ import { Panel, DetailRows } from '../Panel';
 import Transcript from '../Transcript';
 import { StatusPill, formatWhen, formatDuration, providerLabel, Empty, QueryState } from './SourceBadge';
 import { receivingAgent, receivingAgentLabel } from '../voice-attribution';
+import { ACCOUNTS } from '../../../functions/accounts.js';
 
 const MODE_LABELS = {
   human: 'Human only', hybrid: 'Hybrid', ai: 'AI only',
@@ -153,6 +154,9 @@ export default function CallHistory({ campaignId, campaigns = [], onSelectCampai
               ['Duration', formatDuration(open.durationSec)],
               ['Cancelled because', open.cancellationReason?.replace(/_/g, ' ')],
               ['Notes', open.summary],
+              ['Partner conversations', (open.partnerOutcomes || [])
+                .map(row => `${ACCOUNTS[row.accountId]?.label || row.accountId}: ${(row.outcome || '').replace(/_/g, ' ')}${row.notes ? ` — ${row.notes}` : ''}`)
+                .join('\n')],
               ['Recording', open.recordingUrl
                 ? <a href={open.recordingUrl} target="_blank" rel="noreferrer noopener">Open recording</a>
                 : '']

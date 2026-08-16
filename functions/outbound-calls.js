@@ -30,6 +30,13 @@ import {
 import { promoteProspect } from './prospect-conversion.js';
 import { contactKey, loadResearch, saveResearch, researchContact, buildCallBrief } from './lead-enrichment.js';
 import { clean, normalizePhone, resolveTimezone, deterministicId } from './prospect-normalization.js';
+import { normalizeOfferTrackKeys } from './offer-tracks.js';
+import { warmSidebandForSession } from './hybrid-sideband-warmup.js';
+import { isSuppressed, suppressNumber } from './inbound-compliance.js';
+import {
+  LEGACY_ACCOUNT_ID, requireAccountId, readAccountId,
+  checkAccountAlignment, accountMismatchLabel, sanitizePartnerOutcomes
+} from './accounts.js';
 
 export const CAMPAIGN_STATUSES = ['draft', 'researching', 'ready', 'running', 'paused', 'completed', 'cancelled', 'failed'];
 export const CAMPAIGN_MODES = ['ai', 'power', 'parallel'];
@@ -54,6 +61,11 @@ export function sanitizeCampaign(input = {}, { existing = null } = {}) {
 
   return {
     name: clean(input.name, 120) || existing?.name || 'Untitled campaign',
+    // Which book of business this campaign serves. Campaigns created before
+    // the account boundary existed carry none, so an update falls back rather
+    // than failing; `createCampaign` demands an explicit one, which is what
+    // stops a new campaign from ever being ambiguous.
+    accountId: readAccountId(input.accountId ?? existing?.accountId, { fallback: LEGACY_ACCOUNT_ID }),
     mode,
     provider: clean(input.provider, 40) || existing?.provider || 'mock',
     // Power and AI modes are one call at a time by definition; storing a higher
@@ -65,6 +77,12 @@ export function sanitizeCampaign(input = {}, { existing = null } = {}) {
     // default for every new dialer session.
     agentProfileId: clean(input.agentProfileId ?? existing?.agentProfileId, 200),
     agentId: clean(input.agentId ?? existing?.agentId, 120),
+    // A campaign may re-aim its shared persona at a different service without
+    // editing the profile. Only server-owned track keys survive, so this can
+    // never become a free-text prompt channel.
+    agentOverride: {
+      offerTracks: normalizeOfferTrackKeys(input.agentOverride?.offerTracks ?? existing?.agentOverride?.offerTracks)
+    },
     script: clean(input.script, 8000),
     objective: clean(input.objective, 500),
     bookingRules: clean(input.bookingRules, 500),
@@ -88,12 +106,53 @@ export function sanitizeCampaign(input = {}, { existing = null } = {}) {
   };
 }
 
+/**
+ * Everything that will speak on a campaign's behalf must belong to the same
+ * account as the campaign.
+ *
+ * Run on create and on every update, because the second one is the dangerous
+ * one: a campaign built correctly and then re-pointed at another account's
+ * persona is exactly how a client's contacts get called by the wrong voice.
+ */
+async function assertCampaignBindings(db, campaign) {
+  const profileId = campaign.agentProfileId;
+  let profileAccountId;
+
+  if (profileId) {
+    const snapshot = await db.doc(`aiAgentProfiles/${profileId}`).get();
+    if (!snapshot.exists) throw new Error('The selected agent profile no longer exists');
+    // A profile written before the boundary existed belongs to the house
+    // account. That makes it usable by BiteSites campaigns and refused by
+    // every client campaign, which is the safe direction for the mistake.
+    profileAccountId = readAccountId(snapshot.get('accountId'), { fallback: LEGACY_ACCOUNT_ID });
+  }
+
+  const verdict = checkAccountAlignment({
+    expected: campaign.accountId,
+    profile: profileAccountId,
+    callerId: campaign.callerId
+  });
+
+  if (!verdict.aligned) {
+    throw new Error(
+      `${accountMismatchLabel(verdict.reason)} — campaign is "${verdict.expected || 'unset'}", `
+      + `found "${verdict.found || 'unset'}"`
+    );
+  }
+}
+
 export async function createCampaign(db, input, { createdBy }) {
+  // Deliberate on create, tolerant on update: a new campaign that does not say
+  // which book it serves is a bug waiting to happen, and there is no legacy
+  // record to protect here.
+  requireAccountId(input?.accountId, { field: 'accountId' });
+
   const campaign = sanitizeCampaign(input);
   const support = assertSupports(campaign.provider, campaign.mode, campaign.concurrency);
   if (!support.ok) {
     throw new Error(`Provider "${campaign.provider}" cannot run a ${campaign.mode} campaign: missing ${support.missing.join(', ')}`);
   }
+  await assertCampaignBindings(db, campaign);
 
   const ref = db.collection('outboundCampaigns').doc();
   await ref.set({
@@ -121,6 +180,20 @@ export async function updateCampaign(db, campaignId, input) {
   if (!support.ok) {
     throw new Error(`Provider "${campaign.provider}" cannot run a ${campaign.mode} campaign: missing ${support.missing.join(', ')}`);
   }
+
+  // A campaign's account is fixed for life. Its targets were admitted by
+  // comparing them against it, so moving the campaign would silently reclassify
+  // every one of them — and the targets are the records that carry attribution
+  // and, eventually, commission.
+  const settledAccountId = readAccountId(existing.accountId, { fallback: LEGACY_ACCOUNT_ID });
+  if (campaign.accountId !== settledAccountId) {
+    throw new Error(
+      `A campaign cannot change account (it is "${settledAccountId}"). `
+      + 'Create a new campaign under the other account and import its targets there.'
+    );
+  }
+  await assertCampaignBindings(db, campaign);
+
   await ref.set({ ...campaign, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
 
   // Targets imported while approval was required intentionally start in a
@@ -187,22 +260,48 @@ export async function setCampaignStatus(db, campaignId, status, { actor = '' } =
   return { ok: true };
 }
 
-/** Recount a campaign from its targets. Cheaper than keeping counters exact. */
+/**
+ * Which target states roll up into each campaign counter. Every state a target
+ * can hold belongs to exactly one bucket, so the buckets sum to `total` unless
+ * a target carries a state this map does not know about.
+ */
+const CAMPAIGN_COUNT_BUCKETS = {
+  pending: ['pending', 'researching', 'awaiting_approval'],
+  ready: ['ready'],
+  dialing: ['dialing'],
+  connected: ['connected'],
+  completed: ['completed'],
+  callLater: ['call_later', 'no_answer', 'voicemail', 'busy'],
+  doNotCall: ['do_not_call'],
+  failed: ['failed', 'invalid_number', 'cancelled']
+};
+
+/**
+ * Recount a campaign from its targets.
+ *
+ * This runs on nearly every mutation path — each disposition, each release,
+ * each import — so its read cost is the campaign's read cost. Counting used to
+ * scan the target documents, which billed one read per target and silently
+ * stopped at 5,000, so a large campaign both cost the most and was the one
+ * reporting wrong numbers. Server-side aggregation bills one read per 1,000
+ * index entries scanned instead of one per document, and has no such cap: a
+ * 5,000-target campaign recounts for roughly 14 reads rather than 5,000.
+ *
+ * The `campaignId == x AND state in [...]` filters are served by the existing
+ * (campaignId, state, ...) composite index prefix; no new index is required.
+ */
 export async function refreshCampaignCounts(db, campaignId) {
-  const snapshot = await db.collection('outboundTargets').where('campaignId', '==', campaignId).limit(5000).get();
+  const scoped = db.collection('outboundTargets').where('campaignId', '==', campaignId);
+  const buckets = Object.entries(CAMPAIGN_COUNT_BUCKETS);
+  const [total, ...tallies] = await Promise.all([
+    scoped.count().get(),
+    ...buckets.map(([, states]) => scoped.where('state', 'in', states).count().get())
+  ]);
+
   const counts = emptyCampaignCounts();
-  for (const entry of snapshot.docs) {
-    counts.total += 1;
-    const state = entry.get('state');
-    if (state === 'pending' || state === 'researching' || state === 'awaiting_approval') counts.pending += 1;
-    else if (state === 'ready') counts.ready += 1;
-    else if (state === 'dialing') counts.dialing += 1;
-    else if (state === 'connected') counts.connected += 1;
-    else if (state === 'completed') counts.completed += 1;
-    else if (['call_later', 'no_answer', 'voicemail', 'busy'].includes(state)) counts.callLater += 1;
-    else if (state === 'do_not_call') counts.doNotCall += 1;
-    else if (['failed', 'invalid_number', 'cancelled'].includes(state)) counts.failed += 1;
-  }
+  counts.total = total.data().count;
+  buckets.forEach(([bucket], index) => { counts[bucket] = tallies[index].data().count; });
+
   await db.doc(`outboundCampaigns/${campaignId}`).set({ counts, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
   return counts;
 }
@@ -212,6 +311,47 @@ export async function refreshCampaignCounts(db, campaignId) {
 /** Deterministic target id, so adding the same contact twice is a no-op. */
 export const targetId = (campaignId, contactType, contactId) =>
   deterministicId('tgt', campaignId, contactType, contactId);
+
+/**
+ * Re-verify a claimed target's account immediately before it is dialled.
+ *
+ * The import gate already checked this, but a queue can outlive the
+ * assumptions it was built under — a campaign edited, a target written by an
+ * older build, a migration half-applied. Both dial paths call this after
+ * claiming and before anything reaches a provider, so it is the check that
+ * actually has to be true.
+ *
+ * Returns true when the target was rejected, and the caller moves on.
+ */
+async function rejectedForAccountMismatch(db, { target, campaign, campaignAccountId, now, rejected }) {
+  const verdict = checkAccountAlignment({
+    expected: campaignAccountId,
+    target: readAccountId(target.accountId, { fallback: LEGACY_ACCOUNT_ID })
+  });
+  if (verdict.aligned) return false;
+
+  // Terminal, and deliberately not requeued: this is a data fault rather than
+  // a bad moment to call, and a target that silently retries is a target
+  // nobody ever investigates.
+  await releaseTarget(db, target.id, {
+    state: 'failed',
+    extra: {
+      complianceStatus: 'blocked',
+      complianceReasons: ['account_mismatch'],
+      accountMismatch: {
+        expected: verdict.expected,
+        found: verdict.found,
+        at: Timestamp.fromDate(now)
+      }
+    }
+  });
+  console.error(
+    `[outbound] target ${target.id} belongs to "${verdict.found || 'unresolved'}" but campaign `
+    + `${campaign.id} serves "${verdict.expected}" — not dialled`
+  );
+  rejected.push({ targetId: target.id, reason: 'account_mismatch' });
+  return true;
+}
 
 /**
  * Add prospects and/or leads to a campaign.
@@ -225,6 +365,7 @@ export async function importTargets(db, campaignId, { prospectIds = [], leadIds 
   const campaignSnapshot = await db.doc(`outboundCampaigns/${campaignId}`).get();
   if (!campaignSnapshot.exists) throw new Error('Campaign not found');
   const campaign = campaignSnapshot.data();
+  const campaignAccountId = readAccountId(campaign.accountId, { fallback: LEGACY_ACCOUNT_ID });
 
   const added = [];
   const skipped = [];
@@ -236,6 +377,18 @@ export async function importTargets(db, campaignId, { prospectIds = [], leadIds 
     const snapshot = await db.doc(`${collection}/${contactId}`).get();
     if (!snapshot.exists) { skipped.push({ contactId, reason: 'not_found' }); return; }
     const contact = snapshot.data();
+
+    // The account gate, ahead of every other check: a contact from another book
+    // is not a candidate that failed to qualify, it is one that should never
+    // have been offered. Records predating the boundary read as house-account,
+    // so they stay available to BiteSites campaigns and are refused by every
+    // client campaign — the mistake only fails in the safe direction.
+    const contactAccountId = readAccountId(contact.accountId, { fallback: LEGACY_ACCOUNT_ID });
+    const verdict = checkAccountAlignment({ expected: campaignAccountId, contact: contactAccountId });
+    if (!verdict.aligned) {
+      skipped.push({ contactId, reason: `account_mismatch_${verdict.found || 'unresolved'}` });
+      return;
+    }
 
     if (contactType === 'prospect') {
       const status = contact.lifecycle?.status;
@@ -262,6 +415,10 @@ export async function importTargets(db, campaignId, { prospectIds = [], leadIds 
 
     batch.set(db.doc(`outboundTargets/${id}`), {
       campaignId,
+      // Stamped rather than inferred from the campaign at dial time. The
+      // dialer re-checks this against the campaign before every call, and a
+      // check that reads the same field twice is not a check.
+      accountId: campaignAccountId,
       contactType,
       // Exactly one is populated (§24). The other is null, not absent, so a
       // query on it behaves the same for every document.
@@ -670,6 +827,7 @@ export async function dialNext(db, sessionId, {
   if (campaign.status === 'paused' || campaign.status === 'cancelled') {
     return { started: [], reason: `campaign_${campaign.status}` };
   }
+  const campaignAccountId = readAccountId(campaign.accountId, { fallback: LEGACY_ACCOUNT_ID });
 
   const configured = session.mode === 'parallel' ? Math.max(1, Math.min(5, Number(session.concurrency) || 1)) : 1;
   const wanted = maxNewCalls === null
@@ -685,6 +843,20 @@ export async function dialNext(db, sessionId, {
   const scanLimit = Math.max(60, wanted * 20);
   const candidates = await eligibleTargets(db, session.campaignId, { limit: scanLimit, now });
 
+  // Wake the AI media service now, while these legs are still ringing.
+  //
+  // This is the last point with any slack in it. The sideband is not attached
+  // until after a prospect picks up and Twilio confirms a human, so once that
+  // happens every millisecond of container start is silence on a live call.
+  // Ringing is the runway — several seconds of it — and starting the instance
+  // here spends that time instead of the prospect's.
+  //
+  // It belongs here rather than on the dialer's heartbeat because this path is
+  // reached with no browser attached at all: autoDial refills run from a
+  // provider webhook, and detached AI sessions are deliberately exempt from the
+  // abandoned-session reaper.
+  if (candidates.length) await warmSidebandForSession(session);
+
   const provider = getCallingProvider(campaign.provider, providerConfig);
   const started = [];
   const rejected = [];
@@ -698,6 +870,8 @@ export async function dialNext(db, sessionId, {
     if (!claim.claimed) { rejected.push({ targetId: candidate.id, reason: claim.reason }); continue; }
     const target = claim.target;
 
+    if (await rejectedForAccountMismatch(db, { target, campaign, campaignAccountId, now, rejected })) continue;
+
     const contact = await loadContactForTarget(db, target);
     if (!contact) {
       await releaseTarget(db, target.id, { state: 'failed' });
@@ -705,18 +879,24 @@ export async function dialNext(db, sessionId, {
       continue;
     }
 
+    // One read per leg actually being dialled, deliberately not batched: the
+    // suppression list is the record of someone having asked us to stop, and it
+    // is worth a document read to be sure we are reading it for the number we
+    // are about to ring rather than one resolved earlier in the slice.
     const compliance = evaluateCompliance({
       target, contact, campaign, now,
-      internalDoNotCall: contact.contactability?.doNotCall === true || contact.doNotCall === true
+      internalDoNotCall: contact.contactability?.doNotCall === true || contact.doNotCall === true,
+      suppressed: await isSuppressed(db, contact.phoneE164 || target.phoneE164)
     });
 
     if (!compliance.eligible) {
       const terminal = compliance.reasons.some(reason =>
-        ['do_not_call', 'do_not_contact', 'max_attempts_reached', 'no_valid_phone', 'invalid_number'].includes(reason));
+        ['do_not_call', 'do_not_contact', 'suppressed', 'max_attempts_reached', 'no_valid_phone', 'invalid_number'].includes(reason));
       const requeueAt = terminal ? null : nextWindowOpening(now, compliance.timezone, campaign) || new Date(now.getTime() + 3600_000);
       await releaseTarget(db, target.id, {
         state: terminal
-          ? (compliance.reasons.includes('do_not_call') || compliance.reasons.includes('do_not_contact') ? 'do_not_call' : 'completed')
+          ? (compliance.reasons.includes('do_not_call') || compliance.reasons.includes('do_not_contact')
+            || compliance.reasons.includes('suppressed') ? 'do_not_call' : 'completed')
           : 'call_later',
         nextAttemptAt: requeueAt,
         extra: { complianceStatus: 'blocked', complianceReasons: compliance.reasons.slice(0, 8) }
@@ -845,6 +1025,7 @@ export async function runAICampaignSlice(db, campaignId, {
   const campaign = { id: campaignId, ...campaignSnapshot.data() };
   if (campaign.status !== 'running') return { started: [], reason: `campaign_${campaign.status}` };
   if (campaign.mode !== 'ai') return { started: [], reason: 'not_an_ai_campaign' };
+  const campaignAccountId = readAccountId(campaign.accountId, { fallback: LEGACY_ACCOUNT_ID });
 
   const support = assertSupports(campaign.provider, 'ai', 1);
   if (!support.ok) throw new Error(`Provider "${campaign.provider}" cannot place AI calls: missing ${support.missing.join(', ')}`);
@@ -853,6 +1034,11 @@ export async function runAICampaignSlice(db, campaignId, {
   const candidates = await eligibleTargets(db, campaignId, { limit: limit * 3, now });
   const started = [];
   const rejected = [];
+
+  // The autonomous path has no dialer session, no browser and no heartbeat —
+  // this scheduled slice is the only thing that knows AI calls are imminent, so
+  // it is the only place that can wake the sideband before they ring.
+  if (candidates.length) await warmSidebandForSession({ mode: 'ai' });
 
   // The AI runner is its own "session" so the same locking, cancellation and
   // reconciliation code paths apply. A campaign without one would need a second
@@ -872,6 +1058,8 @@ export async function runAICampaignSlice(db, campaignId, {
     if (!claim.claimed) { rejected.push({ targetId: candidate.id, reason: claim.reason }); continue; }
     const target = claim.target;
 
+    if (await rejectedForAccountMismatch(db, { target, campaign, campaignAccountId, now, rejected })) continue;
+
     const contact = await loadContactForTarget(db, target);
     if (!contact) {
       await releaseTarget(db, target.id, { state: 'failed' });
@@ -881,13 +1069,19 @@ export async function runAICampaignSlice(db, campaignId, {
 
     const compliance = evaluateCompliance({
       target, contact, campaign, now,
-      internalDoNotCall: contact.contactability?.doNotCall === true || contact.doNotCall === true
+      internalDoNotCall: contact.contactability?.doNotCall === true || contact.doNotCall === true,
+      suppressed: await isSuppressed(db, contact.phoneE164 || target.phoneE164)
     });
     if (!compliance.eligible) {
       const terminal = compliance.reasons.some(reason =>
-        ['do_not_call', 'do_not_contact', 'max_attempts_reached', 'no_valid_phone', 'invalid_number'].includes(reason));
+        ['do_not_call', 'do_not_contact', 'suppressed', 'max_attempts_reached', 'no_valid_phone', 'invalid_number'].includes(reason));
+      const optedOut = ['do_not_call', 'do_not_contact', 'suppressed']
+        .some(reason => compliance.reasons.includes(reason));
       await releaseTarget(db, target.id, {
-        state: terminal ? 'completed' : 'call_later',
+        // An opt-out is not a completed call. Recording it as `completed` made
+        // the autonomous runner's queue disagree with the interactive dialer's
+        // about the same person, and hid opt-outs from the campaign counters.
+        state: terminal ? (optedOut ? 'do_not_call' : 'completed') : 'call_later',
         nextAttemptAt: terminal ? null : (nextWindowOpening(now, compliance.timezone, campaign) || new Date(now.getTime() + 3600_000)),
         extra: { complianceStatus: 'blocked', complianceReasons: compliance.reasons.slice(0, 8) }
       });
@@ -1237,7 +1431,7 @@ export async function recordCallEvent(db, event, { eventDocId, now = new Date(),
  */
 export async function applyDisposition(db, {
   targetId: id, callId, disposition, campaign, notes = '', actor = '',
-  requestedFollowUpAt = null, now = new Date()
+  requestedFollowUpAt = null, partnerOutcomes = [], now = new Date()
 }) {
   const targetRef = db.doc(`outboundTargets/${id}`);
   const snapshot = await targetRef.get();
@@ -1248,6 +1442,7 @@ export async function applyDisposition(db, {
   const attemptCount = Number(target.attemptCount || 0);
   const maxAttempts = Number(target.maxAttempts ?? campaign?.maxAttempts ?? 3);
   const exhausted = attemptCount >= maxAttempts;
+  const safePartnerOutcomes = sanitizePartnerOutcomes(partnerOutcomes);
 
   let nextAttemptAt = null;
   const retryable = ['call_later', 'no_answer', 'voicemail', 'busy'].includes(state);
@@ -1274,13 +1469,24 @@ export async function applyDisposition(db, {
       lastCallId: clean(callId, 200),
       lastAttemptAt: Timestamp.fromDate(now),
       requeueReason: retryable ? clean(disposition, 60) : '',
-      ...(notes ? { notes: clean(notes, 2000) } : {})
+      ...(notes ? { notes: clean(notes, 2000) } : {}),
+      ...(safePartnerOutcomes.length ? { partnerOutcomes: safePartnerOutcomes } : {})
     }
   });
 
   const contact = await loadContactForTarget(db, target);
   if (contact) {
     await updateContactAfterAttempt(db, contact, { disposition, callId, campaignId: target.campaignId, at: now });
+    if (safePartnerOutcomes.length) {
+      await recordContactActivity(db, contact, {
+        type: 'partner_conversation',
+        callId: clean(callId, 200),
+        campaignId: clean(target.campaignId, 200),
+        partnerOutcomes: safePartnerOutcomes,
+        actor: clean(actor, 200),
+        at: Timestamp.fromDate(now)
+      });
+    }
   }
 
   // Promotion happens here and nowhere else, and only for outcomes that mean a
@@ -1299,7 +1505,7 @@ export async function applyDisposition(db, {
   }
 
   if (target.campaignId) await refreshCampaignCounts(db, target.campaignId);
-  return { ok: true, state, nextAttemptAt, promotion };
+  return { ok: true, state, nextAttemptAt, promotion, partnerOutcomes: safePartnerOutcomes };
 }
 
 // -------------------------------------------------------- operator actions
@@ -1341,6 +1547,15 @@ export async function markDoNotCall(db, id, { actor = '', now = new Date() } = {
     );
     await recordContactActivity(db, contact, { type: 'do_not_contact', actor: clean(actor, 128), at: Timestamp.fromDate(now) });
   }
+
+  // An opt-out that only survives as long as the record we happen to hold is
+  // not an opt-out either. Marking the contact covers this prospect document;
+  // suppressing the number covers the person, including the case where they are
+  // re-imported months later from a different list under a brand new document
+  // that has never heard of this request.
+  await suppressNumber(db, contact?.phoneE164 || target.phoneE164, {
+    actor, reason: 'do_not_call', source: 'outbound', now, FieldValue
+  }).catch(error => console.warn('[outbound] number suppression failed', clean(error?.message, 200)));
 
   // Every other campaign gets the same answer. An opt-out that only applies to
   // the campaign the person happened to be called from is not an opt-out.

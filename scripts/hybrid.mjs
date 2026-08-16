@@ -23,7 +23,16 @@ const REQUIRED_SECRETS = [
   'AI_MEDIA_WEBHOOK_SECRET',
   'OPENAI_API_KEY',
   'OPENAI_WEBHOOK_SECRET',
+  // Google Calendar sync. Firebase resolves every defineSecret at deploy time,
+  // so this has to exist before the calendar functions will deploy — but the
+  // booking engine does not need it. Left as a placeholder, Firestore stays the
+  // book of record and the Google mirror simply stays off until a real service
+  // account key is supplied.
+  'GOOGLE_CALENDAR_CREDENTIALS',
 ];
+
+/** Secrets that deploy fine as a placeholder rather than blocking setup. */
+const PLACEHOLDER_SECRETS = { GOOGLE_CALENDAR_CREDENTIALS: '{}' };
 const HYBRID_FUNCTIONS = [
   // Outbound control plane used by every dashboard tab. Keeping these in the
   // Hybrid release prevents a partial deployment from leaving UI buttons
@@ -101,6 +110,14 @@ const HYBRID_FUNCTIONS = [
   'hybridAICarrierControl',
   'handleHybridMachineAnswer',
   'twilioHybridVoicemailTwiML',
+  'getCalendarAvailability',
+  'getCalendarSettings',
+  'updateCalendarSettings',
+  'bookAppointment',
+  'rescheduleAppointmentCall',
+  'cancelAppointmentCall',
+  'setAppointmentOutcome',
+  'calendarMaintenance',
 ];
 const FIREBASE_TARGETS = [
   ...HYBRID_FUNCTIONS.map(name => `functions:${name}`),
@@ -301,6 +318,16 @@ function preflight({
 function secretInput(name) {
   const value = String(process.env[name] || '').trim();
   if (!value) return '';
+  // A service-account key is a JSON document, so it is the one credential that
+  // legitimately arrives pretty-printed. Compact it rather than rejecting it —
+  // the alternative is asking whoever runs setup to pipe it through jq.
+  if (name === 'GOOGLE_CALENDAR_CREDENTIALS' && /\r|\n/.test(value)) {
+    try {
+      return JSON.stringify(JSON.parse(value));
+    } catch {
+      throw new Error(`${name} must be the service-account JSON key file's contents`);
+    }
+  }
   if (/\r|\n/.test(value)) throw new Error(`${name} must be a single-line value`);
   return value;
 }
@@ -422,6 +449,12 @@ async function configure() {
     if (!value && name === 'AI_MEDIA_WEBHOOK_SECRET'
         && (!names.includes(name) || rotateMediaSecret)) {
       value = randomBytes(48).toString('base64url');
+    }
+    // Create the placeholder only when nothing exists yet, so re-running
+    // configure never overwrites a real key with an empty one.
+    if (!value && PLACEHOLDER_SECRETS[name] && !names.includes(name)) {
+      value = PLACEHOLDER_SECRETS[name];
+      warn(`${name} not supplied — writing a placeholder. Google Calendar sync stays off until you set a real service-account key.`);
     }
     if (value) setSecret(name, value);
   }

@@ -251,6 +251,39 @@ export const useImportRuns = () =>
     q: query(collection(db, 'importRuns'), orderBy('startedAt', 'desc'), limit(100))
   }), []);
 
+/**
+ * Appointments in a window. Live, because the voice agent books into this same
+ * calendar mid-call — a rep looking at today's schedule needs to see a meeting
+ * appear the moment an agent closes one.
+ */
+export const useAppointments = ({ fromMs, toMs }) =>
+  useLiveOutboundQuery(() => {
+    if (!fromMs || !toMs) return null;
+    return {
+      cap: LIST_CAP,
+      q: query(
+        collection(db, 'appointments'),
+        where('startAt', '>=', new Date(fromMs)),
+        where('startAt', '<', new Date(toMs)),
+        orderBy('startAt', 'asc'),
+        limit(LIST_CAP)
+      )
+    };
+  }, [fromMs, toMs]);
+
+export const calendar = {
+  settings: accountId => callable('getCalendarSettings', { accountId }),
+  saveSettings: (accountId, settings) => callable('updateCalendarSettings', { accountId, settings }),
+  availability: (accountId, options) => callable('getCalendarAvailability', { ...(options || {}), accountId }),
+  book: (accountId, booking) => callable('bookAppointment', { ...booking, accountId }),
+  reschedule: (accountId, appointmentId, slotId) =>
+    callable('rescheduleAppointmentCall', { accountId, appointmentId, slotId }),
+  cancel: (accountId, appointmentId, reason) =>
+    callable('cancelAppointmentCall', { accountId, appointmentId, reason }),
+  setOutcome: (accountId, appointmentId, outcome) =>
+    callable('setAppointmentOutcome', { accountId, appointmentId, outcome })
+};
+
 export async function loadProspect(id) {
   const snapshot = await getDoc(doc(db, 'prospects', id));
   return snapshot.exists() ? { id: snapshot.id, ...snapshot.data() } : null;
@@ -287,12 +320,13 @@ async function callable(name, payload) {
 export const outbound = {
   config: () => callable('getOutboundConfig'),
 
-  createDiscoveryJob: (provider, criteria) => callable('createLeadDiscoveryJob', { provider, criteria }),
+  createDiscoveryJob: (provider, criteria, accountId) =>
+    callable('createLeadDiscoveryJob', { provider, criteria, accountId }),
   runDiscoveryJob: jobId => callable('runLeadDiscoveryJob', { jobId }),
   pauseDiscoveryJob: jobId => callable('pauseLeadDiscoveryJob', { jobId }),
   cancelDiscoveryJob: jobId => callable('cancelLeadDiscoveryJob', { jobId }),
 
-  importCsv: (csvText, dryRun = true) => callable('importProspectCsv', { csvText, dryRun }),
+  importCsv: (csvText, dryRun = true, accountId = '') => callable('importProspectCsv', { csvText, dryRun, accountId }),
   resolveDuplicate: (prospectId, action) => callable('resolveProspectDuplicate', { prospectId, action }),
   promoteProspect: (prospectId, trigger, context = {}) =>
     callable('promoteProspectToLead', { prospectId, trigger, ...context }),

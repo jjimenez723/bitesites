@@ -500,6 +500,13 @@
 .bs-admin .outcome-grid button.is-selected { border-color: rgba(124,132,255,.55); background: rgba(101,111,255,.13); box-shadow: inset 0 0 0 1px rgba(124,132,255,.16); }
 .bs-admin .outcome-grid strong { font-size: 11.5px; }
 .bs-admin .outcome-grid span { color: var(--ink-3); font-size: 9.5px; line-height: 1.35; }
+.bs-admin .partner-wrap-up { display: grid; gap: 10px; margin: 16px 0; padding: 14px; border: 1px solid rgba(255,255,255,.08); border-radius: 12px; background: rgba(255,255,255,.02); }
+.bs-admin .partner-wrap-up > div:first-child { display: grid; gap: 3px; }
+.bs-admin .partner-wrap-up > div:first-child span { color: var(--ink-3); font-size: 11px; }
+.bs-admin .partner-outcomes-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 10px; }
+.bs-admin .partner-outcomes-grid fieldset { min-width: 0; display: grid; gap: 7px; padding: 10px; border: 1px solid rgba(255,255,255,.08); border-radius: 9px; }
+.bs-admin .partner-outcomes-grid legend { padding: 0 5px; font-size: 11px; font-weight: 700; }
+.bs-admin .partner-outcomes-grid select, .bs-admin .partner-outcomes-grid input { width: 100%; }
 .bs-admin .wrap-up-field { display: grid; gap: 6px; margin-top: 13px; }
 .bs-admin .wrap-up-impact { display: grid; grid-template-columns: 130px minmax(0,1fr); gap: 12px; margin: 16px 0; padding: 12px; border: 1px solid rgba(255,255,255,.08); border-radius: 11px; background: rgba(255,255,255,.025); }
 .bs-admin .wrap-up-impact strong { font-size: 10.5px; }
@@ -582,6 +589,7 @@
   .bs-admin .live-audibility, .bs-admin .live-shortcut-hint { display: none; }
   .bs-admin .live-primary-controls { justify-content: center; flex-wrap: wrap; }
   .bs-admin .outcome-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
+  .bs-admin .partner-outcomes-grid { grid-template-columns: 1fr; }
   .bs-admin .transfer-inbox { top: 10px; right: 10px; width: calc(100vw - 20px); grid-template-columns: auto minmax(0,1fr); }
   .bs-admin .transfer-inbox-actions { grid-column: 1 / -1; justify-content: flex-end; }
   .bs-admin .transfer-waiting { grid-template-columns: auto minmax(0,1fr); }

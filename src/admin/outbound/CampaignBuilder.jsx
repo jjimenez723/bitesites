@@ -7,10 +7,19 @@
 //
 // The calling window defaults are deliberately tighter than the legal maximum.
 // An operator who wants 8am–9pm has to choose it.
+//
+// The account selector has no default on purpose. BiteSites and its commission
+// clients share one CRM, so `accountId` is the only thing keeping their contacts
+// apart, and a pre-selected account is a wrong account nobody reads. It is also
+// fixed once saved — the targets underneath were admitted by comparing them
+// against it.
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { outbound, useAction } from './data';
 import { providerLabel } from './SourceBadge';
+// The server's registry, imported rather than mirrored: a second copy of this
+// list is a second copy that can disagree with the one enforcing the boundary.
+import { ACCOUNTS, ACCOUNT_IDS, LEGACY_ACCOUNT_ID, readAccountId } from '../../../functions/accounts.js';
 
 const MODES = [
   ['power', 'Power dial', 'One call at a time, driven by a person.'],
@@ -28,7 +37,7 @@ const CONSENT_BASES = [
 ];
 
 const BLANK = {
-  name: '', mode: 'power', provider: 'mock', concurrency: 1, callerId: '',
+  name: '', accountId: '', mode: 'power', provider: 'mock', concurrency: 1, callerId: '',
   agentProfileId: '',
   objective: '', script: '', bookingRules: '', escalationRules: '',
   allowedDays: ['mon', 'tue', 'wed', 'thu', 'fri'],
@@ -53,7 +62,13 @@ function capabilityGap(providers, providerId, mode, concurrency) {
 }
 
 export default function CampaignBuilder({ providers = [], campaign = null, onSaved, onCancel }) {
-  const [form, setForm] = useState(() => ({ ...BLANK, ...(campaign || {}) }));
+  const [form, setForm] = useState(() => ({
+    ...BLANK,
+    ...(campaign || {}),
+    // A campaign saved before the account boundary existed carries none, and it
+    // belongs to the house account by definition.
+    ...(campaign ? { accountId: readAccountId(campaign.accountId, { fallback: LEGACY_ACCOUNT_ID }) } : {})
+  }));
   const [agentProfiles, setAgentProfiles] = useState([]);
   const [agentsLoading, setAgentsLoading] = useState(true);
   const action = useAction();
@@ -71,16 +86,38 @@ export default function CampaignBuilder({ providers = [], campaign = null, onSav
     outbound.listAgentProfiles()
       .then(result => {
         if (cancelled) return;
-        const active = (result?.profiles || []).filter(profile => profile.status !== 'archived');
-        setAgentProfiles(active);
-        setForm(current => current.agentProfileId || !active.length
-          ? current
-          : { ...current, agentProfileId: active[0].id });
+        setAgentProfiles((result?.profiles || []).filter(profile => profile.status !== 'archived'));
       })
       .catch(() => { if (!cancelled) setAgentProfiles([]); })
       .finally(() => { if (!cancelled) setAgentsLoading(false); });
     return () => { cancelled = true; };
   }, []);
+
+  // Only this account's personas are offerable. The server refuses the rest
+  // anyway; showing them invites the operator to pick one and read the refusal
+  // as a bug rather than as the boundary working.
+  const accountProfiles = useMemo(
+    () => (form.accountId
+      ? agentProfiles.filter(profile =>
+        readAccountId(profile.accountId, { fallback: LEGACY_ACCOUNT_ID }) === form.accountId)
+      : []),
+    [agentProfiles, form.accountId]
+  );
+
+  // Changing the account drops a persona that no longer belongs, rather than
+  // leaving a stale id in a field the operator can no longer see.
+  useEffect(() => {
+    setForm(current => {
+      if (!current.agentProfileId) {
+        return accountProfiles.length && current.accountId
+          ? { ...current, agentProfileId: accountProfiles[0].id }
+          : current;
+      }
+      return accountProfiles.some(profile => profile.id === current.agentProfileId)
+        ? current
+        : { ...current, agentProfileId: accountProfiles[0]?.id || '' };
+    });
+  }, [accountProfiles]);
 
   const submit = async event => {
     event.preventDefault();
@@ -114,6 +151,20 @@ export default function CampaignBuilder({ providers = [], campaign = null, onSav
           <label className="full">
             <span>Campaign name</span>
             <input value={form.name} onChange={event => set('name', event.target.value)} required maxLength={120} />
+          </label>
+
+          <label>
+            <span>Account</span>
+            <select value={form.accountId} required disabled={Boolean(campaign?.id)}
+              onChange={event => set('accountId', event.target.value)}>
+              <option value="">Select an account…</option>
+              {ACCOUNT_IDS.map(id => <option key={id} value={id}>{ACCOUNTS[id].label}</option>)}
+            </select>
+            <small>
+              {campaign?.id
+                ? 'Fixed once saved — its targets were admitted against this account.'
+                : 'Whose contacts this campaign may call. It cannot be changed later.'}
+            </small>
           </label>
 
           <label>
@@ -157,14 +208,22 @@ export default function CampaignBuilder({ providers = [], campaign = null, onSav
           {needsAgentProfile && (
             <label>
               <span>Default AI agent</span>
-              <select value={form.agentProfileId} required disabled={agentsLoading}
+              <select value={form.agentProfileId} required disabled={agentsLoading || !form.accountId}
                 onChange={event => set('agentProfileId', event.target.value)}>
-                <option value="">{agentsLoading ? 'Loading agents…' : 'Select an agent…'}</option>
-                {agentProfiles.map(profile => (
+                <option value="">
+                  {agentsLoading ? 'Loading agents…'
+                    : !form.accountId ? 'Choose an account first…'
+                      : accountProfiles.length ? 'Select an agent…'
+                        : `No agents belong to ${ACCOUNTS[form.accountId]?.label || 'this account'} yet`}
+                </option>
+                {accountProfiles.map(profile => (
                   <option key={profile.id} value={profile.id}>{profile.name} · v{profile.version || 1}</option>
                 ))}
               </select>
-              <small>Used for AI overflow by default; an operator can still override it for one session.</small>
+              <small>
+                Only this account’s agents are listed. Used for AI overflow by default; an operator can
+                still override it for one session.
+              </small>
             </label>
           )}
 

@@ -21,6 +21,33 @@ import { clean } from './prospect-normalization.js';
 import { recordCallAuditEvent, releaseRepFromCall } from './hybrid-call-orchestration.js';
 import { maintainHybridCapacity } from './hybrid-capacity.js';
 import { hybridOutboundEventsUrl } from './hybrid-urls.js';
+import { warmSidebandForSession } from './hybrid-sideband-warmup.js';
+import {
+  LEGACY_ACCOUNT_ID, readAccountId, checkAccountAlignment, accountMismatchLabel,
+  sanitizePartnerOutcomes
+} from './accounts.js';
+
+/**
+ * A persona may only speak to the account its campaign serves.
+ *
+ * The campaign builder already refuses a cross-account default, but the profile
+ * for a live session is chosen again here and can be supplied straight by the
+ * caller — so a rep on a client campaign could otherwise start a session with
+ * the house persona. This is that same check at the point the override happens.
+ */
+function assertProfileServesAccount(profileSnapshot, campaignAccountId) {
+  if (!profileSnapshot?.exists) return;
+  const verdict = checkAccountAlignment({
+    expected: readAccountId(campaignAccountId, { fallback: LEGACY_ACCOUNT_ID }),
+    profile: readAccountId(profileSnapshot.get('accountId'), { fallback: LEGACY_ACCOUNT_ID })
+  });
+  if (!verdict.aligned) {
+    throw new HttpsError(
+      'failed-precondition',
+      `${accountMismatchLabel(verdict.reason)} — this campaign serves "${verdict.expected}".`
+    );
+  }
+}
 
 const TWILIO_ACCOUNT_SID = defineSecret('TWILIO_ACCOUNT_SID');
 const TWILIO_AUTH_TOKEN = defineSecret('TWILIO_AUTH_TOKEN');
@@ -140,6 +167,7 @@ export const startHybridDialerSession = onCall({ ...callOptions, secrets: HYBRID
   if (requestedProfileId && (!profileSnapshot?.exists || profileSnapshot.get('status') === 'archived')) {
     throw new HttpsError('failed-precondition', 'The selected AI agent profile is unavailable.');
   }
+  assertProfileServesAccount(profileSnapshot, campaign.accountId);
 
   const { sessionId } = await startDialerSession(db, {
     campaignId,
@@ -176,6 +204,11 @@ export const startHybridDialerSession = onCall({ ...callOptions, secrets: HYBRID
     metadata: { hybridV2: true, concurrency, agentProfileId: requestedProfileId }
   });
 
+  // The earliest honest signal that AI calls are coming. Nothing is dialled for
+  // at least as long as it takes the rep to pick a campaign and hit dial, so
+  // the sideband has ample runway to be up before the first prospect answers.
+  await warmSidebandForSession({ operatingMode });
+
   return {
     sessionId,
     concurrency,
@@ -189,8 +222,14 @@ export const startHybridDialerSession = onCall({ ...callOptions, secrets: HYBRID
 export const heartbeatHybridDialerSession = onCall(callOptions, async request => {
   const { db, uid } = await requireDialer(request);
   const sessionId = requireId(request.data?.sessionId, 'session id');
-  await requireOwnedSession(db, sessionId, uid);
-  return heartbeatSession(db, sessionId);
+  const session = await requireOwnedSession(db, sessionId, uid);
+  const beat = await heartbeatSession(db, sessionId);
+  // Every 45 seconds for the life of the session, so the sideband stays up for
+  // exactly as long as this rep could put a prospect in front of the AI — and
+  // scales to zero once they close the dialer. Best-effort by construction: a
+  // failed warm-up costs a cold start, never a dropped heartbeat.
+  await warmSidebandForSession(session);
+  return beat;
 });
 
 /** Change who owns future human answers without ending the server-side stream. */
@@ -209,6 +248,12 @@ export const setHybridOperatingMode = onCall({ ...callOptions, secrets: HYBRID_S
   if (agentProfileId && (!profileSnapshot?.exists || profileSnapshot.get('status') === 'archived')) {
     throw new HttpsError('failed-precondition', 'The selected AI agent profile is unavailable.');
   }
+  // Switching operating mode mid-session re-picks the persona, so the account
+  // check has to run again here and not only at session start.
+  if (profileSnapshot?.exists) {
+    const sessionCampaign = await db.doc(`outboundCampaigns/${session.campaignId}`).get();
+    assertProfileServesAccount(profileSnapshot, sessionCampaign.get('accountId'));
+  }
   const agentProfileName = clean(profileSnapshot?.get('name'), 120);
   const agentProfileVersion = Math.max(1, Number(profileSnapshot?.get('version')) || 1);
   await db.doc(`dialerSessions/${sessionId}`).set({
@@ -219,6 +264,10 @@ export const setHybridOperatingMode = onCall({ ...callOptions, secrets: HYBRID_S
     agentProfileVersion,
     updatedAt: FieldValue.serverTimestamp()
   }, { merge: true });
+  // A session that starts human-only never warms the sideband, so switching it
+  // into an AI mode is its own first signal — and the switch can be followed by
+  // a dial immediately.
+  await warmSidebandForSession({ operatingMode });
   if (agentProfileId) {
     for (const callId of (session.activeCallIds || []).slice(-100)) {
       const callRef = db.doc(`calls/${callId}`);
@@ -472,6 +521,7 @@ export const submitHybridDisposition = onCall(callOptions, async request => {
   ]);
   if (!allowedDispositions.has(disposition)) throw new HttpsError('invalid-argument', 'Choose a valid call outcome.');
   const followUpAtRaw = clean(request.data?.followUpAt, 80);
+  const partnerOutcomes = sanitizePartnerOutcomes(request.data?.partnerOutcomes);
   const followUpAt = followUpAtRaw ? new Date(followUpAtRaw) : null;
   if (followUpAtRaw && Number.isNaN(followUpAt?.getTime())) throw new HttpsError('invalid-argument', 'Enter a valid follow-up time.');
   if (['booked_meeting', 'call_later'].includes(disposition) && !followUpAt) {
@@ -482,6 +532,7 @@ export const submitHybridDisposition = onCall(callOptions, async request => {
     callId,
     disposition,
     notes: clean(request.data?.notes, 2000),
+    partnerOutcomes,
     campaign: campaignSnapshot.exists ? { id: campaignSnapshot.id, ...campaignSnapshot.data() } : null,
     actor: email || uid,
     requestedFollowUpAt: followUpAt
@@ -489,6 +540,7 @@ export const submitHybridDisposition = onCall(callOptions, async request => {
   await db.doc(`calls/${callId}`).set({
     disposition,
     summary: clean(request.data?.notes, 2000),
+    partnerOutcomes,
     dispositionBy: email || uid,
     wrapUp: {
       status: 'completed',

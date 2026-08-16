@@ -3,12 +3,11 @@
 // Bit is ours, so we hold the whole transcript: every prompt, every quick reply,
 // every free-text answer, in order, tied to the lead it produced.
 //
-// Byte runs on the GoHighLevel/Retell widget, which owns the audio and the
-// authoritative transcript. What we can record first-party is the *session* —
-// when it started, how the call progressed, how long it lasted, how it ended —
-// plus whatever transcript text the widget renders into its own DOM. Anything
-// missing is filled in by the `recordVoiceCall` webhook in functions/, which GHL
-// posts the finished call summary to.
+// Byte runs on our own OpenAI Realtime engine (src/lib/byte-voice.js), which
+// emits the call states and the finished transcript lines directly, so both
+// are recorded first-party here. The `recordVoiceCall` webhook in functions/
+// remains as the return path for calls that still arrive through GoHighLevel
+// (the real phone line), not for these browser sessions.
 //
 // Every write is best-effort: a logging failure must never break the visitor's
 // conversation, so nothing here throws.
@@ -103,7 +102,7 @@ export async function startCall() {
     agent: 'byte',
     channel: 'voice',
     status: 'open',
-    provider: 'gohighlevel',
+    provider: 'openai',
     startedAt: sdk.serverTimestamp(),
     ...context()
   }));
