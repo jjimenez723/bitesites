@@ -31,6 +31,7 @@ import { promoteProspect } from './prospect-conversion.js';
 import { contactKey, loadResearch, saveResearch, researchContact, buildCallBrief } from './lead-enrichment.js';
 import { clean, normalizePhone, resolveTimezone, deterministicId } from './prospect-normalization.js';
 import { normalizeOfferTrackKeys } from './offer-tracks.js';
+import { warmSidebandForSession } from './hybrid-sideband-warmup.js';
 import {
   LEGACY_ACCOUNT_ID, requireAccountId, readAccountId,
   checkAccountAlignment, accountMismatchLabel
@@ -258,22 +259,48 @@ export async function setCampaignStatus(db, campaignId, status, { actor = '' } =
   return { ok: true };
 }
 
-/** Recount a campaign from its targets. Cheaper than keeping counters exact. */
+/**
+ * Which target states roll up into each campaign counter. Every state a target
+ * can hold belongs to exactly one bucket, so the buckets sum to `total` unless
+ * a target carries a state this map does not know about.
+ */
+const CAMPAIGN_COUNT_BUCKETS = {
+  pending: ['pending', 'researching', 'awaiting_approval'],
+  ready: ['ready'],
+  dialing: ['dialing'],
+  connected: ['connected'],
+  completed: ['completed'],
+  callLater: ['call_later', 'no_answer', 'voicemail', 'busy'],
+  doNotCall: ['do_not_call'],
+  failed: ['failed', 'invalid_number', 'cancelled']
+};
+
+/**
+ * Recount a campaign from its targets.
+ *
+ * This runs on nearly every mutation path — each disposition, each release,
+ * each import — so its read cost is the campaign's read cost. Counting used to
+ * scan the target documents, which billed one read per target and silently
+ * stopped at 5,000, so a large campaign both cost the most and was the one
+ * reporting wrong numbers. Server-side aggregation bills one read per 1,000
+ * index entries scanned instead of one per document, and has no such cap: a
+ * 5,000-target campaign recounts for roughly 14 reads rather than 5,000.
+ *
+ * The `campaignId == x AND state in [...]` filters are served by the existing
+ * (campaignId, state, ...) composite index prefix; no new index is required.
+ */
 export async function refreshCampaignCounts(db, campaignId) {
-  const snapshot = await db.collection('outboundTargets').where('campaignId', '==', campaignId).limit(5000).get();
+  const scoped = db.collection('outboundTargets').where('campaignId', '==', campaignId);
+  const buckets = Object.entries(CAMPAIGN_COUNT_BUCKETS);
+  const [total, ...tallies] = await Promise.all([
+    scoped.count().get(),
+    ...buckets.map(([, states]) => scoped.where('state', 'in', states).count().get())
+  ]);
+
   const counts = emptyCampaignCounts();
-  for (const entry of snapshot.docs) {
-    counts.total += 1;
-    const state = entry.get('state');
-    if (state === 'pending' || state === 'researching' || state === 'awaiting_approval') counts.pending += 1;
-    else if (state === 'ready') counts.ready += 1;
-    else if (state === 'dialing') counts.dialing += 1;
-    else if (state === 'connected') counts.connected += 1;
-    else if (state === 'completed') counts.completed += 1;
-    else if (['call_later', 'no_answer', 'voicemail', 'busy'].includes(state)) counts.callLater += 1;
-    else if (state === 'do_not_call') counts.doNotCall += 1;
-    else if (['failed', 'invalid_number', 'cancelled'].includes(state)) counts.failed += 1;
-  }
+  counts.total = total.data().count;
+  buckets.forEach(([bucket], index) => { counts[bucket] = tallies[index].data().count; });
+
   await db.doc(`outboundCampaigns/${campaignId}`).set({ counts, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
   return counts;
 }
@@ -815,6 +842,20 @@ export async function dialNext(db, sessionId, {
   const scanLimit = Math.max(60, wanted * 20);
   const candidates = await eligibleTargets(db, session.campaignId, { limit: scanLimit, now });
 
+  // Wake the AI media service now, while these legs are still ringing.
+  //
+  // This is the last point with any slack in it. The sideband is not attached
+  // until after a prospect picks up and Twilio confirms a human, so once that
+  // happens every millisecond of container start is silence on a live call.
+  // Ringing is the runway — several seconds of it — and starting the instance
+  // here spends that time instead of the prospect's.
+  //
+  // It belongs here rather than on the dialer's heartbeat because this path is
+  // reached with no browser attached at all: autoDial refills run from a
+  // provider webhook, and detached AI sessions are deliberately exempt from the
+  // abandoned-session reaper.
+  if (candidates.length) await warmSidebandForSession(session);
+
   const provider = getCallingProvider(campaign.provider, providerConfig);
   const started = [];
   const rejected = [];
@@ -986,6 +1027,11 @@ export async function runAICampaignSlice(db, campaignId, {
   const candidates = await eligibleTargets(db, campaignId, { limit: limit * 3, now });
   const started = [];
   const rejected = [];
+
+  // The autonomous path has no dialer session, no browser and no heartbeat —
+  // this scheduled slice is the only thing that knows AI calls are imminent, so
+  // it is the only place that can wake the sideband before they ring.
+  if (candidates.length) await warmSidebandForSession({ mode: 'ai' });
 
   // The AI runner is its own "session" so the same locking, cancellation and
   // reconciliation code paths apply. A campaign without one would need a second

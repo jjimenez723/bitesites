@@ -1,0 +1,8 @@
+# Dependencies are installed inside the image from the lockfile, so shipping a
+# local tree would both slow the upload and risk a host-built binary.
+node_modules
+
+*.test.mjs
+README.md
+Dockerfile
+.dockerignore

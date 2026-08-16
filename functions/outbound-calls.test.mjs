@@ -509,6 +509,84 @@ const counts = await refreshCampaignCounts(db, campaignId);
 check('counts are recomputed from targets', counts.total > 0, JSON.stringify(counts));
 
 // ---------------------------------------------------------------------------
+// Counting runs on nearly every mutation path, so it was moved from a document
+// scan onto server-side aggregation — one read per 1,000 index entries instead
+// of one per target, and no silent 5,000-target ceiling. These check the thing
+// that actually matters about that swap: the numbers are still right. Every
+// state a target can hold must land in exactly one bucket, and the buckets must
+// sum back to the total, or a campaign under-reports its own queue.
+console.log('\ncampaign counts are aggregated, not scanned');
+
+const countCampaignId = await createCampaign(db, {
+  accountId: 'bitesites',
+  name: 'Counting', mode: 'power', provider: 'mock', callerId: '+15551234567'
+}, { createdBy: 'test' });
+
+const STATE_FIXTURES = {
+  pending: ['pending', 'researching', 'awaiting_approval'],
+  ready: ['ready'],
+  dialing: ['dialing'],
+  connected: ['connected'],
+  completed: ['completed'],
+  callLater: ['call_later', 'no_answer', 'voicemail', 'busy'],
+  doNotCall: ['do_not_call'],
+  failed: ['failed', 'invalid_number', 'cancelled']
+};
+
+let fixtureIndex = 0;
+for (const states of Object.values(STATE_FIXTURES)) {
+  for (const state of states) {
+    fixtureIndex += 1;
+    await db.doc(`outboundTargets/count-fixture-${fixtureIndex}`).set({
+      campaignId: countCampaignId, state, contactType: 'prospect',
+      contactId: `c${fixtureIndex}`, priority: 0, nextAttemptAt: Timestamp.fromDate(NOW)
+    });
+  }
+}
+
+const bucketed = await refreshCampaignCounts(db, countCampaignId);
+for (const [bucket, states] of Object.entries(STATE_FIXTURES)) {
+  check(`${bucket} counts its ${states.length} state${states.length > 1 ? 's' : ''}`,
+    bucketed[bucket] === states.length, `got ${bucketed[bucket]} for ${states.join('/')}`);
+}
+check('total counts every target exactly once',
+  bucketed.total === fixtureIndex, `${bucketed.total} vs ${fixtureIndex}`);
+check('the buckets partition the total with nothing double-counted or dropped',
+  Object.keys(STATE_FIXTURES).reduce((sum, key) => sum + bucketed[key], 0) === bucketed.total,
+  JSON.stringify(bucketed));
+
+const persisted = await db.doc(`outboundCampaigns/${countCampaignId}`).get();
+check('the recount is written back to the campaign',
+  persisted.get('counts.total') === fixtureIndex && persisted.get('counts.ready') === 1,
+  JSON.stringify(persisted.get('counts')));
+
+// A target carrying a state the bucket map does not know about must still be in
+// `total` — that gap is how a campaign silently loses track of its own queue.
+await db.doc('outboundTargets/count-fixture-unknown').set({
+  campaignId: countCampaignId, state: 'some_future_state', contactType: 'prospect',
+  contactId: 'cx', priority: 0, nextAttemptAt: Timestamp.fromDate(NOW)
+});
+const withUnknown = await refreshCampaignCounts(db, countCampaignId);
+check('an unrecognised target state still counts toward the total',
+  withUnknown.total === fixtureIndex + 1, `${withUnknown.total} vs ${fixtureIndex + 1}`);
+
+const emptyCampaignId = await createCampaign(db, {
+  accountId: 'bitesites',
+  name: 'Empty', mode: 'power', provider: 'mock', callerId: '+15551234567'
+}, { createdBy: 'test' });
+const emptyCounts = await refreshCampaignCounts(db, emptyCampaignId);
+check('a campaign with no targets counts zero rather than failing',
+  emptyCounts.total === 0 && emptyCounts.ready === 0, JSON.stringify(emptyCounts));
+
+// Counting one campaign must never see another campaign's targets.
+check('counts are scoped to their own campaign',
+  bucketed.total !== counts.total || countCampaignId === campaignId,
+  `${JSON.stringify(bucketed)} vs ${JSON.stringify(counts)}`);
+const isolated = await refreshCampaignCounts(db, campaignId);
+check('recounting a neighbouring campaign is unchanged by the fixtures',
+  isolated.total === counts.total, `${isolated.total} vs ${counts.total}`);
+
+// ---------------------------------------------------------------------------
 console.log('\nthe mock provider behaves like a provider');
 
 const mock = new MockDialer({});

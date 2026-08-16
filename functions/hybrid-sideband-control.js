@@ -61,6 +61,57 @@ async function calendarClient(db) {
   });
 }
 
+export const DEFAULT_HANDOFF_PHRASE =
+  'I’m going to bring a member of our team into the conversation now.';
+
+/**
+ * Every controller a call can be under. Bounded as an enum rather than with
+ * `clean()`, which exists to scrub imported contact data and so maps the
+ * literal string 'none' to '' — correct for a scraped company name, wrong here,
+ * where 'none' is a real state meaning the call has no operator and the AI leg
+ * must be torn down. Routing that value through the scrubber silently deleted
+ * the signal, and the sideband's `controller === 'none'` hangup never fired.
+ */
+const CALL_CONTROLLERS = new Set(['ai', 'human', 'transitioning', 'none', 'unassigned']);
+
+const controllerState = value => {
+  const out = typeof value === 'string' ? value.trim() : '';
+  return CALL_CONTROLLERS.has(out) ? out : '';
+};
+
+/**
+ * What the sideband polls for, every 500ms, for the whole length of every AI
+ * call — so each document read here is billed 7,200 times per call-hour, per
+ * concurrent call. It is the hottest read path in the system and the one worth
+ * keeping honest.
+ *
+ * The sideband acts on exactly three values: the controller, the handoff state,
+ * and the phrase to speak. The first two live on the call document, which the
+ * caller has already loaded. This used to additionally read the dialer session
+ * — purely to return a `rep` block that nothing on the receiving end ever
+ * looked at — and the media job, for a phrase that only matters on the single
+ * tick where a handoff is being announced. Both are now off the steady-state
+ * path, taking the poll from three document reads to one.
+ *
+ * Handoff timing is deliberately untouched: a takeover or an opt-out is still
+ * observed on the very next tick, from the same freshly-read call document as
+ * before. Only reads nothing acted on were removed.
+ */
+export async function pollControlPayload(db, { callId, call }) {
+  const state = clean(call?.handoff?.state, 40);
+  // The phrase is read fresh at the moment it is about to be spoken, so a
+  // late edit to the compiled runtime still reaches the caller's ear.
+  const phrase = state === 'announcing'
+    ? clean((await db.doc(`aiMediaJobs/${callId}`).get()).get('runtime.handoffPhrase'), 500)
+      || DEFAULT_HANDOFF_PHRASE
+    : '';
+  return {
+    ok: true,
+    controller: controllerState(call?.control?.controller),
+    handoff: { state, requestedBy: clean(call?.handoff?.requestedBy, 40), phrase }
+  };
+}
+
 export const hybridSidebandControl = onRequest(
   {
     secrets: [AI_MEDIA_WEBHOOK_SECRET, GOOGLE_CALENDAR_CREDENTIALS],
@@ -129,23 +180,7 @@ export const hybridSidebandControl = onRequest(
     }
 
     if (action === 'poll_control') {
-      const sessionSnapshot = await db.doc(`dialerSessions/${call.sessionId}`).get();
-      const jobSnapshot = await db.doc(`aiMediaJobs/${callId}`).get();
-      res.json({
-        ok: true,
-        controller: clean(call?.control?.controller, 40),
-        handoff: {
-          state: clean(call?.handoff?.state, 40),
-          requestedBy: clean(call?.handoff?.requestedBy, 40),
-          phrase: clean(jobSnapshot.get('runtime.handoffPhrase'), 500)
-            || 'I’m going to bring a member of our team into the conversation now.'
-        },
-        rep: sessionSnapshot.exists ? {
-          state: clean(sessionSnapshot.get('rep.state'), 40),
-          activeCallId: clean(sessionSnapshot.get('rep.activeCallId'), 200),
-          uid: clean(sessionSnapshot.get('userUid'), 160)
-        } : null
-      });
+      res.json(await pollControlPayload(db, { callId, call }));
       return;
     }
 
