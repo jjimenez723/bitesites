@@ -539,6 +539,34 @@ board). `amount` is commission *actually paid*; due-but-unpaid stays in
 `expected`/`outstanding` and the notes so monthly revenue is never inflated.
 Workflow QA records are filtered out. Heartbeat: `systemHealth/flg-commission-sync`.
 
+## Google Calendar deployment credential
+
+Firebase resolves every `defineSecret` while it analyzes the complete Functions
+entrypoint, including during a targeted deploy. The secret must therefore exist
+even when Google Calendar mirroring is intentionally disabled. Create the safe
+placeholder once so ordinary deploys do not stop for an interactive value:
+
+```bash
+printf '{}' | firebase functions:secrets:set GOOGLE_CALENDAR_CREDENTIALS \
+  --data-file - --project bitesites-org
+```
+
+Firestore remains the calendar book of record and the UI reports Google sync as
+disconnected while the value is `{}`. To enable the Google mirror, create a
+dedicated Google service account with Calendar API access, download its JSON key,
+share the target calendar with the key's `client_email` using **Make changes to
+events**, and replace the placeholder with the entire JSON file:
+
+```bash
+firebase functions:secrets:set GOOGLE_CALENDAR_CREDENTIALS \
+  --data-file /absolute/path/to/service-account-key.json \
+  --project bitesites-org
+```
+
+Finally, set `googleCalendarId` and `googleSyncEnabled` in the Admin calendar
+settings. Never commit the JSON key or place it in a Vite/client environment
+variable.
+
 ## Commercial analytics and CRM return path
 
 Every new website lead now carries its random browser/session ids, first- and last-touch

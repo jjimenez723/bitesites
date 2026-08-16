@@ -27,7 +27,7 @@ import {
   submitDiscoveryResults, finishJob, recoverStaleJobs, pruneRawResults
 } from './lead-discovery.js';
 import { importProspects, createImportRun, finishImportRun, resolveDuplicate } from './prospect-import.js';
-import { requireAccountId } from './accounts.js';
+import { requireAccountId, sanitizePartnerOutcomes } from './accounts.js';
 import { csvToRecords } from './providers/lead-sources/csv-source.js';
 import { promoteProspect } from './prospect-conversion.js';
 import {
@@ -199,6 +199,7 @@ export const createLeadDiscoveryJob = onCall({ ...callOptions, secrets: [LEAD_SO
   const jobId = await createDiscoveryJob(db, {
     provider: str(request.data?.provider, 40),
     criteria: request.data?.criteria || {},
+    accountId: request.data?.accountId,
     createdBy: email,
     sourceOptions: { apiKey: secretValue(LEAD_SOURCE_API_KEY) }
   }).catch(error => { throw new HttpsError('invalid-argument', clean(error?.message, 300)); });
@@ -533,6 +534,7 @@ export const submitCallDisposition = onCall({ ...callOptions, secrets: OUTBOUND_
   const { db, email } = await requireAdmin(request);
   const targetId = requireId(request.data?.targetId, 'target id');
   const disposition = str(request.data?.disposition, 40);
+  const partnerOutcomes = sanitizePartnerOutcomes(request.data?.partnerOutcomes);
 
   const targetSnapshot = await db.doc(`outboundTargets/${targetId}`).get();
   if (!targetSnapshot.exists) throw new HttpsError('not-found', 'Target not found.');
@@ -544,6 +546,7 @@ export const submitCallDisposition = onCall({ ...callOptions, secrets: OUTBOUND_
     callId: str(request.data?.callId, 200) || targetSnapshot.get('lastCallId') || '',
     disposition,
     notes: str(request.data?.notes, 2000),
+    partnerOutcomes,
     campaign,
     actor: email
   });
@@ -555,6 +558,7 @@ export const submitCallDisposition = onCall({ ...callOptions, secrets: OUTBOUND_
     await db.doc(`calls/${callId}`).set({
       disposition,
       summary: str(request.data?.notes, 2000),
+      partnerOutcomes,
       dispositionBy: email,
       updatedAt: FieldValue.serverTimestamp()
     }, { merge: true });

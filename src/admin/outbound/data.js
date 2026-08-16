@@ -272,13 +272,16 @@ export const useAppointments = ({ fromMs, toMs }) =>
   }, [fromMs, toMs]);
 
 export const calendar = {
-  settings: () => callable('getCalendarSettings'),
-  saveSettings: settings => callable('updateCalendarSettings', { settings }),
-  availability: options => callable('getCalendarAvailability', options || {}),
-  book: booking => callable('bookAppointment', booking),
-  reschedule: (appointmentId, slotId) => callable('rescheduleAppointmentCall', { appointmentId, slotId }),
-  cancel: (appointmentId, reason) => callable('cancelAppointmentCall', { appointmentId, reason }),
-  setOutcome: (appointmentId, outcome) => callable('setAppointmentOutcome', { appointmentId, outcome })
+  settings: accountId => callable('getCalendarSettings', { accountId }),
+  saveSettings: (accountId, settings) => callable('updateCalendarSettings', { accountId, settings }),
+  availability: (accountId, options) => callable('getCalendarAvailability', { ...(options || {}), accountId }),
+  book: (accountId, booking) => callable('bookAppointment', { ...booking, accountId }),
+  reschedule: (accountId, appointmentId, slotId) =>
+    callable('rescheduleAppointmentCall', { accountId, appointmentId, slotId }),
+  cancel: (accountId, appointmentId, reason) =>
+    callable('cancelAppointmentCall', { accountId, appointmentId, reason }),
+  setOutcome: (accountId, appointmentId, outcome) =>
+    callable('setAppointmentOutcome', { accountId, appointmentId, outcome })
 };
 
 export async function loadProspect(id) {
@@ -317,7 +320,8 @@ async function callable(name, payload) {
 export const outbound = {
   config: () => callable('getOutboundConfig'),
 
-  createDiscoveryJob: (provider, criteria) => callable('createLeadDiscoveryJob', { provider, criteria }),
+  createDiscoveryJob: (provider, criteria, accountId) =>
+    callable('createLeadDiscoveryJob', { provider, criteria, accountId }),
   runDiscoveryJob: jobId => callable('runLeadDiscoveryJob', { jobId }),
   pauseDiscoveryJob: jobId => callable('pauseLeadDiscoveryJob', { jobId }),
   cancelDiscoveryJob: jobId => callable('cancelLeadDiscoveryJob', { jobId }),

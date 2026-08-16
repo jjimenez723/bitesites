@@ -22,7 +22,10 @@ import { recordCallAuditEvent, releaseRepFromCall } from './hybrid-call-orchestr
 import { maintainHybridCapacity } from './hybrid-capacity.js';
 import { hybridOutboundEventsUrl } from './hybrid-urls.js';
 import { warmSidebandForSession } from './hybrid-sideband-warmup.js';
-import { LEGACY_ACCOUNT_ID, readAccountId, checkAccountAlignment, accountMismatchLabel } from './accounts.js';
+import {
+  LEGACY_ACCOUNT_ID, readAccountId, checkAccountAlignment, accountMismatchLabel,
+  sanitizePartnerOutcomes
+} from './accounts.js';
 
 /**
  * A persona may only speak to the account its campaign serves.
@@ -518,6 +521,7 @@ export const submitHybridDisposition = onCall(callOptions, async request => {
   ]);
   if (!allowedDispositions.has(disposition)) throw new HttpsError('invalid-argument', 'Choose a valid call outcome.');
   const followUpAtRaw = clean(request.data?.followUpAt, 80);
+  const partnerOutcomes = sanitizePartnerOutcomes(request.data?.partnerOutcomes);
   const followUpAt = followUpAtRaw ? new Date(followUpAtRaw) : null;
   if (followUpAtRaw && Number.isNaN(followUpAt?.getTime())) throw new HttpsError('invalid-argument', 'Enter a valid follow-up time.');
   if (['booked_meeting', 'call_later'].includes(disposition) && !followUpAt) {
@@ -528,6 +532,7 @@ export const submitHybridDisposition = onCall(callOptions, async request => {
     callId,
     disposition,
     notes: clean(request.data?.notes, 2000),
+    partnerOutcomes,
     campaign: campaignSnapshot.exists ? { id: campaignSnapshot.id, ...campaignSnapshot.data() } : null,
     actor: email || uid,
     requestedFollowUpAt: followUpAt
@@ -535,6 +540,7 @@ export const submitHybridDisposition = onCall(callOptions, async request => {
   await db.doc(`calls/${callId}`).set({
     disposition,
     summary: clean(request.data?.notes, 2000),
+    partnerOutcomes,
     dispositionBy: email || uid,
     wrapUp: {
       status: 'completed',

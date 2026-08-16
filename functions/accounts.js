@@ -39,8 +39,8 @@ export const ACCOUNTS = Object.freeze({
     // The house account. Its own prospecting, its own site leads, its own
     // voice agent.
     crmTag: 'client:bitesites',
-    // Empty means "no opinion" — see the fail-closed-once-declared note above.
-    // Existing campaigns predate this module and must keep dialling.
+    // Empty preserves legacy BiteSites campaigns. The new partnership line is
+    // available, but BiteSites does not yet declare an exhaustive allow-list.
     callerIds: Object.freeze([]),
     workflowIds: Object.freeze([]),
     policy: Object.freeze({
@@ -56,10 +56,8 @@ export const ACCOUNTS = Object.freeze({
     id: 'fine-line-group',
     label: 'The Fine Line Group',
     crmTag: 'client:fineline',
-    // Populate with the dedicated 201 number before the first campaign runs.
-    // Until then the account declares no caller id and the check stays quiet;
-    // the moment one is listed, every other number is refused.
-    callerIds: Object.freeze([]),
+    // Partnership-acquisition line provisioned in the shared Twilio account.
+    callerIds: Object.freeze(['+12015524949']),
     workflowIds: Object.freeze([]),
     policy: Object.freeze({
       // §1 of the services agreement: no authority to quote construction
@@ -76,6 +74,23 @@ export const ACCOUNTS = Object.freeze({
       // §3 — the client has 5 business days to rebut an agency-sourced lead.
       rebuttalBusinessDays: 5
     })
+  }),
+
+  'stone-bellisimo': Object.freeze({
+    id: 'stone-bellisimo',
+    label: 'Stone Bellisimo',
+    crmTag: 'client:stone-bellisimo',
+    callerIds: Object.freeze(['+12015524949']),
+    workflowIds: Object.freeze([]),
+    policy: Object.freeze({
+      // No Stone Bellisimo pricing or residential cold outreach is approved
+      // through this console. Representatives introduce and qualify only.
+      canQuotePricing: false,
+      allowResidentialOutbound: false,
+      commissionRate: 0,
+      leadProtectionDays: 0,
+      rebuttalBusinessDays: 0
+    })
   })
 });
 
@@ -88,6 +103,21 @@ export const ACCOUNTS = Object.freeze({
 export const LEGACY_ACCOUNT_ID = 'bitesites';
 
 export const ACCOUNT_IDS = Object.freeze(Object.keys(ACCOUNTS));
+
+/** Entities a representative may introduce as referral/service partners. */
+export const PARTNER_ACCOUNT_IDS = Object.freeze([
+  'fine-line-group',
+  'stone-bellisimo'
+]);
+
+export const PARTNER_OUTCOME_IDS = Object.freeze([
+  'not_mentioned',
+  'introduced',
+  'interested',
+  'meeting_requested',
+  'referral_partner',
+  'not_interested'
+]);
 
 const asString = value => (typeof value === 'string' ? value.trim() : '');
 
@@ -163,6 +193,27 @@ export function crmTagForAccount(value) {
 
 export function policyForAccount(value) {
   return getAccount(value)?.policy || null;
+}
+
+/**
+ * Bound and validate the per-partner result captured during call wrap-up.
+ * One row per known partner prevents a crafted client payload from writing
+ * arbitrary entities or unbounded notes into call/contact documents.
+ */
+export function sanitizePartnerOutcomes(input = []) {
+  const rows = Array.isArray(input) ? input : [];
+  const byAccount = new Map();
+  for (const row of rows.slice(0, PARTNER_ACCOUNT_IDS.length * 2)) {
+    const accountId = asString(row?.accountId);
+    const outcome = asString(row?.outcome);
+    if (!PARTNER_ACCOUNT_IDS.includes(accountId) || !PARTNER_OUTCOME_IDS.includes(outcome)) continue;
+    byAccount.set(accountId, Object.freeze({
+      accountId,
+      outcome,
+      notes: asString(row?.notes).slice(0, 500)
+    }));
+  }
+  return PARTNER_ACCOUNT_IDS.filter(id => byAccount.has(id)).map(id => byAccount.get(id));
 }
 
 /**

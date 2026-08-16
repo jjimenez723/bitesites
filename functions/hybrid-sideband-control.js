@@ -21,6 +21,7 @@ import { clean } from './prospect-normalization.js';
 import { sanitizeRealtimeSessionConfig } from './agent-runtime.js';
 import { executeAgentTool, TERMINAL_TOOLS } from './agent-tools.js';
 import { createGoogleCalendarClient, loadCalendarSettings } from './booking-calendar.js';
+import { LEGACY_ACCOUNT_ID, readAccountId } from './accounts.js';
 
 const AI_MEDIA_WEBHOOK_SECRET = defineSecret('AI_MEDIA_WEBHOOK_SECRET');
 const GOOGLE_CALENDAR_CREDENTIALS = defineSecret('GOOGLE_CALENDAR_CREDENTIALS');
@@ -51,8 +52,9 @@ function safeTimestamp(value) {
  * not been connected. Booking works either way: Firestore is the book of
  * record and Google is the mirror.
  */
-async function calendarClient(db) {
-  const settings = await loadCalendarSettings(db).catch(() => null);
+async function calendarClient(db, accountId) {
+  const account = readAccountId(accountId, { fallback: LEGACY_ACCOUNT_ID });
+  const settings = await loadCalendarSettings(db, account).catch(() => null);
   if (!settings || settings.googleSyncEnabled === false) return null;
   return createGoogleCalendarClient({
     credentialsJson: secretValue(GOOGLE_CALENDAR_CREDENTIALS),
@@ -267,7 +269,7 @@ export const hybridSidebandControl = onRequest(
         tool,
         args: req.body?.args,
         actorId: clean(req.body?.realtimeCallId, 160) || 'ai',
-        google: await calendarClient(db).catch(() => null)
+        google: await calendarClient(db, call.accountId).catch(() => null)
       }).catch(error => {
         console.error('[sideband-control] tool execution failed', tool, error);
         return { ok: false, error: 'server_action_failed' };

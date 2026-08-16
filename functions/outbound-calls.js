@@ -35,7 +35,7 @@ import { warmSidebandForSession } from './hybrid-sideband-warmup.js';
 import { isSuppressed, suppressNumber } from './inbound-compliance.js';
 import {
   LEGACY_ACCOUNT_ID, requireAccountId, readAccountId,
-  checkAccountAlignment, accountMismatchLabel
+  checkAccountAlignment, accountMismatchLabel, sanitizePartnerOutcomes
 } from './accounts.js';
 
 export const CAMPAIGN_STATUSES = ['draft', 'researching', 'ready', 'running', 'paused', 'completed', 'cancelled', 'failed'];
@@ -1431,7 +1431,7 @@ export async function recordCallEvent(db, event, { eventDocId, now = new Date(),
  */
 export async function applyDisposition(db, {
   targetId: id, callId, disposition, campaign, notes = '', actor = '',
-  requestedFollowUpAt = null, now = new Date()
+  requestedFollowUpAt = null, partnerOutcomes = [], now = new Date()
 }) {
   const targetRef = db.doc(`outboundTargets/${id}`);
   const snapshot = await targetRef.get();
@@ -1442,6 +1442,7 @@ export async function applyDisposition(db, {
   const attemptCount = Number(target.attemptCount || 0);
   const maxAttempts = Number(target.maxAttempts ?? campaign?.maxAttempts ?? 3);
   const exhausted = attemptCount >= maxAttempts;
+  const safePartnerOutcomes = sanitizePartnerOutcomes(partnerOutcomes);
 
   let nextAttemptAt = null;
   const retryable = ['call_later', 'no_answer', 'voicemail', 'busy'].includes(state);
@@ -1468,13 +1469,24 @@ export async function applyDisposition(db, {
       lastCallId: clean(callId, 200),
       lastAttemptAt: Timestamp.fromDate(now),
       requeueReason: retryable ? clean(disposition, 60) : '',
-      ...(notes ? { notes: clean(notes, 2000) } : {})
+      ...(notes ? { notes: clean(notes, 2000) } : {}),
+      ...(safePartnerOutcomes.length ? { partnerOutcomes: safePartnerOutcomes } : {})
     }
   });
 
   const contact = await loadContactForTarget(db, target);
   if (contact) {
     await updateContactAfterAttempt(db, contact, { disposition, callId, campaignId: target.campaignId, at: now });
+    if (safePartnerOutcomes.length) {
+      await recordContactActivity(db, contact, {
+        type: 'partner_conversation',
+        callId: clean(callId, 200),
+        campaignId: clean(target.campaignId, 200),
+        partnerOutcomes: safePartnerOutcomes,
+        actor: clean(actor, 200),
+        at: Timestamp.fromDate(now)
+      });
+    }
   }
 
   // Promotion happens here and nowhere else, and only for outcomes that mean a
@@ -1493,7 +1505,7 @@ export async function applyDisposition(db, {
   }
 
   if (target.campaignId) await refreshCampaignCounts(db, target.campaignId);
-  return { ok: true, state, nextAttemptAt, promotion };
+  return { ok: true, state, nextAttemptAt, promotion, partnerOutcomes: safePartnerOutcomes };
 }
 
 // -------------------------------------------------------- operator actions

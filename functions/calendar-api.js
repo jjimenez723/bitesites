@@ -12,6 +12,7 @@ import { defineSecret } from 'firebase-functions/params';
 import { FieldValue, getFirestore } from 'firebase-admin/firestore';
 
 import { clean } from './prospect-normalization.js';
+import { ACCOUNT_IDS, LEGACY_ACCOUNT_ID, readAccountId, requireAccountId } from './accounts.js';
 import {
   cancelAppointment,
   commitBooking,
@@ -57,8 +58,16 @@ async function requireCalendarAccess(request, { manage = false } = {}) {
   return { db, uid: request.auth.uid, role, email: clean(request.auth.token?.email, 200) };
 }
 
-async function calendarClient(db) {
-  const settings = await loadCalendarSettings(db).catch(() => null);
+function requestAccountId(request) {
+  try {
+    return requireAccountId(request.data?.accountId, { field: 'accountId' });
+  } catch (error) {
+    throw new HttpsError('invalid-argument', error.message);
+  }
+}
+
+async function calendarClient(db, accountId) {
+  const settings = await loadCalendarSettings(db, accountId).catch(() => null);
   if (!settings || settings.googleSyncEnabled === false) return null;
   return createGoogleCalendarClient({
     credentialsJson: secretValue(GOOGLE_CALENDAR_CREDENTIALS),
@@ -71,13 +80,15 @@ async function calendarClient(db) {
 
 export const getCalendarAvailability = onCall(callOptions, async request => {
   const { db } = await requireCalendarAccess(request);
+  const accountId = requestAccountId(request);
   const fromMs = Number(request.data?.fromMs) || 0;
   const toMs = Number(request.data?.toMs) || 0;
   const result = await findAvailability(db, {
     requestedWindow: clean(request.data?.requestedWindow, 120),
     fromMs, toMs,
+    accountId,
     limit: Math.max(1, Math.min(50, Number(request.data?.limit) || 12)),
-    google: await calendarClient(db).catch(() => null)
+    google: await calendarClient(db, accountId).catch(() => null)
   });
   return {
     ok: true,
@@ -89,12 +100,14 @@ export const getCalendarAvailability = onCall(callOptions, async request => {
 
 export const getCalendarSettings = onCall(callOptions, async request => {
   const { db } = await requireCalendarAccess(request);
-  const settings = await loadCalendarSettings(db);
+  const accountId = requestAccountId(request);
+  const settings = await loadCalendarSettings(db, accountId);
   // A key alone is not a connection: without a calendar to write to there is
   // nothing to sync, and the console should say so rather than imply success.
   const hasKey = Boolean(secretValue(GOOGLE_CALENDAR_CREDENTIALS).replace(/[{}\s]/g, ''));
   return {
     ok: true,
+    accountId,
     settings,
     google: {
       connected: Boolean(hasKey && settings.googleCalendarId),
@@ -107,11 +120,12 @@ export const getCalendarSettings = onCall(callOptions, async request => {
 
 export const updateCalendarSettings = onCall(callOptions, async request => {
   const { db, uid } = await requireCalendarAccess(request, { manage: true });
+  const accountId = requestAccountId(request);
   // Normalized before it lands: working hours, timezone and capacity are what
   // the availability engine trusts, so an invalid schedule must never persist.
-  const settings = normalizeCalendarSettings(request.data?.settings || {});
-  await db.doc('calendarSettings/default').set({
-    ...settings, updatedBy: uid, updatedAt: FieldValue.serverTimestamp()
+  const settings = normalizeCalendarSettings(request.data?.settings || {}, { accountId });
+  await db.doc(`calendarSettings/${accountId}`).set({
+    ...settings, accountId, updatedBy: uid, updatedAt: FieldValue.serverTimestamp()
   }, { merge: true });
   return { ok: true, settings };
 });
@@ -124,6 +138,7 @@ export const updateCalendarSettings = onCall(callOptions, async request => {
  */
 export const bookAppointment = onCall(callOptions, async request => {
   const { db, uid } = await requireCalendarAccess(request);
+  const accountId = requestAccountId(request);
   const slotId = clean(request.data?.slotId, 200);
   if (!slotId) throw new HttpsError('invalid-argument', 'A slot is required.');
 
@@ -132,6 +147,7 @@ export const bookAppointment = onCall(callOptions, async request => {
     contactId: clean(request.data?.contactId, 200),
     contactType: clean(request.data?.contactType, 20),
     offerTrack: clean(request.data?.offerTrack, 60),
+    accountId,
     heldBy: 'manual'
   });
   if (!held.ok) {
@@ -152,36 +168,52 @@ export const bookAppointment = onCall(callOptions, async request => {
   });
   if (!booked.ok) throw new HttpsError('failed-precondition', 'That booking could not be completed.');
 
-  await syncAppointmentToGoogle(db, booked.appointmentId, { client: await calendarClient(db).catch(() => null) })
+  await syncAppointmentToGoogle(db, booked.appointmentId, {
+    client: await calendarClient(db, accountId).catch(() => null)
+  })
     .catch(() => {});
   return booked;
 });
 
 export const rescheduleAppointmentCall = onCall(callOptions, async request => {
   const { db, uid } = await requireCalendarAccess(request);
+  const accountId = requestAccountId(request);
   const result = await rescheduleAppointment(db, {
     appointmentId: clean(request.data?.appointmentId, 200),
     slotId: clean(request.data?.slotId, 200),
+    accountId,
     actor: uid
   });
   if (!result.ok) {
     throw new HttpsError(result.error === 'slot_taken' ? 'already-exists' : 'failed-precondition',
       result.error === 'slot_taken' ? 'That time was just taken.' : 'That appointment could not be moved.');
   }
-  await syncAppointmentToGoogle(db, result.appointmentId, { client: await calendarClient(db).catch(() => null) })
+  await syncAppointmentToGoogle(db, result.appointmentId, {
+    client: await calendarClient(db, accountId).catch(() => null)
+  })
     .catch(() => {});
   return result;
 });
 
 export const cancelAppointmentCall = onCall(callOptions, async request => {
   const { db, uid } = await requireCalendarAccess(request);
+  const accountId = requestAccountId(request);
+  const appointmentId = clean(request.data?.appointmentId, 200);
+  const existing = await db.doc(`appointments/${appointmentId}`).get();
+  if (!existing.exists) throw new HttpsError('not-found', 'Appointment not found.');
+  if (readAccountId(existing.get('accountId'), { fallback: LEGACY_ACCOUNT_ID }) !== accountId) {
+    throw new HttpsError('failed-precondition', 'That appointment belongs to another entity.');
+  }
   const result = await cancelAppointment(db, {
-    appointmentId: clean(request.data?.appointmentId, 200),
+    appointmentId,
+    accountId,
     reason: clean(request.data?.reason, 300),
     actor: uid
   });
   if (!result.ok) throw new HttpsError('failed-precondition', 'That appointment could not be cancelled.');
-  await syncAppointmentToGoogle(db, result.appointmentId, { client: await calendarClient(db).catch(() => null) })
+  await syncAppointmentToGoogle(db, result.appointmentId, {
+    client: await calendarClient(db, accountId).catch(() => null)
+  })
     .catch(() => {});
   return result;
 });
@@ -189,6 +221,7 @@ export const cancelAppointmentCall = onCall(callOptions, async request => {
 /** Mark how a meeting actually went, so booking rate and show rate can diverge. */
 export const setAppointmentOutcome = onCall(callOptions, async request => {
   const { db, uid } = await requireCalendarAccess(request);
+  const accountId = requestAccountId(request);
   const appointmentId = clean(request.data?.appointmentId, 200);
   const outcome = clean(request.data?.outcome, 20);
   if (!appointmentId) throw new HttpsError('invalid-argument', 'An appointment is required.');
@@ -198,6 +231,9 @@ export const setAppointmentOutcome = onCall(callOptions, async request => {
   const ref = db.doc(`appointments/${appointmentId}`);
   const snapshot = await ref.get();
   if (!snapshot.exists) throw new HttpsError('not-found', 'Appointment not found.');
+  if (readAccountId(snapshot.get('accountId'), { fallback: LEGACY_ACCOUNT_ID }) !== accountId) {
+    throw new HttpsError('failed-precondition', 'That appointment belongs to another entity.');
+  }
   if (snapshot.get('status') !== 'booked') {
     throw new HttpsError('failed-precondition', 'Only a booked appointment has an outcome.');
   }
@@ -224,13 +260,18 @@ export const calendarMaintenance = onSchedule(
       return { expired: 0 };
     });
 
-    const client = await calendarClient(db).catch(() => null);
-    const synced = client
-      ? await retryPendingGoogleSync(db, { client }).catch(error => {
-          console.warn('[calendar] sync retry failed', error?.message);
-          return { attempted: 0, synced: 0 };
-        })
-      : { attempted: 0, synced: 0 };
+    const totals = { attempted: 0, synced: 0 };
+    for (const accountId of ACCOUNT_IDS) {
+      const client = await calendarClient(db, accountId).catch(() => null);
+      if (!client) continue;
+      const result = await retryPendingGoogleSync(db, { client, accountId }).catch(error => {
+        console.warn('[calendar] sync retry failed', accountId, error?.message);
+        return { attempted: 0, synced: 0 };
+      });
+      totals.attempted += result.attempted || 0;
+      totals.synced += result.synced || 0;
+    }
+    const synced = totals;
 
     if (expired.expired || synced.synced) {
       console.log('[calendar] maintenance', JSON.stringify({ ...expired, ...synced }));

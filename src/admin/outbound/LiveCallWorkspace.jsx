@@ -5,6 +5,9 @@ import LiveTranscript from './LiveTranscript';
 import {
   hybridVoiceState, joinHybridCall, leaveHybridVoice, setHybridVoiceMuted
 } from './voice-client';
+import {
+  ACCOUNTS, PARTNER_ACCOUNT_IDS, PARTNER_OUTCOME_IDS
+} from '../../../functions/accounts.js';
 
 const OUTCOMES = [
   ['connected', 'Conversation completed', 'A real conversation took place.'],
@@ -17,6 +20,15 @@ const OUTCOMES = [
   ['wrong_number', 'Wrong number', 'The number does not reach this prospect.'],
   ['do_not_call', 'Do not call', 'Suppress future phone outreach.']
 ];
+
+const PARTNER_OUTCOME_LABELS = {
+  not_mentioned: 'Not mentioned',
+  introduced: 'Introduced',
+  interested: 'Interested',
+  meeting_requested: 'Meeting requested',
+  referral_partner: 'Agreed to partner',
+  not_interested: 'Not interested'
+};
 
 const Icon = ({ children }) => <span className="live-control-icon" aria-hidden="true">{children}</span>;
 
@@ -45,6 +57,13 @@ export default function LiveCallWorkspace({
   const storageKey = `bitesites-call-notes:${call.id}`;
   const [notes, setNotes] = useState(() => localStorage.getItem(storageKey) || call.summary || '');
   const [followUpAt, setFollowUpAt] = useState('');
+  const [partnerOutcomes, setPartnerOutcomes] = useState(() => {
+    const saved = new Map((call.partnerOutcomes || []).map(row => [row.accountId, row]));
+    return Object.fromEntries(PARTNER_ACCOUNT_IDS.map(accountId => [accountId, {
+      outcome: saved.get(accountId)?.outcome || 'not_mentioned',
+      notes: saved.get(accountId)?.notes || ''
+    }]));
+  });
   const [showWrapUp, setShowWrapUp] = useState(Boolean(call.disposition));
   const [voiceError, setVoiceError] = useState('');
   const [showTransfer, setShowTransfer] = useState(false);
@@ -270,7 +289,15 @@ export default function LiveCallWorkspace({
         );
         if (!ended) return;
       }
-      result = await onDisposition?.(call, outcome, { notes, followUpAt });
+      result = await onDisposition?.(call, outcome, {
+        notes,
+        followUpAt,
+        partnerOutcomes: PARTNER_ACCOUNT_IDS.map(accountId => ({
+          accountId,
+          outcome: partnerOutcomes[accountId]?.outcome || 'not_mentioned',
+          notes: partnerOutcomes[accountId]?.notes || ''
+        }))
+      });
     }
     if (result) {
       localStorage.removeItem(storageKey);
@@ -459,6 +486,34 @@ export default function LiveCallWorkspace({
               {OUTCOMES.map(([value, label, help]) => <button key={value} type="button" className={outcome === value ? 'is-selected' : ''} onClick={() => setOutcome(value)}><strong>{label}</strong><span>{help}</span></button>)}
             </div>
             {needsFollowUp && <label className="wrap-up-field"><span>{outcome === 'booked_meeting' ? 'Meeting time' : 'Callback time'}</span><input type="datetime-local" value={followUpAt} onChange={event => setFollowUpAt(event.target.value)} /></label>}
+            <section className="partner-wrap-up" aria-labelledby="partner-wrap-up-title">
+              <div>
+                <strong id="partner-wrap-up-title">Partner introductions</strong>
+                <span>Record what was discussed for each potential service partner.</span>
+              </div>
+              <div className="partner-outcomes-grid">
+                {PARTNER_ACCOUNT_IDS.map(accountId => (
+                  <fieldset key={accountId}>
+                    <legend>{ACCOUNTS[accountId].label}</legend>
+                    <select value={partnerOutcomes[accountId]?.outcome || 'not_mentioned'}
+                      onChange={event => setPartnerOutcomes(current => ({
+                        ...current,
+                        [accountId]: { ...current[accountId], outcome: event.target.value }
+                      }))}>
+                      {PARTNER_OUTCOME_IDS.map(value => (
+                        <option key={value} value={value}>{PARTNER_OUTCOME_LABELS[value]}</option>
+                      ))}
+                    </select>
+                    <input value={partnerOutcomes[accountId]?.notes || ''} maxLength={500}
+                      onChange={event => setPartnerOutcomes(current => ({
+                        ...current,
+                        [accountId]: { ...current[accountId], notes: event.target.value }
+                      }))}
+                      placeholder="What they said or agreed to…" />
+                  </fieldset>
+                ))}
+              </div>
+            </section>
             <label className="wrap-up-field"><span>Handoff summary</span><textarea rows={4} value={notes} onChange={event => setNotes(event.target.value)} placeholder="Summarize needs, objections, commitments, and the next action…" /></label>
             <div className="wrap-up-impact">
               <strong>What happens next</strong>

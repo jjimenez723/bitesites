@@ -26,6 +26,7 @@ import {
   syncAppointmentToGoogle, loadCalendarSettings
 } from './booking-calendar.js';
 import { OFFER_TRACKS } from './offer-tracks.js';
+import { LEGACY_ACCOUNT_ID, readAccountId } from './accounts.js';
 
 const MINUTE_MS = 60000;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i;
@@ -154,10 +155,14 @@ async function verifyBusinessDetails(db, { call }) {
   };
 }
 
-async function checkAvailability(db, { args, google, nowMs }) {
+const calendarAccountForCall = call =>
+  readAccountId(call?.accountId, { fallback: LEGACY_ACCOUNT_ID });
+
+async function checkAvailability(db, { call, args, google, nowMs }) {
   const requestedWindow = text(args.requestedWindow, 120);
   const result = await findAvailability(db, {
-    requestedWindow, nowMs, limit: 3, google
+    requestedWindow, nowMs, limit: 3, google,
+    accountId: calendarAccountForCall(call)
   });
 
   if (!result.slots.length) {
@@ -185,6 +190,7 @@ async function holdSlotTool(db, { call, args, nowMs }) {
     contactId: call.prospectId || call.leadId || '',
     contactType: call.prospectId ? 'prospect' : call.leadId ? 'lead' : '',
     offerTrack: text(args.offerTrack, 60),
+    accountId: calendarAccountForCall(call),
     heldBy: 'ai',
     nowMs
   });
@@ -235,7 +241,7 @@ async function bookMeetingTool(db, { call, args, google, nowMs }) {
   // Google is a mirror, and the meeting already stands locally. A failure here
   // is recorded on the appointment for the retry sweep, never surfaced to a
   // prospect who has just been told they are booked.
-  const settings = await loadCalendarSettings(db);
+  const settings = await loadCalendarSettings(db, calendarAccountForCall(call));
   await syncAppointmentToGoogle(db, result.appointmentId, { client: google, settings })
     .catch(error => console.warn('[agent-tools] calendar sync deferred', error?.message));
 
@@ -259,11 +265,12 @@ async function bookMeetingTool(db, { call, args, google, nowMs }) {
   };
 }
 
-async function rescheduleMeetingTool(db, { args, google, nowMs }) {
+async function rescheduleMeetingTool(db, { call, args, google, nowMs }) {
   const result = await rescheduleAppointment(db, {
     appointmentId: text(args.appointmentId, 200),
     slotId: text(args.slotId, 200),
     actor: 'ai',
+    accountId: calendarAccountForCall(call),
     nowMs
   });
   if (!result.ok) return result;
@@ -271,10 +278,11 @@ async function rescheduleMeetingTool(db, { args, google, nowMs }) {
   return { ...result, note: 'Moved. Confirm the new day and time out loud.' };
 }
 
-async function cancelMeetingTool(db, { args, google }) {
+async function cancelMeetingTool(db, { call, args, google }) {
   const result = await cancelAppointment(db, {
     appointmentId: text(args.appointmentId, 200),
     reason: text(args.reason, 300),
+    accountId: calendarAccountForCall(call),
     actor: 'ai'
   });
   if (!result.ok) return result;

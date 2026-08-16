@@ -8,6 +8,7 @@
 import React, { useState } from 'react';
 import { outbound, useAction, useLiveDoc } from './data';
 import { StatusPill, formatWhen, providerLabel, Empty, QueryState } from './SourceBadge';
+import { ACCOUNTS } from '../../../functions/accounts.js';
 
 const RUNNABLE = new Set(['queued', 'running', 'paused']);
 const STOPPABLE = new Set(['queued', 'running', 'paused', 'awaiting_local_worker', 'processing']);
@@ -32,6 +33,7 @@ function JobRow({ job, onChanged }) {
           {(current.criteria?.keywords || []).join(', ') || current.criteria?.category || '—'}
         </div>
       </td>
+      <td className="cell-dim">{ACCOUNTS[current.accountId]?.label || 'Unassigned'}</td>
       <td className="cell-dim">{current.criteria?.location || '—'}</td>
       <td><StatusPill status={current.status} /></td>
       <td style={{ minWidth: 190 }}>
@@ -102,7 +104,7 @@ export default function ScrapeJobList({ jobs, loading, error, refresh }) {
           <table className="admin-table">
             <thead>
               <tr>
-                <th>Source</th><th>Location</th><th>Status</th><th>Progress</th><th>Created</th><th>Actions</th>
+                <th>Source</th><th>Entity</th><th>Location</th><th>Status</th><th>Progress</th><th>Created</th><th>Actions</th>
               </tr>
             </thead>
             <tbody>

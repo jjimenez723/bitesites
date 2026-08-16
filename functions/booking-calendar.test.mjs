@@ -12,6 +12,7 @@ import {
   timeZoneOffsetMs,
   zonedParts,
   zonedWallClockToUtc,
+  calendarDefaultsForAccount,
   DEFAULT_CALENDAR_SETTINGS
 } from './booking-calendar.js';
 
@@ -71,6 +72,12 @@ test('slot IDs round-trip and forged ones are rejected', () => {
 });
 
 // -------------------------------------------------------------- availability
+
+test('each entity receives its own calendar identity defaults', () => {
+  assert.equal(calendarDefaultsForAccount('bitesites').meetingTitle, 'BiteSites consultation');
+  assert.equal(calendarDefaultsForAccount('fine-line-group').meetingTitle, 'The Fine Line Group consultation');
+  assert.equal(calendarDefaultsForAccount('stone-bellisimo').meetingTitle, 'Stone Bellisimo consultation');
+});
 
 test('first offered slot respects lead time, not just opening hours', () => {
   const slots = computeAvailableSlots({

@@ -8,6 +8,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   ACCOUNTS, ACCOUNT_IDS, LEGACY_ACCOUNT_ID,
+  PARTNER_ACCOUNT_IDS, PARTNER_OUTCOME_IDS, sanitizePartnerOutcomes,
   isKnownAccount, getAccount, requireAccountId, readAccountId,
   accountForCrmTag, accountFromCrmTags, crmTagForAccount, policyForAccount,
   bindingAllowed, callerIdAllowed, workflowAllowed,
@@ -30,6 +31,27 @@ test('every account declares a distinct CRM tag', () => {
 
 test('the legacy fallback names a real account', () => {
   assert.ok(isKnownAccount(LEGACY_ACCOUNT_ID));
+});
+
+test('Stone Bellisimo is a first-class account', () => {
+  assert.equal(requireAccountId('stone-bellisimo'), 'stone-bellisimo');
+  assert.equal(accountForCrmTag('client:stone-bellisimo'), 'stone-bellisimo');
+  assert.equal(policyForAccount('stone-bellisimo').canQuotePricing, false);
+});
+
+test('partner outcomes accept only known partner entities and bounded outcomes', () => {
+  const rows = sanitizePartnerOutcomes([
+    { accountId: 'stone-bellisimo', outcome: 'interested', notes: 'Asked for samples.' },
+    { accountId: 'fine-line-group', outcome: 'introduced', notes: 'Restoration discussed.' },
+    { accountId: 'bitesites', outcome: 'referral_partner' },
+    { accountId: 'stone-bellisimo', outcome: 'invented' }
+  ]);
+  assert.deepEqual(rows, [
+    { accountId: 'fine-line-group', outcome: 'introduced', notes: 'Restoration discussed.' },
+    { accountId: 'stone-bellisimo', outcome: 'interested', notes: 'Asked for samples.' }
+  ]);
+  assert.deepEqual(PARTNER_ACCOUNT_IDS, ['fine-line-group', 'stone-bellisimo']);
+  assert.ok(PARTNER_OUTCOME_IDS.includes('referral_partner'));
 });
 
 // ------------------------------------------------------------- write guards
@@ -137,10 +159,10 @@ test('policy for an unknown account is null, not an empty object that reads as p
 
 // ------------------------------------------------------------- bindings
 
-test('an account with no declared caller ids has no opinion', () => {
-  // Existing BiteSites campaigns predate the registry and must keep dialling.
-  assert.equal(ACCOUNTS.bitesites.callerIds.length, 0);
-  assert.equal(callerIdAllowed('bitesites', '+12015550123'), true);
+test('BiteSites preserves legacy caller ids while accepting the partner line', () => {
+  assert.deepEqual(ACCOUNTS.bitesites.callerIds, []);
+  assert.equal(callerIdAllowed('bitesites', '+12012989723'), true);
+  assert.equal(callerIdAllowed('bitesites', '+12015524949'), true);
 });
 
 test('once a list is declared it is exhaustive', () => {
@@ -154,6 +176,14 @@ test('once a list is declared it is exhaustive', () => {
   // Comparison is exact: a number stored in another format is not a match, so
   // callers must normalise to E.164 before asking.
   assert.equal(bindingAllowed(['+12015551607'], '(201) 555-1607'), false);
+});
+
+test('Fine Line and Stone Bellisimo share only the partnership line', () => {
+  assert.deepEqual(ACCOUNTS['fine-line-group'].callerIds, ['+12015524949']);
+  assert.deepEqual(ACCOUNTS['stone-bellisimo'].callerIds, ['+12015524949']);
+  assert.equal(callerIdAllowed('fine-line-group', '+12015524949'), true);
+  assert.equal(callerIdAllowed('stone-bellisimo', '+12015524949'), true);
+  assert.equal(callerIdAllowed('fine-line-group', '+12019211607'), false);
 });
 
 test('an unknown account is allowed nothing', () => {

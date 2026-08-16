@@ -76,6 +76,7 @@ let missingPlacesKeyRejected = false;
 try {
   await createDiscoveryJob(db, {
     provider: 'google_places',
+    accountId: 'bitesites',
     criteria: { keywords: ['plumber'], location: 'Ridgewood, NJ', maximumResults: 1 },
     createdBy: 'test@bitesites.org'
   });
@@ -84,6 +85,7 @@ check('Google Places jobs fail before queueing when the secret is absent', missi
 
 const configuredPlacesJob = await createDiscoveryJob(db, {
   provider: 'google_places',
+  accountId: 'bitesites',
   criteria: { keywords: ['plumber'], location: 'Ridgewood, NJ', maximumResults: 1 },
   createdBy: 'test@bitesites.org',
   sourceOptions: { apiKey: 'test-key-is-never-used' }
@@ -103,11 +105,13 @@ console.log('\na mock discovery job end to end');
 
 const jobId = await createDiscoveryJob(db, {
   provider: 'mock',
+  accountId: 'fine-line-group',
   criteria: { keywords: ['plumber'], location: 'Bergen County, NJ', maximumResults: 20 },
   createdBy: 'test@bitesites.org'
 });
 const created = await db.doc(`scrapeJobs/${jobId}`).get();
 check('a new job starts queued, not running', created.get('status') === 'queued');
+check('the selected entity is stored on the job', created.get('accountId') === 'fine-line-group');
 check('a new job has zeroed progress', created.get('progress').discovered === 0);
 
 const run = await runDiscoverySlice(db, jobId);
@@ -124,6 +128,8 @@ check('no prospect arrives callable-by-default',
   prospects.docs.every(entry => ['ready', 'needs_review'].includes(entry.get('lifecycle').status)));
 check('prospects have a normalised E.164 phone',
   prospects.docs.every(entry => /^\+1\d{10}$/.test(entry.get('phoneE164'))));
+check('every discovered prospect belongs to the selected entity',
+  prospects.docs.every(entry => entry.get('accountId') === 'fine-line-group'));
 
 const rawResults = await db.collection(`scrapeJobs/${jobId}/results`).get();
 check('raw provider payloads are stored for audit', rawResults.size === 20, String(rawResults.size));
@@ -135,6 +141,7 @@ console.log('\nre-running the same job is idempotent');
 const before = (await db.collection('prospects').get()).size;
 const secondJob = await createDiscoveryJob(db, {
   provider: 'mock',
+  accountId: 'fine-line-group',
   criteria: { keywords: ['plumber'], location: 'Bergen County, NJ', maximumResults: 20 },
   createdBy: 'test@bitesites.org'
 });
@@ -149,6 +156,7 @@ console.log('\nresume after interruption');
 
 const resumeJob = await createDiscoveryJob(db, {
   provider: 'mock',
+  accountId: 'stone-bellisimo',
   criteria: { keywords: ['roofer'], location: 'Bergen County, NJ', maximumResults: 60 },
   createdBy: 'test@bitesites.org'
 });
@@ -235,6 +243,7 @@ console.log('\nthe local-worker protocol');
 
 const workerJob = await createDiscoveryJob(db, {
   provider: 'watcher_workflow',
+  accountId: 'stone-bellisimo',
   criteria: { keywords: ['x'], location: 'NJ', maximumResults: 5 },
   createdBy: 'test',
   executionMode: 'local_runner'
@@ -244,6 +253,7 @@ check('a local-runner job waits for a worker',
 
 const claim = await claimJobForWorker(db, 'worker-a');
 check('a worker can claim it', claim?.id === workerJob, JSON.stringify(claim));
+check('a local worker receives the job entity', claim?.accountId === 'stone-bellisimo', JSON.stringify(claim));
 
 const second = await claimJobForWorker(db, 'worker-b');
 check('a second worker cannot steal a live claim', second === null);
@@ -266,6 +276,8 @@ check('a worker submission is normalised and imported',
 const workerProspect = await db.collection('prospects').where('name', '==', 'Worker Found Co').get();
 check('the worker record was normalised server-side, not trusted as-is',
   workerProspect.docs[0]?.get('phoneE164') === '+12015557777');
+check('a worker cannot lose the job entity while submitting',
+  workerProspect.docs[0]?.get('accountId') === 'stone-bellisimo');
 
 // Backdate the heartbeat past its TTL — the shape of a worker that died.
 await db.doc(`scrapeJobs/${workerJob}`).set({

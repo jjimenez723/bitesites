@@ -12,11 +12,13 @@
 import React, { useState } from 'react';
 import { outbound, useAction } from './data';
 import { providerLabel } from './SourceBadge';
+import { ACCOUNTS, ACCOUNT_IDS } from '../../../functions/accounts.js';
 
 const DEFAULTS = { keywords: '', category: '', location: '', radiusMiles: 10, maximumResults: 100 };
 
 export default function ScrapeJobBuilder({ sources = [], onCreated }) {
   const [provider, setProvider] = useState('mock');
+  const [accountId, setAccountId] = useState('');
   const [form, setForm] = useState(DEFAULTS);
   const action = useAction();
 
@@ -37,7 +39,7 @@ export default function ScrapeJobBuilder({ sources = [], onCreated }) {
       maximumResults: Number(form.maximumResults)
     };
     const result = await action.run(
-      () => outbound.createDiscoveryJob(provider, criteria),
+      () => outbound.createDiscoveryJob(provider, criteria, accountId),
       'Job created. Start it from the list below.'
     );
     if (result?.jobId) { setForm(DEFAULTS); onCreated?.(result.jobId); }
@@ -54,6 +56,15 @@ export default function ScrapeJobBuilder({ sources = [], onCreated }) {
 
       <form className="outbound-form" onSubmit={submit}>
         <div className="outbound-form-grid">
+          <label>
+            <span>Assign discovered leads to</span>
+            <select value={accountId} required onChange={event => setAccountId(event.target.value)}>
+              <option value="">Choose an entity…</option>
+              {ACCOUNT_IDS.map(id => <option key={id} value={id}>{ACCOUNTS[id].label}</option>)}
+            </select>
+            <small>This controls ownership, deduplication, campaigns, scripts, and calendar routing.</small>
+          </label>
+
           <label>
             <span>Source</span>
             <select value={provider} onChange={event => setProvider(event.target.value)}>
@@ -119,7 +130,7 @@ export default function ScrapeJobBuilder({ sources = [], onCreated }) {
         {action.error && <p className="admin-error">{action.error}</p>}
         {action.message && <p className="admin-note">{action.message}</p>}
 
-        <button className="btn-admin primary" type="submit" disabled={action.busy}>
+        <button className="btn-admin primary" type="submit" disabled={action.busy || !accountId}>
           {action.busy ? 'Creating…' : 'Create job'}
         </button>
       </form>

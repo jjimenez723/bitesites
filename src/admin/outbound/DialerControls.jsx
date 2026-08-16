@@ -235,7 +235,8 @@ export default function DialerControls({ campaignId, campaigns = [], onSelectCam
     const result = await action.run(
       () => outbound.hybridDisposition({
         callId: call.id, disposition: value,
-        notes: context.notes || '', followUpAt: context.followUpAt || ''
+        notes: context.notes || '', followUpAt: context.followUpAt || '',
+        partnerOutcomes: context.partnerOutcomes || []
       }),
       'Disposition recorded.'
     );

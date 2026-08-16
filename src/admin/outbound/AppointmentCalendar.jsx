@@ -10,6 +10,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAppointments, calendar, useAction, toDate } from './data';
 import { Empty, QueryState } from './SourceBadge';
+import { ACCOUNTS, ACCOUNT_IDS, LEGACY_ACCOUNT_ID, readAccountId } from '../../../functions/accounts.js';
 
 const DAY_MS = 86400000;
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -86,24 +87,24 @@ function AppointmentCard({ appointment, timezone, onCancel, onOutcome, busy }) {
   );
 }
 
-function BookingForm({ timezone, onBooked }) {
+function BookingForm({ accountId, timezone, onBooked }) {
   const [slots, setSlots] = useState([]);
   const [form, setForm] = useState({ slotId: '', name: '', email: '', company: '', notes: '' });
   const action = useAction();
   const [loaded, setLoaded] = useState(false);
 
   const loadSlots = useCallback(() => action.run(async () => {
-    const result = await calendar.availability({ limit: 12 });
+    const result = await calendar.availability(accountId, { limit: 12 });
     setSlots(result?.slots || []);
     setLoaded(true);
     return result;
-  }), [action]);
+  }), [accountId, action]);
 
   const submit = event => {
     event.preventDefault();
     if (!form.slotId) return;
     action.run(async () => {
-      const result = await calendar.book(form);
+      const result = await calendar.book(accountId, form);
       setForm({ slotId: '', name: '', email: '', company: '', notes: '' });
       setSlots(current => current.filter(slot => slot.slotId !== form.slotId));
       onBooked?.(result);
@@ -165,7 +166,7 @@ function BookingForm({ timezone, onBooked }) {
  * secret and because connecting Google should not require a redeploy — only
  * the service-account key is held as a secret.
  */
-function ScheduleSettings({ settings, google, onSaved }) {
+function ScheduleSettings({ accountId, settings, google, onSaved }) {
   const [draft, setDraft] = useState(settings);
   const action = useAction();
   const [open, setOpen] = useState(false);
@@ -191,7 +192,7 @@ function ScheduleSettings({ settings, google, onSaved }) {
   });
 
   const save = () => action.run(async () => {
-    const result = await calendar.saveSettings(draft);
+    const result = await calendar.saveSettings(accountId, draft);
     onSaved?.(result?.settings);
     return result;
   }, 'Schedule saved.');
@@ -279,6 +280,7 @@ function ScheduleSettings({ settings, google, onSaved }) {
 }
 
 export default function AppointmentCalendar({ canManage = true }) {
+  const [accountId, setAccountId] = useState(LEGACY_ACCOUNT_ID);
   const [anchor, setAnchor] = useState(() => weekStart(Date.now()));
   const [meta, setMeta] = useState({ settings: null, google: null, error: '' });
   const action = useAction();
@@ -289,11 +291,12 @@ export default function AppointmentCalendar({ canManage = true }) {
 
   useEffect(() => {
     let cancelled = false;
-    calendar.settings()
+    setMeta({ settings: null, google: null, error: '' });
+    calendar.settings(accountId)
       .then(result => { if (!cancelled) setMeta({ settings: result?.settings || null, google: result?.google || null, error: '' }); })
       .catch(caught => { if (!cancelled) setMeta(current => ({ ...current, error: caught?.message || 'Could not load calendar settings.' })); });
     return () => { cancelled = true; };
-  }, []);
+  }, [accountId]);
 
   const timezone = meta.settings?.timezone || '';
 
@@ -302,11 +305,12 @@ export default function AppointmentCalendar({ canManage = true }) {
   const visible = useMemo(() => {
     const now = Date.now();
     return rows.filter(row => {
+      if (readAccountId(row.accountId, { fallback: LEGACY_ACCOUNT_ID }) !== accountId) return false;
       if (row.status !== 'held') return true;
       const expires = toDate(row.holdExpiresAt);
       return expires ? expires.getTime() > now : false;
     });
-  }, [rows]);
+  }, [rows, accountId]);
 
   const byDay = useMemo(() => {
     const buckets = Array.from({ length: 7 }, () => []);
@@ -326,26 +330,29 @@ export default function AppointmentCalendar({ canManage = true }) {
     const who = appointment.attendee?.company || appointment.attendee?.name || 'this meeting';
     // eslint-disable-next-line no-alert
     if (!window.confirm(`Cancel ${who}? This removes it from Google Calendar too.`)) return;
-    action.run(() => calendar.cancel(appointment.id, 'cancelled_by_rep'), 'Cancelled.')
+    action.run(() => calendar.cancel(accountId, appointment.id, 'cancelled_by_rep'), 'Cancelled.')
       .then(result => { if (result) refresh(); });
   };
 
   const setOutcome = (appointmentId, outcome) =>
-    action.run(() => calendar.setOutcome(appointmentId, outcome), 'Saved.')
+    action.run(() => calendar.setOutcome(accountId, appointmentId, outcome), 'Saved.')
       .then(result => { if (result) refresh(); });
 
   return (
     <div className="admin-card">
       <div className="card-head">
         <div>
-          <h3>Calendar</h3>
+          <h3>{ACCOUNTS[accountId].label} calendar</h3>
           <p>
-            Meetings your voice agents and reps book. {meta.google?.connected
+            Meetings for this entity. {meta.google?.connected
               ? 'Synced to Google Calendar.'
               : 'Google Calendar is not connected — bookings still work and will sync once it is.'}
           </p>
         </div>
         <div className="card-head-actions">
+          <select className="admin-select" value={accountId} onChange={event => setAccountId(event.target.value)}>
+            {ACCOUNT_IDS.map(id => <option key={id} value={id}>{ACCOUNTS[id].label}</option>)}
+          </select>
           <button className="btn-admin" type="button" onClick={() => setAnchor(value => value - 7 * DAY_MS)}>← Prev</button>
           <button className="btn-admin" type="button" onClick={() => setAnchor(weekStart(Date.now()))}>This week</button>
           <button className="btn-admin" type="button" onClick={() => setAnchor(value => value + 7 * DAY_MS)}>Next →</button>
@@ -390,9 +397,10 @@ export default function AppointmentCalendar({ canManage = true }) {
         </Empty>
       ) : null}
 
-      {canManage ? <BookingForm timezone={timezone} onBooked={refresh} /> : null}
+      {canManage ? <BookingForm accountId={accountId} timezone={timezone} onBooked={refresh} /> : null}
       {canManage ? (
         <ScheduleSettings
+          accountId={accountId}
           settings={meta.settings}
           google={meta.google}
           onSaved={settings => setMeta(current => ({ ...current, settings: settings || current.settings }))}

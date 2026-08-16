@@ -284,6 +284,10 @@ const dispositionResult = await applyDisposition(db, {
   targetId: activeTarget.id,
   callId: activeTarget.get('lastCallId'),
   disposition: 'connected',
+  partnerOutcomes: [
+    { accountId: 'fine-line-group', outcome: 'interested', notes: 'Asked for emergency-response details.' },
+    { accountId: 'stone-bellisimo', outcome: 'introduced', notes: 'Countertop work mentioned.' }
+  ],
   campaign,
   now: NOW
 });
@@ -291,6 +295,13 @@ check('a connected disposition completes the target', dispositionResult.state ==
 check('and promotes the prospect to a lead',
   dispositionResult.promotion?.leadId && !dispositionResult.promotion?.error,
   JSON.stringify(dispositionResult.promotion));
+const wrappedTarget = await db.doc(`outboundTargets/${activeTarget.id}`).get();
+check('partner outcomes are stored on the target',
+  wrappedTarget.get('partnerOutcomes')?.length === 2,
+  JSON.stringify(wrappedTarget.get('partnerOutcomes')));
+const partnerActivities = await db.collection(`prospects/${activeTarget.get('prospectId')}/activities`)
+  .where('type', '==', 'partner_conversation').get();
+check('the prospect timeline records the partner conversation', partnerActivities.size === 1);
 
 const noAnswerTarget = thirdDial.started.find(leg => leg.targetId !== activeTarget.id);
 const retry = await applyDisposition(db, {
