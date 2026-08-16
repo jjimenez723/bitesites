@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   endVoiceCall, isLiveState, loadVoiceAgent, observeVoiceState,
   observeVoiceTranscript, startVoiceCall
-} from '../lib/ghl-voice';
+} from '../lib/byte-voice';
 import { finishCall, logCallState, logCallTranscript, startCall } from '../lib/conversations';
 import { trackEvent } from '../lib/analytics';
 import ConversationRating from './ConversationRating';
@@ -78,7 +78,7 @@ function formatTime(totalSeconds) {
   return `${minutes}:${seconds}`;
 }
 
-// The GoHighLevel agent holds the microphone for the duration of a call, so the
+// The realtime engine holds the microphone for the duration of a call, so the
 // waveform is driven by the reported call state rather than a second capture.
 function VoiceWaveform({ intensity = 0, compact = false }) {
   const canvasRef = useRef(null);
@@ -232,15 +232,17 @@ export function VoiceAIReceptionist({ open, onClose, onComplete }) {
     sawConnectingRef.current = false;
     try {
       trackEvent('call_state', { step: 'start_requested' });
-      await startVoiceCall();
+      // The call record opens first so the engine can hand its id to the
+      // server, which links the session's lead back to this transcript.
       callStartRef.current = Date.now();
       callConnectedRef.current = false;
       callIdRef.current = await startCall();
-    } catch {
-      trackEvent('call_state', { step: 'start_failed', outcome: 'failed', reason: 'voice_widget_did_not_start' });
+      await startVoiceCall({ callId: callIdRef.current });
+    } catch (startError) {
+      trackEvent('call_state', { step: 'start_failed', outcome: 'failed', reason: 'voice_agent_did_not_start' });
       setStarting(false);
-      setError('We could not reach the voice agent. Please refresh and try again.');
-      closeCallRecord('failed', 'voice widget did not start');
+      setError(startError?.message || 'We could not reach the voice agent. Please refresh and try again.');
+      closeCallRecord('failed', 'voice agent did not start');
     }
   };
 
@@ -273,8 +275,8 @@ export function VoiceAIReceptionist({ open, onClose, onComplete }) {
   }, [open]);
 
   // Two logging subscriptions, both no-ops until a call record exists: the state
-  // timeline (always available) and the transcript the widget renders (only in
-  // some GHL configurations — see observeVoiceTranscript).
+  // timeline and the live transcript the realtime engine emits from the
+  // session's speech events.
   useEffect(() => {
     if (!callIdRef.current) return;
     if (connected) callConnectedRef.current = true;
@@ -287,7 +289,7 @@ export function VoiceAIReceptionist({ open, onClose, onComplete }) {
     return observeVoiceTranscript(line => logCallTranscript(callIdRef.current, line));
   }, [open]);
 
-  // The widget drops back to idle when it cannot connect — a denied microphone
+  // The engine drops back to idle when it cannot connect — a denied microphone
   // being by far the most common reason — so report that back in our own UI.
   useEffect(() => {
     if (callState === 'connecting') sawConnectingRef.current = true;

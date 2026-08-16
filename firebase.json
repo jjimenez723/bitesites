@@ -27,6 +27,8 @@
       { "source": "/api/hybrid-sideband-control", "function": { "functionId": "hybridSidebandControl", "region": "us-central1" } },
       { "source": "/api/hybrid-ai-carrier-control", "function": { "functionId": "hybridAICarrierControl", "region": "us-central1" } },
       { "source": "/api/openai-realtime-incoming", "function": { "functionId": "openAIRealtimeIncomingCall", "region": "us-central1" } },
+      { "source": "/api/byte-session", "function": { "functionId": "byteWebSession", "region": "us-central1" } },
+      { "source": "/api/byte-tools", "function": { "functionId": "byteWebTools", "region": "us-central1" } },
       { "source": "**", "destination": "/index.html" }
     ],
     "headers": [
