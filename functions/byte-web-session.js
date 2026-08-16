@@ -390,7 +390,7 @@ async function bookMeeting(db, { sessionRef, session, args, google }) {
     confirmationRef: result.confirmationRef,
     spoken: result.spoken,
     leadId,
-    note: 'Booked. Say the day and time back in plain speech and read the confirmation reference.'
+    note: 'Booked. Say the day and time back in plain speech, read the confirmation reference, and tell them a confirmation email is on its way to their inbox.'
   };
 }
 
@@ -482,12 +482,20 @@ export const byteWebTools = onRequest(
             nowMs: Date.now(), limit: 3,
             google: await calendarClient(db).catch(() => null)
           });
+          const requested = availability.requestedTime;
           result = availability.slots.length
             ? { ok: true, found: true,
                 timezone: availability.settings.timezone,
                 durationMinutes: availability.settings.slotMinutes,
                 slots: availability.slots.map(slot => ({ slotId: slot.slotId, spoken: slot.spoken })),
-                note: 'Offer at most two of these out loud, using the spoken form exactly. Never read the slot IDs.' }
+                ...(requested ? {
+                  requestedTime: { spoken: requested.spoken, available: requested.exactMatch }
+                } : {}),
+                note: requested?.exactMatch
+                  ? 'Their exact time is open — it is the first slot. Hold it with hold_slot right away and move to their details. Do not read out other options.'
+                  : requested
+                    ? 'Their exact time is not open. The slots are ordered closest-first — say so plainly ("closest I have is …") and offer the nearest one or two. Never read the slot IDs.'
+                    : 'Offer at most two of these out loud, using the spoken form exactly. Never read the slot IDs.' }
             : { ok: true, found: false, note: 'Nothing is open in that window. Ask what else would work rather than offering a time you do not have.' };
           break;
         }
@@ -503,12 +511,15 @@ export const byteWebTools = onRequest(
             heldBy: 'ai',
             nowMs: Date.now()
           });
+          const holdGuidance = {
+            slot_taken: 'Someone took that time. Apologise once and offer the next one.',
+            slot_too_soon: 'That time is inside the booking lead window. Call check_availability again and offer what it returns.',
+            invalid_slot: 'That slot ID is not one check_availability returned. Call check_availability again and use a real slotId.'
+          };
           result = held.ok
             ? { ok: true, holdId: held.holdId, spoken: held.spoken, expiresInSeconds: held.expiresInSeconds,
-                note: 'Held. Now confirm their name and email, then call book_meeting. Nothing is booked yet.' }
-            : held.error === 'slot_taken'
-              ? { ok: false, error: 'slot_taken', note: 'Someone took that time. Apologise once and offer the next one.' }
-              : held;
+                note: 'Held. Ask for their name and email now. When they answer, repeat the email back once and call book_meeting in the same turn — never promise a read-back and go silent. Nothing is booked yet.' }
+            : { ...held, note: holdGuidance[held.error] || 'The hold did not go through. Say so briefly and try the same slot once more.' };
           break;
         }
         case 'book_meeting':
@@ -539,7 +550,7 @@ export const byteWebTools = onRequest(
           const reason = ['completed', 'booked', 'no_fit', 'visitor_left'].includes(text(args.reason, 40))
             ? text(args.reason, 40) : 'completed';
           await finalizeSession(db, sessionRef, session, { reason });
-          result = { ok: true, ending: true, note: 'Say a short warm goodbye and stop speaking.' };
+          result = { ok: true, ending: true, note: 'Say a short warm goodbye, mention that a quick one-to-five rating will appear on screen and that honest feedback genuinely helps the team, then stop speaking.' };
           break;
         }
         default:

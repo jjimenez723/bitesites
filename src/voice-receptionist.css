@@ -82,3 +82,14 @@ chat-widget,div[data-chat-widget]{position:fixed!important;left:-10000px!importa
 @media(max-width:700px){.voice-receptionist-section{padding:78px 0 64px}.voice-preview{border-radius:22px}.voice-preview-live{top:14px;left:14px}.voice-seo-points{grid-template-columns:1fr}.voice-seo-points article{padding:22px}.voice-agent-settings{left:18px}.voice-agent-center{top:48%}.voice-agent-portrait{width:132px;height:132px}.voice-agent-signoff{justify-content:center}.voice-agent-signoff small{display:none}}
 @media(max-width:420px){.voice-preview-center{justify-content:flex-start;padding:48px 14px 10px}.voice-preview-greeting{margin-bottom:5px;padding:6px 10px;font-size:9.5px}.voice-preview-portrait{width:78px;height:78px}.voice-preview .voice-waveform{height:20px}.voice-preview-action{width:92%;min-height:52px}.voice-preview-prompt{margin-top:5px;font-size:8px}.voice-agent-kicker{margin-bottom:13px}.voice-agent-portrait{width:116px;height:116px}.voice-agent-center .voice-waveform{height:43px}.voice-agent-call{margin-top:13px}}
 @media(prefers-reduced-motion:reduce){.voice-preview,.voice-preview-mic,.voice-preview-live i,.voice-preview-ring,.voice-agent-shell,.voice-agent-settings{animation:none;transition:none}.voice-agent-halo{animation:none}}
+
+/* Thinking: a tool call is running server-side — show work, not dead air. */
+.voice-agent-center.is-thinking .voice-agent-portrait{border-color:rgba(190,167,255,.5);box-shadow:0 30px 85px rgba(0,0,0,.58),0 0 90px rgba(154,120,255,.2)}
+.voice-agent-center.is-thinking .voice-agent-halo{border-color:rgba(190,167,255,.24);animation:voiceHalo 1.4s ease-out infinite}
+
+/* Post-call feedback screen inside the voice shell. */
+.voice-agent-feedback{gap:2px}
+.voice-agent-feedback-title{margin:16px 0 0;color:#fff;font-size:21px;font-weight:800;letter-spacing:-.02em}
+.voice-agent-feedback-sub{margin:6px 0 0;color:rgba(255,255,255,.62);font-size:13px}
+.voice-agent-feedback-skip{margin-top:14px;padding:6px 12px;border:0;background:none;color:rgba(255,255,255,.55);font:inherit;font-size:12px;text-decoration:underline;text-underline-offset:3px;cursor:pointer}
+.voice-agent-feedback-skip:hover{color:rgba(255,255,255,.85)}

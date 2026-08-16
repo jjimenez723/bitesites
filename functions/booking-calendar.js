@@ -340,7 +340,34 @@ export function generateConfirmationRef(bytes = randomBytes(8)) {
   return `BS-${code.slice(0, 3)}-${code.slice(3)}`;
 }
 
-/** Free-text window ("tuesday morning", "next week") → a search range. */
+/**
+ * A clock time spoken inside a window request ("2pm", "2:30", "noon").
+ * Bare hours without am/pm resolve the way a person booking a business call
+ * means them: 1–7 is afternoon, 8–12 is morning.
+ */
+export function parseSpokenClockTime(phrase) {
+  const source = String(phrase || '').toLowerCase();
+  if (/\b(noon|midday|mid-day)\b/.test(source)) return { hour: 12, minute: 0 };
+  const match = /(?:^|[^\d:])(\d{1,2})(?::(\d{2}))?\s*(a\.?\s?m\b\.?|p\.?\s?m\b\.?|o'?clock)?/i.exec(source);
+  if (!match) return null;
+  const meridiem = (match[3] || '').replace(/[^apmo]/gi, '').toLowerCase();
+  // A bare number with no ":minutes" and no am/pm ("wednesday the 19") is a
+  // date or a stray word, not a time — only commit when the phrase marks it.
+  if (!match[2] && !meridiem) return null;
+  let hour = Number(match[1]);
+  const minute = Number(match[2] || 0);
+  if (hour > 23 || minute > 59) return null;
+  if (meridiem.startsWith('p')) hour = hour === 12 ? 12 : hour + 12;
+  else if (meridiem.startsWith('a')) hour = hour === 12 ? 0 : hour;
+  else if (hour >= 1 && hour <= 7) hour += 12;
+  return { hour, minute };
+}
+
+/**
+ * Free-text window ("tuesday morning", "next week") → a search range.
+ * A specific spoken time ("wednesday at 2pm") also yields `targetMs`, so the
+ * caller can rank slots by closeness to what was actually asked for.
+ */
 export function resolveRequestedWindow(text, { nowMs = Date.now(), settings } = {}) {
   const config = normalizeCalendarSettings(settings);
   const phrase = String(text || '').toLowerCase();
@@ -379,11 +406,22 @@ export function resolveRequestedWindow(text, { nowMs = Date.now(), settings } = 
     fromMs = Math.max(fromMs, open);
     toMs = Math.min(Math.max(toMs, open), close);
   };
-  if (phrase.includes('morning')) clampToHours(6, 12);
+
+  // A specific spoken time beats a part-of-day word: the day range stays whole
+  // so the closest alternatives can come from either side of the request.
+  const clockTime = parseSpokenClockTime(phrase);
+  let targetMs = 0;
+  if (clockTime) {
+    targetMs = zonedWallClockToUtc({ ...dayStartParts, ...clockTime }, config.timezone);
+  } else if (phrase.includes('morning')) clampToHours(6, 12);
   else if (phrase.includes('afternoon')) clampToHours(12, 17);
   else if (phrase.includes('evening')) clampToHours(17, 21);
 
-  return { fromMs: Math.max(fromMs, nowMs), toMs: Math.max(toMs, fromMs + MINUTE_MS) };
+  return {
+    fromMs: Math.max(fromMs, nowMs),
+    toMs: Math.max(toMs, fromMs + MINUTE_MS),
+    ...(targetMs ? { targetMs } : {})
+  };
 }
 
 // ------------------------------------------------------------ firestore side
@@ -471,10 +509,33 @@ export async function findAvailability(db, {
     busy.push(...googleBusy);
   }
 
+  // A specific requested time changes the question from "what is open" to
+  // "how close can we get": gather the whole window, then rank by distance so
+  // the first slot is either the exact ask or the nearest thing to it.
+  const targetMs = Number(resolved.targetMs) || 0;
+  const maxResults = int(limit, 1, 50, 3);
+  let slots = computeAvailableSlots({
+    settings, busy, fromMs: resolved.fromMs, toMs: searchEnd, nowMs,
+    limit: targetMs ? 50 : maxResults
+  });
+  let requestedTime = null;
+  if (targetMs) {
+    slots = [...slots]
+      .sort((a, b) =>
+        Math.abs(a.startMs - targetMs) - Math.abs(b.startMs - targetMs) || a.startMs - b.startMs)
+      .slice(0, maxResults);
+    requestedTime = {
+      targetMs,
+      spoken: describeSlotForSpeech(targetMs, settings.timezone),
+      exactMatch: slots.some(slot => slot.startMs === targetMs)
+    };
+  }
+
   return {
     settings,
     window: { fromMs: resolved.fromMs, toMs: searchEnd },
-    slots: computeAvailableSlots({ settings, busy, fromMs: resolved.fromMs, toMs: searchEnd, nowMs, limit })
+    slots,
+    ...(requestedTime ? { requestedTime } : {})
   };
 }
 

@@ -491,6 +491,20 @@ export default function Leads() {
             </div>
           )}
 
+          {open.voice?.appointment && (
+            <div>
+              <div className="panel-section-label">Booked meeting</div>
+              <DetailRows
+                rows={[
+                  ['Meeting time', open.voice.appointment.spoken
+                    || (open.voice.appointment.startIso ? when(open.voice.appointment.startIso) : '')],
+                  ['Confirmation', open.voice.appointment.confirmationRef],
+                  ['Appointment', open.voice.appointment.id]
+                ]}
+              />
+            </div>
+          )}
+
           {open.voice && (
             <div>
               <div className="panel-section-label">The call</div>

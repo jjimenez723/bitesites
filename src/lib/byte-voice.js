@@ -22,7 +22,17 @@ import {
 
 const GREETING_INSTRUCTION = 'Greet the visitor now — briefly and warmly, as Byte. One short line of who you are, then ask what brought them in. Do not pitch.';
 
-const LIVE_STATES = ['connecting', 'listening', 'speaking'];
+const NUDGE_INSTRUCTION = 'The visitor has gone quiet. Without commenting on the silence, re-engage them now in one or two short sentences that move toward the most useful next step — the question they left open, booking the 20-minute call, or asking directly what date and time works for them.';
+
+const FAREWELL_INSTRUCTION = 'The visitor has stayed quiet. Say one warm goodbye sentence, mention that a quick one-to-five rating will appear on screen and honest feedback helps the team, and call the end_call tool with reason visitor_left in this same turn.';
+
+// How long Byte waits in silence before re-engaging, then before saying
+// goodbye. The persona is told to close rather than sit in listening mode.
+const SILENCE_NUDGE_MS = 12_000;
+const SILENCE_FAREWELL_MS = 20_000;
+const SILENCE_HANGUP_MS = 30_000;
+
+const LIVE_STATES = ['connecting', 'listening', 'thinking', 'speaking'];
 export const isLiveState = state => LIVE_STATES.includes(state);
 
 let state = 'idle';
@@ -86,6 +96,27 @@ async function postJson(url, body, { keepalive = false } = {}) {
   return { ok: response.ok, status: response.status, payload };
 }
 
+/**
+ * One flaky fetch must not read as "the booking system is down" mid-call, so
+ * tool relays retry transient failures — a thrown fetch, a 5xx, or an empty
+ * body — with a short backoff before the model is told anything went wrong.
+ */
+async function postJsonWithRetry(url, body, attempts = 3) {
+  let last = null;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      const response = await postJson(url, body);
+      const payload = response.payload && typeof response.payload === 'object' ? response.payload : {};
+      if (Object.keys(payload).length && (response.ok || response.status < 500)) return response;
+      last = response;
+    } catch { last = null; }
+    if (attempt < attempts - 1) {
+      await new Promise(resolve => setTimeout(resolve, 400 * (attempt + 1)));
+    }
+  }
+  return last;
+}
+
 /** Ends whichever call is active. Safe to call at any time, from any path. */
 export function endVoiceCall() {
   const call = activeCall;
@@ -122,6 +153,15 @@ export async function startVoiceCall({ callId = '' } = {}) {
   let endAfterDrainId = '';
   const startedMs = Date.now();
   const handledToolCalls = new Set();
+  // Tool relays in flight. While one is pending the visible state is
+  // 'thinking', so a calendar lookup reads as work rather than dead air.
+  let pendingTools = 0;
+  // Silence watchdog: VAD never fires on nothing, so without this the session
+  // just listens forever at a quiet visitor. Nudge once, close on the second.
+  let silenceTimer = null;
+  let lastActivityMs = Date.now();
+  let silenceNudges = 0;
+  const touchActivity = () => { lastActivityMs = Date.now(); };
 
   const finalize = reason => {
     if (finalized || !sessionInfo) return;
@@ -142,6 +182,7 @@ export async function startVoiceCall({ callId = '' } = {}) {
       stopped = true;
       if (sessionTimer) clearTimeout(sessionTimer);
       if (goodbyeTimer) clearTimeout(goodbyeTimer);
+      if (silenceTimer) clearInterval(silenceTimer);
       window.removeEventListener('pagehide', onPageHide);
       finalize(reason);
       try { channel.close(); } catch { /* already closed */ }
@@ -174,20 +215,29 @@ export async function startVoiceCall({ callId = '' } = {}) {
     let args = {};
     try { args = item.arguments ? JSON.parse(item.arguments) : {}; } catch { args = {}; }
 
-    let result = { ok: false, error: 'relay_failed', note: 'Say the action did not go through, and do not claim it did.' };
+    pendingTools += 1;
+    touchActivity();
+    if (!stopped && !windingDown && state !== 'speaking') setState('thinking');
+
+    let result = {
+      ok: false, error: 'relay_failed',
+      note: 'The request did not reach the server even after retries. Say the action did not go through — never claim it did — then continue the conversation and try the same tool once more when it matters.'
+    };
     try {
-      const response = await postJson('/api/byte-tools', {
+      const response = await postJsonWithRetry('/api/byte-tools', {
         sessionId: sessionInfo.sessionId,
         sessionToken: sessionInfo.sessionToken,
         action: 'tool',
         tool: item.name,
         args
       });
-      if (response.payload && typeof response.payload === 'object' && Object.keys(response.payload).length) {
+      if (response?.payload && typeof response.payload === 'object' && Object.keys(response.payload).length) {
         result = response.payload;
       }
     } catch { /* keep the relay_failed result */ }
 
+    pendingTools = Math.max(0, pendingTools - 1);
+    touchActivity();
     if (stopped) return;
     if (result.endsCall === true) {
       windingDown = true;
@@ -222,14 +272,24 @@ export async function startVoiceCall({ callId = '' } = {}) {
     const line = transcriptEvent(event);
     if (line?.text) emitTranscript(line);
 
-    if (event.type === 'output_audio_buffer.started') setState('speaking');
+    if (event.type === 'output_audio_buffer.started') {
+      touchActivity();
+      setState('speaking');
+    }
     if (['output_audio_buffer.stopped', 'output_audio_buffer.cleared'].includes(event.type) && !windingDown) {
-      setState('listening');
+      touchActivity();
+      setState(pendingTools > 0 ? 'thinking' : 'listening');
     }
     if (event.type === 'input_audio_buffer.speech_started') {
       pendingContinuationResponseId = '';
       continuationAttempts = 0;
+      touchActivity();
+      silenceNudges = 0;
       setState('listening');
+    }
+    if (event.type === 'conversation.item.input_audio_transcription.completed') {
+      touchActivity();
+      silenceNudges = 0;
     }
 
     if (event.type === 'response.output_item.done' && event.item?.type === 'function_call') {
@@ -310,6 +370,36 @@ export async function startVoiceCall({ callId = '' } = {}) {
       () => call.stop('ended', 'time_limit'),
       Number(sessionInfo.maxSessionMs) || 10 * 60_000
     );
+
+    touchActivity();
+    silenceTimer = setInterval(() => {
+      // Only the listening state counts as silence — speaking, thinking, and
+      // wind-down all mean the conversation is moving without the visitor.
+      if (stopped || windingDown || pendingTools > 0 || state !== 'listening') {
+        touchActivity();
+        return;
+      }
+      const quietFor = Date.now() - lastActivityMs;
+      const threshold = silenceNudges === 0 ? SILENCE_NUDGE_MS
+        : silenceNudges === 1 ? SILENCE_FAREWELL_MS
+          : SILENCE_HANGUP_MS;
+      if (quietFor < threshold) return;
+      touchActivity();
+      silenceNudges += 1;
+      if (silenceNudges > 2) {
+        // The farewell response never ended the call — close it ourselves
+        // rather than leaving a dead session looking live.
+        call.stop('ended', 'visitor_inactive');
+        return;
+      }
+      send({
+        type: 'response.create',
+        response: {
+          instructions: silenceNudges === 1 ? NUDGE_INSTRUCTION : FAREWELL_INSTRUCTION,
+          metadata: { response_purpose: silenceNudges === 1 ? 'silence_nudge' : 'silence_farewell' }
+        }
+      });
+    }, 1000);
 
     return call;
   } catch (error) {
