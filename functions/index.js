@@ -198,9 +198,21 @@ function splitName(full = '') {
 
 // A human-readable summary, so whoever picks the lead up has the context the
 // structured fields lose.
+const LEAD_SOURCE_NOTES = {
+  bit_chat: 'Bit chat assistant',
+  booking_page: 'Consultation booking page',
+  intake_form: 'Website intake form'
+};
+
+const LEAD_SOURCE_CRM = {
+  bit_chat: 'Website - Bit chat',
+  booking_page: 'Website - booking page',
+  intake_form: 'Website - intake form'
+};
+
 function buildNotes(lead) {
   const lines = [
-    `Source: ${lead.source === 'bit_chat' ? 'Bit chat assistant' : 'Website intake form'}`,
+    `Source: ${LEAD_SOURCE_NOTES[lead.source] || LEAD_SOURCE_NOTES.intake_form}`,
     `Services: ${(lead.services || []).map(s => SERVICE_LABELS[s] || s).join(', ')}`,
     `Business size: ${SIZE_LABELS[lead.businessSize] || lead.businessSize || '—'}`
   ];
@@ -230,7 +242,7 @@ function buildPayload(lead, leadId) {
     email: lead.email,
     phone: lead.phone || undefined,
     companyName: lead.businessName || undefined,
-    source: lead.source === 'bit_chat' ? 'Website - Bit chat' : 'Website - intake form',
+    source: LEAD_SOURCE_CRM[lead.source] || LEAD_SOURCE_CRM.intake_form,
     tags: [
       'website-lead',
       ...(lead.services || []).map(s => `service:${s}`),
@@ -1493,12 +1505,15 @@ const normalizedEmail = value => str(value, 200).toLowerCase();
 const emailKey = email => createHash('sha256').update(normalizedEmail(email)).digest('hex');
 const tokenKey = token => createHash('sha256').update(str(token, 200)).digest('hex');
 const EMAIL_PATTERN = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+/** How long a confirmation waits for Google to mint the Meet link before going without it. */
+const MEET_WAIT_MS = 10 * 60 * 1000;
 const FEEDBACK_DELAY_MS = 30 * 60 * 1000;
 const FEEDBACK_EXPIRY_MS = 30 * 24 * 60 * 60 * 1000;
 
 const EMAIL_SOURCE_LABELS = {
   intake_form: 'the project intake form',
   bit_chat: 'Bit',
+  booking_page: 'the booking page',
   byte_voice: 'a Voice AI call'
 };
 
@@ -1696,14 +1711,19 @@ export const sendLeadLifecycleEmails = onDocumentCreated(
     // An outbound prospect did not submit an inquiry. Sending the visitor-facing
     // "we received your inquiry" receipt after an internal manual promotion is
     // confusing at best and unsolicited outreach at worst.
-    if (lead.email && lead.source !== 'outbound') {
+    //
+    // A booking-page lead is excluded for the opposite reason: they already have
+    // a meeting, and `sendMeetingBookedEmails` is sending them the day, time and
+    // reference. A second mail inviting them to "schedule a consultation" reads
+    // as though the booking did not take.
+    if (lead.email && !['outbound', 'booking_page'].includes(lead.source)) {
       tasks.push(sendLifecycleEmail({
         db, templateId: 'lead_received', to: lead.email,
         variables: {
           first_name: str(lead.name, 120).split(/\s+/)[0] || 'there',
           source_label: sourceLabel,
           service_names: services,
-          consultation_url: 'https://calendar.app.google/bKKKvGWBSgvV8rodA'
+          consultation_url: `${env.appUrl}/book`
         },
         tag: 'lead-received', kind: 'lead-received'
       }));
@@ -1801,15 +1821,33 @@ export const sendMeetingBookedEmails = onDocumentWritten(
 
     const db = getFirestore();
     const ref = event.data.after.ref;
+
     // Claim before sending: trigger retries and echo writes must never mean a
     // second confirmation in the attendee's inbox.
-    const claimed = await db.runTransaction(async tx => {
+    //
+    // The claim reads the document fresh rather than trusting `after`. The
+    // write that flips a booking to 'booked' happens before Google is asked for
+    // a Meet link, so `after` never carries one — and a video consultation
+    // confirmed without a way to join it is not a confirmation.
+    //
+    // Waiting is bounded on both sides. The Google sync writes the link (or a
+    // failure) moments later and re-fires this trigger; if neither ever lands,
+    // `MEET_WAIT_MS` gives up and sends the phone-shaped confirmation rather
+    // than leaving someone with no confirmation at all.
+    const claim = await db.runTransaction(async tx => {
       const snapshot = await tx.get(ref);
-      if (snapshot.get('confirmationEmailAt')) return false;
+      if (snapshot.get('confirmationEmailAt')) return null;
+
+      const meetUrl = str(snapshot.get('googleMeetUrl'), 500);
+      const bookedAtMs = snapshot.get('bookedAt')?.toMillis?.() || 0;
+      const stillWaiting = snapshot.get('googleSyncState') === 'pending'
+        && (!bookedAtMs || Date.now() - bookedAtMs < MEET_WAIT_MS);
+      if (!meetUrl && stillWaiting) return null;
+
       tx.set(ref, { confirmationEmailAt: FieldValue.serverTimestamp() }, { merge: true });
-      return true;
+      return { meetUrl };
     });
-    if (!claimed) return;
+    if (!claim) return;
 
     const settings = await loadCalendarSettings(db, after.accountId).catch(() => null);
     const startMs = after.startAt?.toMillis?.() || 0;
@@ -1819,12 +1857,13 @@ export const sendMeetingBookedEmails = onDocumentWritten(
 
     try {
       await sendLifecycleEmail({
-        db, templateId: 'meeting_booked', to: email,
+        db, templateId: claim.meetUrl ? 'meeting_booked_video' : 'meeting_booked', to: email,
         variables: {
           first_name: str(after.attendee?.name, 120).split(/\s+/)[0] || 'there',
           meeting_title: settings?.meetingTitle || 'BiteSites strategy call',
           host_name: settings?.hostName || 'BiteSites specialist',
           meeting_time: meetingTime,
+          meet_url: claim.meetUrl,
           confirmation_ref: str(after.confirmationRef, 40) || '—'
         },
         tag: 'meeting-booked', kind: 'meeting-booked'

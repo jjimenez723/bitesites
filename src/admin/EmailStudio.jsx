@@ -215,7 +215,10 @@ function DeliveryType({ value, onChange }) {
   );
 }
 
-const BOOKING_URL = 'https://calendar.app.google/bKKKvGWBSgvV8rodA';
+// Our own booking page, not a Google appointment-schedule share link. Absolute
+// because this lands in an email, and taken from the current origin so a
+// staging console does not send people to production.
+const BOOKING_URL = `${window.location.origin}/book`;
 
 const firstWord = value => String(value || '').trim().split(/\s+/)[0] || '';
 

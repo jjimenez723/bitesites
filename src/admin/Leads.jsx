@@ -26,6 +26,7 @@ const firstWord = value => String(value || '').trim().split(/\s+/)[0] || '';
 const SOURCE_LABELS = {
   intake_form: 'Intake form',
   bit_chat: 'Bit chat',
+  booking_page: 'Booking page',
   byte_voice: 'Voice AI call',
   cold_call: 'Cold call',
   outbound: 'Outbound campaign'
