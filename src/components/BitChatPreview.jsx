@@ -10,7 +10,9 @@ const bitGreetings = [
   'Psst — my eyes follow you 👀'
 ];
 
-const bitChips = ['A new website', 'Automate my leads', 'Just saying hi 👋'];
+// Exported because the open chat seeds its first quick replies from exactly
+// these, so the card a visitor clicked and the window that opens agree.
+export const bitChips = ['A new website', 'Automate my leads', 'Just saying hi 👋'];
 
 const sparkles = [
   { left: '13%', top: '22%', delay: '0s', size: '13px' },

@@ -5,7 +5,7 @@
   "type": "module",
   "main": "v2-index.js",
   "scripts": {
-    "check": "node --check v2-index.js && node --check hybrid-index.js && node --check hybrid-dialer-api.js && node --check hybrid-session-api.js && node --check hybrid-call-orchestration.js && node --check hybrid-capacity.js && node --check hybrid-ai-sip-dispatch.js && node --check hybrid-sideband-control.js && node --check hybrid-ai-carrier-control.js && node --check hybrid-voicemail.js && node --check twilio-compliance.js && node --check agent-runtime.js && node --check agent-preview.js && node --check agent-tools.js && node --check booking-calendar.js && node --check calendar-api.js && node --check byte-persona.js && node --check byte-web-session.js"
+    "check": "node --check v2-index.js && node --check hybrid-index.js && node --check hybrid-dialer-api.js && node --check hybrid-session-api.js && node --check hybrid-call-orchestration.js && node --check hybrid-capacity.js && node --check hybrid-ai-sip-dispatch.js && node --check hybrid-sideband-control.js && node --check hybrid-ai-carrier-control.js && node --check hybrid-voicemail.js && node --check twilio-compliance.js && node --check agent-runtime.js && node --check agent-preview.js && node --check agent-tools.js && node --check booking-calendar.js && node --check calendar-api.js && node --check byte-persona.js && node --check byte-web-session.js && node --check web-agent-tools.js && node --check bit-persona.js && node --check bit-chat.js"
   },
   "engines": {
     "node": "22"

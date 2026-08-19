@@ -1,21 +1,21 @@
-import React, { Suspense, lazy, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import React, { Suspense, lazy, useEffect, useId, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Routes, Route, Link, useNavigate } from 'react-router-dom';
 import { submitLead } from './lib/leads';
 import { analyticsDuration, startAnalytics, trackEvent } from './lib/analytics';
-import { finishChat, logChatMessage, startChat } from './lib/conversations';
 import Terms from './pages/Terms';
 import Privacy from './pages/Privacy';
 import Feedback from './pages/Feedback';
 import EmailPreferences from './pages/EmailPreferences';
 import ThankYou from './pages/ThankYou';
+import Book from './pages/Book';
 import { BitMascot } from './components/BitMascot';
 import { InteractiveNebulaShader } from './components/InteractiveNebulaShader';
 import { MeshFieldBackdrop } from './components/MeshFieldBackdrop';
 import { TeamSection } from './components/TeamSection';
 import { ByteAvatar, VoiceAIReceptionist, VoiceReceptionistPreview } from './components/VoiceAIReceptionist';
 import { BitChatPreview } from './components/BitChatPreview';
-import ConversationRating from './components/ConversationRating';
+import { BitChat } from './components/BitChat';
 import ProtectedPricing from './components/ProtectedPricing';
 import logoFull from './assets/bitesites-logo-full.webp';
 import logoWordmark from './assets/bitesites-logo-wordmark.webp';
@@ -270,7 +270,11 @@ const CHEV_H = 188.328125;
 const CHEV_LEFT = 'M146.109 0L146.109 20.781L60.625 92.641L146.109 166.875L146.109 188.328L0 91.953Z';
 const CHEV_RIGHT = 'M0 188.328L0 167.547L85.484 95.688L0 21.453L0 0L146.109 96.375Z';
 // The two bites out of the left arm's leading edge, in that same local space.
-const CHEV_BITES = [[57.465, 43.233], [91.602, 18.862]];
+// Slid 3.39u closer along their own centre line than the original art: where the
+// two arcs cross used to sit 0.55u inside the leading edge, a needle that frays
+// into a ragged pixel at any real size. At 5u it is a tooth that resolves. Radius
+// and bite depth are untouched, and the lockup artwork carries the same numbers.
+const CHEV_BITES = [[60.224, 41.263], [88.843, 20.832]];
 const CHEV_BITE_R = 24.369;
 
 // Keyframes measured off the three WebP lockups, in the shared 500x500 canvas the
@@ -451,206 +455,6 @@ function MorphingLogo({ location = 'header', onClick }) {
       </span>
     </span>
   </a>;
-}
-
-const receptionistQuestions = [
-  { key: 'services', prompt: 'What would you most like to improve?', options: [['web_development', 'A website that brings in leads'], ['ai_automation', 'Lead response or team workflows'], ['social_media_management', 'Content and social visibility']] },
-  { key: 'urgencyTag', prompt: 'When would you like to get started?', options: [['asap', 'As soon as possible'], ['2_4_weeks', 'Within 2–4 weeks'], ['1_2_months', 'In the next 1–2 months'], ['flexible', 'My timeline is flexible']] },
-  { key: 'businessSize', prompt: 'How large is your team?', options: [['solo', 'Just me'], ['small', '2–10 people'], ['growing', '11–50 people'], ['established', '51–200 people'], ['enterprise', '200+ people']] }
-];
-
-const thinkingLines = [
-  'Discombobulating the possibilities…',
-  'Perplexing responsibly…',
-  'Contemplating in several dimensions…',
-  'Consulting the tiny committee in my circuits…',
-  'Warming up the idea kiln…',
-  'Doing a little digital chin-stroking…',
-  'Connecting the delightfully odd dots…',
-  'Rummaging through the good ideas drawer…',
-  'Mulling it over with great enthusiasm…',
-  'Cogitando con estilo…',
-  'Réfléchissant à haute voix, mais en silence…',
-  'Ein bisschen Gehirn-Yoga…',
-  'Pondering the cosmic spreadsheet…',
-  'Asking the pixels nicely…',
-  'Brewing a fresh batch of useful thoughts…'
-];
-
-function AiReceptionist({ onClose, origin, initialAnswer }) {
-  const navigate = useNavigate();
-  const [step, setStep] = useState(initialAnswer ? 1 : -1);
-  const [answers, setAnswers] = useState(() => initialAnswer ? { services: initialAnswer.value } : {});
-  const [status, setStatus] = useState({ text: '', kind: '' });
-  const [messages, setMessages] = useState(() => initialAnswer ? [{ role: 'user', text: initialAnswer.label }] : []);
-  const [draft, setDraft] = useState('');
-  const [isThinking, setIsThinking] = useState(false);
-  const [thinkingLine, setThinkingLine] = useState(0);
-  const bodyRef = useRef(null);
-  const hasRenderedRef = useRef(false);
-  const question = receptionistQuestions[step];
-
-  // Transcript capture. The chat document is created asynchronously, so turns
-  // that happen before it exists are buffered and replayed once it does —
-  // otherwise a fast first tap would be missing from the transcript.
-  const chatIdRef = useRef('');
-  const bufferRef = useRef([]);
-  const closedRef = useRef(false);
-  const countRef = useRef(0);
-  const outcomeRef = useRef('abandoned');
-  const leadIdRef = useRef('');
-  const answersRef = useRef(answers);
-  answersRef.current = answers;
-
-  const record = (role, text, kind = 'text', questionKey = '') => {
-    if (!text) return;
-    countRef.current += 1;
-    const turn = { role, text, kind, questionKey };
-    if (chatIdRef.current) logChatMessage(chatIdRef.current, turn);
-    else bufferRef.current.push(turn);
-  };
-
-  useEffect(() => {
-    trackEvent('chat_open', { label: 'Bit chat receptionist' });
-
-    // Bit can be opened straight from the card preview, where the visitor has
-    // already answered question one. Replay that exchange into the transcript.
-    if (initialAnswer) {
-      record('bit', receptionistQuestions[0].prompt, 'prompt', 'services');
-      record('visitor', initialAnswer.label, 'choice', 'services');
-    }
-
-    startChat().then(id => {
-      if (!id) return;
-      if (closedRef.current) {
-        // Opened and closed before the document landed — close it out now so it
-        // is not left hanging as an "open" conversation forever.
-        finishChat(id, { outcome: outcomeRef.current, messageCount: countRef.current });
-        return;
-      }
-      chatIdRef.current = id;
-      for (const turn of bufferRef.current.splice(0)) logChatMessage(id, turn);
-    });
-
-    return () => {
-      closedRef.current = true;
-      finishChat(chatIdRef.current, {
-        outcome: outcomeRef.current,
-        leadId: leadIdRef.current,
-        answers: answersRef.current,
-        messageCount: countRef.current
-      });
-    };
-  }, []);
-
-  // Log Bit's side as it is shown, so the transcript reads in the order the
-  // visitor actually saw it rather than as answers with no questions.
-  useEffect(() => {
-    if (step === -1) record('bit', 'Hi — I’m Bit, BiteSites’ mascot and AI receptionist. I’ll ask a few quick questions so our team can point you in the right direction.', 'system');
-    else if (question) record('bit', question.prompt, 'prompt', question.key);
-    else if (step === receptionistQuestions.length) record('bit', 'Thanks — I have the essentials. Where should we send your tailored next step?', 'prompt');
-  }, [step]);
-
-  useEffect(() => {
-    if (question?.key) trackEvent('chat_progress', { step: question.key, value: Math.max(1, step + 1) });
-    else if (step === receptionistQuestions.length) trackEvent('chat_progress', { step: 'contact', value: step + 1 });
-  }, [step, question?.key]);
-
-  useEffect(() => {
-    const timer = window.setInterval(() => setThinkingLine(line => (line + 1) % thinkingLines.length), 1100);
-    return () => window.clearInterval(timer);
-  }, []);
-
-  useEffect(() => {
-    if (!hasRenderedRef.current) {
-      hasRenderedRef.current = true;
-      bodyRef.current?.scrollTo({ top: 0 });
-      return;
-    }
-    bodyRef.current?.scrollTo({ top: bodyRef.current.scrollHeight, behavior: 'smooth' });
-  }, [messages, isThinking, step]);
-
-  useLayoutEffect(() => {
-    const onKeyDown = event => { if (event.key === 'Escape') onClose(); };
-    const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
-    document.body.style.setProperty('--bit-scrollbar-width', `${scrollbarWidth}px`);
-    document.addEventListener('keydown', onKeyDown);
-    document.body.classList.add('bit-open');
-    return () => {
-      document.removeEventListener('keydown', onKeyDown);
-      document.body.classList.remove('bit-open');
-      document.body.style.removeProperty('--bit-scrollbar-width');
-    };
-  }, [onClose]);
-
-  const advance = (value, label = value) => {
-    const nextAnswers = { ...answers, [question.key]: value };
-    setAnswers(nextAnswers);
-    setMessages(current => [...current, { role: 'user', text: label }]);
-    record('visitor', label, 'choice', question.key);
-    setStep(step + 1);
-  };
-  const choose = (value, label) => advance(value, label);
-  const sendTypedAnswer = event => {
-    event.preventDefault();
-    const response = draft.trim();
-    if (!response || !question || isThinking) return;
-    setDraft('');
-    setMessages(current => [...current, { role: 'user', text: response }]);
-    setAnswers(current => ({ ...current, [question.key]: response }));
-    record('visitor', response, 'text', question.key);
-    setIsThinking(true);
-    window.setTimeout(() => {
-      setIsThinking(false);
-      setStep(current => current + 1);
-    }, 1800);
-  };
-  const submitReceptionistLead = async event => {
-    event.preventDefault();
-    const data = new FormData(event.currentTarget);
-    const payload = {
-      ...answers, ...Object.fromEntries(data.entries()), services: [answers.services],
-      preferredContactMethod: 'email', conversationId: chatIdRef.current
-    };
-    setStatus({ text: 'Sending your project notes…', kind: '' });
-    record('visitor', [payload.name, payload.email, payload.phone, payload.projectDetails].filter(Boolean).join(' · '), 'text', 'contact');
-    try {
-      leadIdRef.current = await submitLead(payload, 'bit_chat');
-      outcomeRef.current = 'converted';
-      trackEvent('lead_created', { label: 'Bit chat — project notes', leadId: leadIdRef.current, source: 'bit_chat' });
-      trackEvent('form_submit', { label: 'Bit chat — project notes', leadId: leadIdRef.current, source: 'bit_chat' });
-      setStatus({ text: 'You’re all set. Our team will follow up shortly.', kind: 'success' });
-      navigate('/thank-you?source=bit', { replace: true });
-    } catch (error) {
-      outcomeRef.current = 'failed';
-      trackEvent('form_error', { label: 'Bit chat — project notes', step: 'submit', reason: String(error?.code || 'submission_failed').slice(0, 200) });
-      setStatus({ text: error.message || 'Unable to send your request. Please try again.', kind: 'error' });
-    }
-  };
-  const finishReveal = event => {
-    if (event.target === event.currentTarget && event.animationName === 'bitReveal') event.currentTarget.classList.add('bit-ready');
-  };
-
-  return <aside className="bit-window" onAnimationEnd={finishReveal} style={{ '--bit-x': `${origin?.x ?? window.innerWidth - 58}px`, '--bit-y': `${origin?.y ?? window.innerHeight - 52}px` }} aria-labelledby="receptionist-title" role="dialog" aria-modal="true">
-    <div className="bit-noise" aria-hidden="true" />
-    <header className="bit-topbar"><a className="bit-wordmark" href="#top" onClick={onClose} aria-label="BiteSites — back to site"><img src={logoWordmark} alt="BiteSites" width="500" height="500" /></a><div className="bit-agent"><span className="chat-presence" /> Bit is here</div><button type="button" className="bit-close" onClick={onClose} aria-label="Close Bit">Close <span>×</span></button></header>
-    <div className="bit-stage" ref={bodyRef}>
-      <div className="bit-intro">
-        <div className="chat-avatar bit-avatar" aria-hidden="true"><BitMascot /></div>
-        <p className="bit-kicker">Your BiteSites guide</p>
-        <h2 id="receptionist-title">How can I help today?</h2>
-        <p>Tell Bit what you’re building, or choose a quick starting point below.</p>
-      </div>
-      <div className="bit-conversation">
-        {step === -1 && <div className="chat-bubble bit-bubble">Hi — I’m Bit, BiteSites’ mascot and AI receptionist. I’ll ask a few quick questions so our team can point you in the right direction.</div>}
-        {messages.map((message, index) => <div className="bit-message user" key={`${message.text}-${index}`}>{message.text}</div>)}
-        {question && <><div className="chat-bubble bit-bubble">{question.prompt}</div><div className="chat-options bit-options">{question.options.map(([value, label]) => <button type="button" key={value} disabled={isThinking} onClick={() => choose(value, label)}>{label}<span>→</span></button>)}</div><p className="chat-progress">Question {step + 1} of {receptionistQuestions.length}</p></>}
-        {isThinking && <div className="bit-thinking" aria-live="polite"><span className="thinking-orb"><i /><i /><i /></span><span>{thinkingLines[thinkingLine]}</span></div>}
-        {step === receptionistQuestions.length && <><div className="chat-bubble bit-bubble">Thanks — I have the essentials. Where should we send your tailored next step?</div><form className="chat-form bit-contact" onSubmit={submitReceptionistLead}><label>Name<input name="name" required autoComplete="name" /></label><label>Email<input name="email" type="email" required autoComplete="email" /></label><label>Phone <small>(optional)</small><input name="phone" type="tel" autoComplete="tel" /></label><label>Anything else we should know? <small>(optional)</small><textarea name="projectDetails" placeholder="A goal, challenge, or useful detail" /></label><button className="chat-submit" type="submit" disabled={status.kind === 'success'}>{status.kind === 'success' ? 'Request sent' : 'Send my project notes'}</button><p className={`form-status ${status.kind}`} aria-live="polite">{status.text}</p></form>{status.kind === 'success' && <ConversationRating agent="bit" sourceType={chatIdRef.current ? 'chat' : 'lead'} sourceId={chatIdRef.current || leadIdRef.current} />}</>}
-      </div>
-    </div>
-    {step === -1 ? <div className="bit-composer bit-start-row"><button className="chat-start bit-start" type="button" onClick={() => setStep(0)}>Start a quick project check-in <span>→</span></button><p className="chat-note">Takes about a minute. No pressure.</p></div> : question && <form className="bit-composer" onSubmit={sendTypedAnswer}><textarea value={draft} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); sendTypedAnswer(event); } }} placeholder="Or type your own answer…" aria-label="Type your response to Bit" disabled={isThinking} rows="1" /><button className="bit-send" type="submit" disabled={!draft.trim() || isThinking} aria-label="Send message">↑</button><p>Press Enter to send <span>·</span> Shift + Enter for a new line</p></form>}
-  </aside>;
 }
 
 function App() {
@@ -1698,11 +1502,11 @@ function App() {
                 <span className="agent-chip"><i />Always up for a chat</span>
               </div>
               <BitChatPreview onOpen={openReceptionist} />
-              <p className="agent-card-copy">Bit is our mascot with a job. He asks a few friendly questions, works out what you actually need, and hands our team a lead worth calling back. And yes — his eyes really do follow your cursor.</p>
+              <p className="agent-card-copy">Bit is our mascot with a job. Ask him anything — what we build, what drives the cost, whether an agent like him would genuinely help your business — and he answers straight, then books the call himself. And yes, his eyes really do follow your cursor.</p>
               <ul className="agent-card-points">
-                <li>A one-minute project check-in, no pressure at all</li>
-                <li>Type your own answer or tap a quick reply</li>
-                <li>Your notes land with our team, ready for follow-up</li>
+                <li>Real answers to hard questions, not a scripted form</li>
+                <li>Books your free 20-minute call in the chat, on the live calendar</li>
+                <li>Honest about what he does not know, and when we are not the fit</li>
               </ul>
               <div className="agent-card-actions">
                 <Button variant="ghost" onClick={openReceptionist}>Chat with Bit <span aria-hidden="true">&nbsp;→</span></Button>
@@ -1919,13 +1723,13 @@ function App() {
       <section className="pad alt" id="pricing"><div className="wrap"><SectionHead label="Pricing" title="Choose your next growth move.">Clear starting points for stronger visibility, faster lead response, and less manual work. Create a free account to unlock current package pricing.</SectionHead><ProtectedPricing tab={tab} setTab={setTab} /></div></section>
       <section className="pad" id="about"><div className="wrap"><SectionHead label="About BiteSites" title="Small team. Serious digital work.">We combine thoughtful design, practical engineering, and emerging AI tools to help businesses move forward.</SectionHead><div className="mission reveal"><p>We believe technology should make your business feel lighter — clearer systems, better experiences, and less work lost in the cracks.</p></div><div className="values-grid">{[['Passion for Excellence','Exceptional websites and systems that make a lasting impact.'],['Timely Delivery','We respect your time and deliver projects on schedule.'],['Open Communication','Transparent updates that keep you informed every step of the way.'],['Innovation','We explore new technologies and design trends to stay ahead.']].map(([title, text]) => <div className="value-item reveal" key={title}><h4>{title}</h4><p>{text}</p></div>)}</div></div></section>
       <TeamSection />
-      <section className="pad alt" id="consultation"><div className="wrap"><SectionHead label="Consultation" title="Let’s talk through what your business needs.">Tell us what you are trying to solve. We’ll recommend the right service direction and follow up to confirm a conversation.</SectionHead><div className="segments reveal" style={{ marginTop: 0 }}>{[['01 · Tell us what you need','Share your business, goals, preferred services, and the best way to contact you.'],['02 · We review the scope','We identify the right service mix and prepare practical next steps.'],['03 · We follow up','If the fit is right, we confirm the consultation details with you directly.']].map(([title, text]) => <div className="segment" key={title}><div className="tag">{title}</div><p>{text}</p></div>)}</div><div className="hero-actions reveal"><Button href="https://calendar.app.google/bKKKvGWBSgvV8rodA" variant="ai" target="_blank" rel="noreferrer">Schedule a free consultation</Button><Button href="#pricing" variant="ghost">See pricing</Button></div></div></section>
+      <section className="pad alt" id="consultation"><div className="wrap"><SectionHead label="Consultation" title="Let’s talk through what your business needs.">Tell us what you are trying to solve. We’ll recommend the right service direction and follow up to confirm a conversation.</SectionHead><div className="segments reveal" style={{ marginTop: 0 }}>{[['01 · Tell us what you need','Share your business, goals, preferred services, and the best way to contact you.'],['02 · We review the scope','We identify the right service mix and prepare practical next steps.'],['03 · We follow up','If the fit is right, we confirm the consultation details with you directly.']].map(([title, text]) => <div className="segment" key={title}><div className="tag">{title}</div><p>{text}</p></div>)}</div><div className="hero-actions reveal"><Button href="/book" variant="ai">Schedule a free consultation</Button><Button href="#pricing" variant="ghost">See pricing</Button></div></div></section>
       <section className="pad"><div className="wrap"><div className="cta-final reveal"><Eyebrow>Get started</Eyebrow><h2>Ready to build what is next?</h2><p>Tell us what you need, choose services, and let us know how you want to be contacted.</p><div className="hero-actions"><Button href="#start" variant="ai">Start Your Project</Button><Button href="#pricing" variant="ghost">View Pricing</Button></div></div></div></section>
     </main>
     <footer className="site-footer"><div className="wrap footer-inner"><div className="footer-links footer-links-left"><a href="#services">Services</a><a href="#about">About</a><a href="#team">Team</a><a href="#pricing">Pricing</a></div><MorphingLogo location="footer" /><div className="footer-links footer-links-right"><a href="#start">Start a Project</a><Link to="/terms">Terms</Link><Link to="/privacy">Privacy</Link></div><div className="footer-copy">© 2026 BiteSites. All rights reserved.</div></div></footer>
     {modal && <div className="modal-backdrop" onClick={() => setModal(null)}><div className="detail-panel" role="dialog" aria-modal="true" onClick={event => event.stopPropagation()}><button className="close" onClick={() => setModal(null)} aria-label="Close">×</button><div className="detail-hero"><Eyebrow gradient={modal === 'ai'}>Services</Eyebrow><h2>{detailCopy[modal][0]}</h2><p>{detailCopy[modal][1]}</p></div><div className="detail-content"><h3>What’s included</h3><ul className="detail-list">{detailCopy[modal][2].map(item => <li key={item}>{item}</li>)}</ul><div className="hero-actions"><Button href="#start" variant="ai" onClick={() => { setSelectedServices([serviceFormValues[modal]]); setModal(null); }}>Start Your Project</Button><Button href="#pricing" variant="ghost" onClick={() => { setTab(modal); setModal(null); }}>See pricing</Button></div></div></div></div>}
     <VoiceAIReceptionist open={voiceAgentOpen} onClose={() => setVoiceAgentOpen(false)} onComplete={() => navigate('/thank-you?source=byte', { replace: true })} />
-    {receptionistOpen && <AiReceptionist origin={chatOrigin} initialAnswer={receptionistInitialAnswer} onClose={closeReceptionist} />}
+    {receptionistOpen && <BitChat origin={chatOrigin} initialAnswer={receptionistInitialAnswer} onClose={closeReceptionist} />}
     {!receptionistOpen && !voiceAgentOpen && !voiceSectionVisible && <div className={`chat-launcher ${receptionistNudge ? 'nudged' : ''}`}><p>Need help scoping a project?</p><button type="button" onClick={openReceptionist} aria-label="Open Bit, the AI receptionist"><BitMascot className="bit-launcher-avatar" /><em>Chat with Bit</em></button></div>}
   </>;
 }
@@ -1945,6 +1749,7 @@ createRoot(document.getElementById('root')).render(
       <Route path="/feedback" element={<Feedback />} />
       <Route path="/email-preferences" element={<EmailPreferences />} />
       <Route path="/thank-you" element={<ThankYou />} />
+      <Route path="/book" element={<Book />} />
       <Route
         path="/admin/*"
         element={<Suspense fallback={<div className="admin-boot">Loading dashboard…</div>}><AdminApp /></Suspense>}
