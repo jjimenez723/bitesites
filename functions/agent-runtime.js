@@ -294,10 +294,31 @@ export function mergeAgentConfig(profileInput, campaignOverrideInput = {}, sessi
   };
 }
 
-export function normalizeKnowledgeChunks(chunks = []) {
-  let remaining = MAX_KB_CHARS;
+/**
+ * The default budget every dialer persona compiles against. It exists because
+ * an over-long corpus does not error — it silently loses its tail, and a
+ * document that falls out of the index is a question the agent quietly stops
+ * being able to answer.
+ *
+ * A caller may raise it deliberately (see bit-persona.js, whose corpus is
+ * Byte's plus the chat-only documents), but only by passing an explicit budget
+ * — never by accident.
+ */
+export const DEFAULT_KNOWLEDGE_BUDGET = Object.freeze({
+  maxChunks: MAX_KB_CHUNKS,
+  maxChars: MAX_KB_CHARS
+});
+
+const knowledgeBudgetOf = (budget = {}) => ({
+  maxChunks: Math.max(1, Math.round(Number(budget?.maxChunks) || MAX_KB_CHUNKS)),
+  maxChars: Math.max(200, Math.round(Number(budget?.maxChars) || MAX_KB_CHARS))
+});
+
+export function normalizeKnowledgeChunks(chunks = [], budget = DEFAULT_KNOWLEDGE_BUDGET) {
+  const limits = knowledgeBudgetOf(budget);
+  let remaining = limits.maxChars;
   const safe = [];
-  for (const chunk of (Array.isArray(chunks) ? chunks : []).slice(0, MAX_KB_CHUNKS)) {
+  for (const chunk of (Array.isArray(chunks) ? chunks : []).slice(0, limits.maxChunks)) {
     if (remaining <= 0) break;
     const body = text(chunk?.text, Math.min(4000, remaining));
     if (!body) continue;
@@ -385,9 +406,10 @@ export function allowedTools(config) {
  * per-call string into tier 1 silently invalidates the cache for every call.
  */
 export function buildRuntimeInstructions({
-  config, campaign = {}, contact = {}, knowledgeChunks = [], inlineKnowledge = false
+  config, campaign = {}, contact = {}, knowledgeChunks = [], inlineKnowledge = false,
+  knowledgeBudget = DEFAULT_KNOWLEDGE_BUDGET
 }) {
-  const knowledge = normalizeKnowledgeChunks(knowledgeChunks);
+  const knowledge = normalizeKnowledgeChunks(knowledgeChunks, knowledgeBudget);
 
   const universal = [
     ...TRUSTED_AGENT_POLICY.instructions,
@@ -587,17 +609,17 @@ export function sanitizeRealtimeSessionConfig(input = {}, fallbackVoice = 'marin
 
 export function compileAgentRuntime({
   profile, campaignOverride = {}, sessionOverride = {}, campaign = {}, contact = {},
-  knowledgeChunks = [], inlineKnowledge = false
+  knowledgeChunks = [], inlineKnowledge = false, knowledgeBudget = DEFAULT_KNOWLEDGE_BUDGET
 } = {}) {
   if (!profile || typeof profile !== 'object') throw new Error('Agent profile is required');
   const config = mergeAgentConfig(profile, campaignOverride, sessionOverride);
-  const instructions = buildRuntimeInstructions({ config, campaign, contact, knowledgeChunks, inlineKnowledge });
+  const instructions = buildRuntimeInstructions({ config, campaign, contact, knowledgeChunks, inlineKnowledge, knowledgeBudget });
   const sessionConfig = buildRealtimeSessionConfig(config);
   const effectiveConfigHash = createHash('sha256').update(JSON.stringify({
     trustedPolicyVersion: TRUSTED_AGENT_POLICY.version,
     deliveryPolicyVersion: HUMAN_DELIVERY_POLICY.version,
     config,
-    knowledge: normalizeKnowledgeChunks(knowledgeChunks).map(chunk => ({ sourceId: chunk.sourceId, version: chunk.version, text: chunk.text }))
+    knowledge: normalizeKnowledgeChunks(knowledgeChunks, knowledgeBudget).map(chunk => ({ sourceId: chunk.sourceId, version: chunk.version, text: chunk.text }))
   })).digest('hex');
 
   return {

@@ -9,7 +9,9 @@ import {
   runtimePreview,
   sanitizeRealtimeSessionConfig,
   ALL_TOOL_NAMES,
-  TOOL_REGISTRY
+  TOOL_REGISTRY,
+  DEFAULT_KNOWLEDGE_BUDGET,
+  normalizeKnowledgeChunks
 } from './agent-runtime.js';
 import { IMPLEMENTED_TOOLS } from './agent-tools.js';
 import { TOOL_SCHEMA_NAMES } from '../services/realtime-sideband/tool-schemas.js';
@@ -363,4 +365,26 @@ test('a campaign may re-aim a persona at a different track without editing the p
   });
   assert.match(compiled.instructions, /PRIMARY TRACK — NFC Tag Integration/);
   assert.equal(/PRIMARY TRACK — Custom Websites/.test(compiled.instructions), false);
+});
+
+// The knowledge budget is what decides whether a document reaches the prompt at
+// all. A corpus that outgrows it does not error — it silently loses its tail,
+// and the agent quietly stops being able to answer whatever fell off the end.
+// The default is pinned here so raising it stays a deliberate, per-caller act
+// (see BIT_KNOWLEDGE_BUDGET) rather than something that drifts.
+test('the default knowledge budget is 8 documents and 12k characters', () => {
+  assert.deepEqual({ ...DEFAULT_KNOWLEDGE_BUDGET }, { maxChunks: 8, maxChars: 12000 });
+});
+
+test('a caller may raise the knowledge budget, and only by asking', () => {
+  const corpus = Array.from({ length: 11 }, (_, index) => ({
+    sourceId: `doc-${index}`, title: `Document ${index}`, text: `body ${index}`, version: 1
+  }));
+  assert.equal(normalizeKnowledgeChunks(corpus).length, 8, 'the default still truncates');
+  assert.equal(normalizeKnowledgeChunks(corpus, { maxChunks: 12, maxChars: 14000 }).length, 11);
+
+  const compiled = compileAgentRuntime({
+    profile: baseProfile, knowledgeChunks: corpus, knowledgeBudget: { maxChunks: 12, maxChars: 14000 }
+  });
+  assert.match(compiled.instructions, /Document 10/, 'the eleventh title reaches the index');
 });
