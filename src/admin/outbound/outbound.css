@@ -235,62 +235,274 @@
 
 /* ---------------------------------------------------------------- calendar
 
-   The week grid the voice agents book into. Status is encoded in the left
-   edge as well as the label, because the thing a rep scans for is "what is
-   real and what is still being held", and that has to read at a glance. */
+   Day and week are time grids: an hour is HOUR_PX tall (52, shared with
+   AppointmentCalendar.jsx) and an event's top and height are its real start
+   and duration. That is the whole reason to draw a calendar rather than a
+   list — an empty Thursday afternoon has to look empty.
 
-.bs-admin .cal-summary {
-  display: flex; flex-wrap: wrap; gap: 18px; align-items: baseline;
-  padding: 10px 0 16px; color: var(--ink-3); font-size: 12px;
+   Status is carried by the left edge as well as by the label, because the
+   thing a rep scans for is "what is real and what is still being held", and
+   that has to read without stopping to consult a legend. No colour is defined
+   here; --good/--warning/--critical and the series ramp come from admin.css. */
+
+.bs-admin .cal-card { display: flex; flex-direction: column; gap: 0; }
+
+/* --------------------------------------------------------------- toolbar */
+
+.bs-admin .cal-toolbar {
+  display: flex; flex-wrap: wrap; align-items: flex-start;
+  justify-content: space-between; gap: 14px; margin-bottom: 14px;
 }
-.bs-admin .cal-summary strong { color: var(--ink); font-size: 15px; font-variant-numeric: tabular-nums; }
+.bs-admin .cal-toolbar-title { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.bs-admin .cal-toolbar-title h3 { margin: 0; }
 
-.bs-admin .cal-week {
+.bs-admin .cal-sync {
+  display: inline-flex; align-items: center; gap: 7px;
+  color: var(--ink-3); font-size: 11.5px;
+}
+.bs-admin .cal-sync i {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--ink-3); box-shadow: 0 0 0 3px rgba(255, 255, 255, .04);
+}
+.bs-admin .cal-sync.on { color: var(--ink-2); }
+.bs-admin .cal-sync.on i { background: var(--good); box-shadow: 0 0 0 3px rgba(12, 163, 12, .16); }
+
+.bs-admin .cal-toolbar-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.bs-admin .cal-nav { display: flex; gap: 4px; }
+.bs-admin .cal-nav .btn-admin { min-width: 34px; }
+.bs-admin .cal-help { min-width: 32px; font-weight: 700; }
+
+.bs-admin .cal-viewswitch {
+  display: flex; gap: 2px; padding: 3px;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px;
+}
+.bs-admin .cal-viewswitch button {
+  border: 0; background: transparent; color: var(--ink-3);
+  padding: 5px 12px; border-radius: 7px; cursor: pointer;
+  font: inherit; font-size: 12px; font-weight: 600; transition: .15s;
+}
+.bs-admin .cal-viewswitch button:hover { color: var(--ink-2); }
+.bs-admin .cal-viewswitch button[aria-pressed='true'] { background: var(--surface-3); color: var(--ink); }
+.bs-admin .cal-viewswitch button:focus-visible { outline: 2px solid var(--brand-violet); outline-offset: 1px; }
+
+/* -------------------------------------------------------------- range bar */
+
+.bs-admin .cal-rangebar {
+  display: flex; flex-wrap: wrap; align-items: baseline;
+  justify-content: space-between; gap: 12px;
+  padding: 0 0 12px;
+}
+.bs-admin .cal-rangebar > strong { color: var(--ink); font-size: 16px; letter-spacing: -.01em; }
+.bs-admin .cal-stats {
+  display: flex; flex-wrap: wrap; gap: 16px;
+  color: var(--ink-3); font-size: 11.5px;
+}
+.bs-admin .cal-stats b { color: var(--ink); font-size: 13px; font-variant-numeric: tabular-nums; }
+.bs-admin .cal-stats .warn, .bs-admin .cal-stats .warn b { color: var(--warning); }
+.bs-admin .cal-stats-zone { color: var(--ink-3); opacity: .8; }
+
+/* -------------------------------------------------------------- time grid */
+
+.bs-admin .cal-grid {
+  border: 1px solid var(--line); border-radius: 12px;
+  background: var(--surface-1); overflow: hidden;
+}
+.bs-admin .cal-grid-head {
+  display: flex; border-bottom: 1px solid var(--line); background: var(--surface-2);
+}
+.bs-admin .cal-grid-daylabel {
+  flex: 1 1 0; min-width: 0;
+  display: flex; align-items: baseline; justify-content: center; gap: 6px;
+  padding: 9px 4px; border-left: 1px solid var(--line);
+}
+.bs-admin .cal-grid-dow {
+  color: var(--ink-3); font-size: 10.5px; font-weight: 700;
+  letter-spacing: .06em; text-transform: uppercase;
+}
+.bs-admin .cal-grid-date {
+  color: var(--ink); font-size: 15px; font-weight: 650; font-variant-numeric: tabular-nums;
+}
+.bs-admin .cal-grid-daylabel.today .cal-grid-dow { color: var(--brand-blue); }
+.bs-admin .cal-grid-daylabel.today .cal-grid-date {
+  color: #fff; background: var(--brand-blue);
+  min-width: 24px; height: 24px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 13px;
+}
+
+/* The gutter is a flex sibling of the columns, so its width is declared once
+   and both the header row and the body honour it. */
+.bs-admin .cal-grid-gutter { flex: 0 0 58px; width: 58px; position: relative; }
+
+.bs-admin .cal-grid-scroll { max-height: 520px; overflow-y: auto; overscroll-behavior: contain; }
+.bs-admin .cal-grid-body { display: flex; position: relative; }
+
+/* Label sits just under the line it names, inside its own band — a negative
+   offset would clip the first one against the top of the scroll container. */
+.bs-admin .cal-grid-hour {
+  display: block; box-sizing: border-box; padding: 3px 8px 0 0;
+  color: var(--ink-3); font-size: 10.5px; font-variant-numeric: tabular-nums;
+  line-height: 1; text-align: right;
+}
+
+.bs-admin .cal-grid-col {
+  flex: 1 1 0; min-width: 0; position: relative;
+  border-left: 1px solid var(--line);
+}
+.bs-admin .cal-grid-col.today { background: rgba(0, 113, 227, .045); }
+.bs-admin .cal-grid-slot { border-top: 1px solid var(--line); box-sizing: border-box; }
+.bs-admin .cal-grid-slot:first-child { border-top: 0; }
+
+.bs-admin .cal-now {
+  position: absolute; left: 0; right: 0; height: 0;
+  border-top: 2px solid var(--critical); z-index: 3; pointer-events: none;
+}
+.bs-admin .cal-now::before {
+  content: ''; position: absolute; left: -4px; top: -5px;
+  width: 8px; height: 8px; border-radius: 50%; background: var(--critical);
+}
+
+.bs-admin .cal-grid-event {
+  position: absolute; z-index: 2; box-sizing: border-box;
+  display: flex; flex-direction: column; gap: 1px; overflow: hidden;
+  margin: 0 3px 0 1px; padding: 4px 6px;
+  border: 1px solid var(--line-strong); border-left: 3px solid var(--ink-3);
+  border-radius: 7px; background: var(--surface-3); color: var(--ink);
+  font: inherit; text-align: left; cursor: pointer;
+  transition: transform .12s ease, box-shadow .12s ease, background .12s ease;
+}
+.bs-admin .cal-grid-event:hover {
+  background: var(--surface-2); transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .35); z-index: 4;
+}
+.bs-admin .cal-grid-event:focus-visible { outline: 2px solid var(--brand-violet); outline-offset: 1px; }
+.bs-admin .cal-grid-event-time {
+  color: var(--ink); font-size: 10.5px; font-weight: 700;
+  font-variant-numeric: tabular-nums; line-height: 1.2;
+}
+.bs-admin .cal-grid-event-who {
+  color: var(--ink-2); font-size: 11px; line-height: 1.25;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.bs-admin .cal-grid-event-src {
+  position: absolute; top: 3px; right: 4px;
+  color: var(--ink-3); font-size: 9px; font-weight: 700; letter-spacing: .04em;
+}
+
+.bs-admin .cal-grid-event-booked { border-left-color: var(--good); }
+.bs-admin .cal-grid-event-held {
+  border-left-color: var(--warning); border-style: dashed; border-left-style: solid;
+}
+.bs-admin .cal-grid-event-completed { border-left-color: var(--s5); }
+.bs-admin .cal-grid-event-no_show { border-left-color: var(--serious); }
+.bs-admin .cal-grid-event-cancelled { border-left-color: var(--critical); opacity: .55; }
+
+/* ------------------------------------------------------------ month grid */
+
+.bs-admin .cal-month {
   display: grid; grid-template-columns: repeat(7, minmax(0, 1fr));
-  gap: 1px; background: var(--line); border: 1px solid var(--line);
-  border-radius: 12px; overflow: hidden;
+  gap: 1px; background: var(--line);
+  border: 1px solid var(--line); border-radius: 12px; overflow: hidden;
 }
-.bs-admin .cal-day {
-  background: var(--surface-1); min-height: 150px;
-  padding: 10px 8px; display: flex; flex-direction: column; gap: 8px;
+.bs-admin .cal-month-head {
+  padding: 8px 6px; background: var(--surface-2);
+  color: var(--ink-3); font-size: 10.5px; font-weight: 700;
+  letter-spacing: .06em; text-transform: uppercase; text-align: center;
 }
-.bs-admin .cal-day-today { background: var(--surface-2); }
-.bs-admin .cal-day-head {
-  color: var(--ink-3); font-size: 11px; font-weight: 650;
-  letter-spacing: .04em; text-transform: uppercase;
+.bs-admin .cal-month-cell {
+  display: flex; flex-direction: column; gap: 3px; align-items: flex-start;
+  min-height: 96px; padding: 6px; background: var(--surface-1);
 }
-.bs-admin .cal-day-today .cal-day-head { color: var(--brand-blue); }
-.bs-admin .cal-day-empty { color: var(--ink-3); font-size: 12px; margin: 0; }
+.bs-admin .cal-month-cell.outside { background: var(--bg); }
+.bs-admin .cal-month-cell.outside .cal-month-date { color: var(--ink-3); opacity: .55; }
+.bs-admin .cal-month-cell.today { background: rgba(0, 113, 227, .06); }
 
-.bs-admin .cal-event {
-  display: flex; flex-direction: column; gap: 3px;
-  background: var(--surface-2); border: 1px solid var(--line);
-  border-left: 3px solid var(--ink-3);
-  border-radius: 8px; padding: 8px; font-size: 12px;
+.bs-admin .cal-month-date {
+  border: 0; background: transparent; padding: 1px 5px; border-radius: 6px;
+  color: var(--ink-2); font: inherit; font-size: 11.5px; font-weight: 650;
+  font-variant-numeric: tabular-nums; cursor: pointer;
 }
-.bs-admin .cal-day-today .cal-event { background: var(--surface-3); }
-.bs-admin .cal-event-booked { border-left-color: var(--good); }
-.bs-admin .cal-event-held { border-left-color: var(--warning); border-style: dashed; }
-.bs-admin .cal-event-completed { border-left-color: var(--s5); }
-.bs-admin .cal-event-no_show { border-left-color: var(--serious); }
-.bs-admin .cal-event-cancelled { border-left-color: var(--critical); opacity: .6; }
+.bs-admin .cal-month-date:hover { background: var(--surface-3); color: var(--ink); }
+.bs-admin .cal-month-cell.today .cal-month-date { background: var(--brand-blue); color: #fff; }
+.bs-admin .cal-month-more {
+  border: 0; background: transparent; padding: 0 5px;
+  color: var(--ink-3); font: inherit; font-size: 10.5px; cursor: pointer;
+}
+.bs-admin .cal-month-more:hover { color: var(--ink-2); text-decoration: underline; }
 
-.bs-admin .cal-event header { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; }
-.bs-admin .cal-event-time { color: var(--ink); font-weight: 650; font-variant-numeric: tabular-nums; }
-.bs-admin .cal-event-source {
-  color: var(--ink-3); font-size: 10px; font-weight: 650;
-  letter-spacing: .04em; border: 1px solid var(--line-strong);
-  border-radius: 4px; padding: 0 4px;
+.bs-admin .cal-chip {
+  display: flex; align-items: baseline; gap: 5px; width: 100%; box-sizing: border-box;
+  padding: 2px 5px; border: 0; border-left: 3px solid var(--ink-3); border-radius: 5px;
+  background: var(--surface-2); color: var(--ink-2);
+  font: inherit; font-size: 10.5px; text-align: left; cursor: pointer;
+  overflow: hidden; white-space: nowrap;
 }
-.bs-admin .cal-event strong { color: var(--ink); font-size: 12.5px; line-height: 1.3; }
-.bs-admin .cal-event-sub { color: var(--ink-2); }
-.bs-admin .cal-event-ref {
-  color: var(--ink-3); font-size: 11px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+.bs-admin .cal-chip:hover { background: var(--surface-3); color: var(--ink); }
+.bs-admin .cal-chip:focus-visible { outline: 2px solid var(--brand-violet); outline-offset: 1px; }
+.bs-admin .cal-chip-time { font-variant-numeric: tabular-nums; font-weight: 650; flex: 0 0 auto; }
+.bs-admin .cal-chip-who { overflow: hidden; text-overflow: ellipsis; }
+.bs-admin .cal-chip-src { margin-left: auto; color: var(--ink-3); font-size: 9px; font-weight: 700; }
+
+.bs-admin .cal-chip-booked { border-left-color: var(--good); }
+.bs-admin .cal-chip-held { border-left-color: var(--warning); }
+.bs-admin .cal-chip-completed { border-left-color: var(--s5); }
+.bs-admin .cal-chip-no_show { border-left-color: var(--serious); }
+.bs-admin .cal-chip-cancelled { border-left-color: var(--critical); opacity: .55; }
+
+/* ------------------------------------------------------- sheets / detail */
+
+.bs-admin .cal-sheet-backdrop {
+  position: fixed; inset: 0; z-index: 60;
+  display: grid; place-items: center; padding: 24px;
+  background: rgba(6, 6, 10, .62); backdrop-filter: blur(3px);
 }
-.bs-admin .cal-event-status { color: var(--ink-3); font-size: 11px; }
-.bs-admin .cal-event-warn { color: var(--warning); font-size: 11px; line-height: 1.35; }
-.bs-admin .cal-event-actions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.bs-admin .cal-sheet {
+  width: min(560px, 100%); max-height: 82vh; overflow-y: auto;
+  padding: 20px 22px; border: 1px solid var(--line-strong); border-radius: 16px;
+  background: var(--surface-1); box-shadow: 0 30px 90px rgba(0, 0, 0, .55);
+}
+.bs-admin .cal-sheet > header {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  margin-bottom: 16px;
+}
+.bs-admin .cal-sheet > header h4 { margin: 0; font-size: 15px; }
+
+.bs-admin .cal-sheet-groups { display: grid; gap: 18px; }
+.bs-admin .cal-sheet-groups h5 {
+  margin: 0 0 8px; color: var(--ink-3); font-size: 10.5px; font-weight: 700;
+  letter-spacing: .07em; text-transform: uppercase;
+}
+.bs-admin .cal-sheet-row {
+  display: grid; grid-template-columns: 128px minmax(0, 1fr);
+  gap: 12px; align-items: center; padding: 4px 0;
+  color: var(--ink-2); font-size: 12.5px;
+}
+.bs-admin .cal-sheet-keys { display: flex; gap: 4px; flex-wrap: wrap; }
+.bs-admin .cal-sheet-keys kbd {
+  min-width: 20px; padding: 2px 6px; box-sizing: border-box;
+  border: 1px solid var(--line-strong); border-bottom-width: 2px; border-radius: 5px;
+  background: var(--surface-2); color: var(--ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px;
+  text-align: center;
+}
+
+/* One meeting is a narrower read than a two-column shortcut table. */
+.bs-admin .cal-detail { width: min(470px, 100%); }
+.bs-admin .cal-detail-when { margin: 0 0 16px; color: var(--ink); font-size: 14px; font-weight: 600; }
+.bs-admin .cal-detail-rows {
+  display: grid; gap: 1px; margin: 0;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--line); overflow: hidden;
+}
+.bs-admin .cal-detail-rows > div {
+  display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 12px;
+  padding: 9px 12px; background: var(--surface-2);
+}
+.bs-admin .cal-detail-rows dt { color: var(--ink-3); font-size: 11px; font-weight: 650; }
+.bs-admin .cal-detail-rows dd { margin: 0; color: var(--ink-2); font-size: 12.5px; word-break: break-word; }
+.bs-admin .cal-detail-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.bs-admin .cal-detail-actions .btn-admin { text-decoration: none; }
+
+/* -------------------------------------------------------- booking / hours */
 
 .bs-admin .cal-btn { padding: 3px 7px; font-size: 11px; border-radius: 6px; }
 
@@ -314,13 +526,8 @@
 }
 .bs-admin .cal-booking button[type='submit'] { align-self: flex-start; }
 
-.bs-admin .cal-note { color: var(--ink-3); font-size: 12px; margin: 0; }
+.bs-admin .cal-note { color: var(--ink-3); font-size: 12px; margin: 0; line-height: 1.5; }
 .bs-admin .cal-ok { color: var(--good); font-size: 12px; margin: 0; }
-
-@media (max-width: 900px) {
-  .bs-admin .cal-week { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .bs-admin .cal-day { min-height: 0; }
-}
 
 .bs-admin .cal-settings {
   margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line);
@@ -337,6 +544,14 @@
 .bs-admin .cal-settings-body .full { grid-column: 1 / -1; }
 
 .bs-admin .cal-hours { display: flex; flex-direction: column; gap: 6px; }
+.bs-admin .cal-hours-top {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; margin-bottom: 2px;
+}
+.bs-admin .cal-hours-top > span {
+  color: var(--ink-3); font-size: 11px; font-weight: 650;
+  letter-spacing: .04em; text-transform: uppercase;
+}
 .bs-admin .cal-hours-row {
   display: grid; grid-template-columns: 120px 1fr 1fr;
   gap: 10px; align-items: center;
@@ -348,6 +563,17 @@
 .bs-admin .cal-toggle { flex-direction: row !important; align-items: center; gap: 8px; }
 .bs-admin .cal-toggle span { color: var(--ink-2); font-size: 12.5px; }
 
+@media (max-width: 900px) {
+  .bs-admin .cal-grid-gutter { flex-basis: 44px; width: 44px; }
+  .bs-admin .cal-month-cell { min-height: 74px; }
+  .bs-admin .cal-toolbar-controls { width: 100%; }
+}
+
 @media (max-width: 620px) {
   .bs-admin .cal-hours-row { grid-template-columns: 1fr; }
+  .bs-admin .cal-sheet-row { grid-template-columns: 104px minmax(0, 1fr); }
+  .bs-admin .cal-grid-scroll { max-height: 420px; }
 }
+
+.bs-admin .cal-meet-link { color: var(--brand-blue); text-decoration: none; word-break: break-all; }
+.bs-admin .cal-meet-link:hover { text-decoration: underline; }
