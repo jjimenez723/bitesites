@@ -53,15 +53,46 @@ export const DEFAULT_CALENDAR_SETTINGS = Object.freeze({
   },
   blackoutDates: [],
   meetingTitle: 'BiteSites strategy call',
-  hostName: 'BiteSites specialist'
+  hostName: 'BiteSites specialist',
+  googleCalendarId: '',
+  busyCalendarIds: []
+});
+
+/** Nine to five, Monday through Friday. */
+const NINE_TO_FIVE_WEEKDAYS = Object.freeze({
+  1: [['09:00', '17:00']],
+  2: [['09:00', '17:00']],
+  3: [['09:00', '17:00']],
+  4: [['09:00', '17:00']],
+  5: [['09:00', '17:00']]
+});
+
+/**
+ * Per-entity starting points, applied only to fields a stored settings document
+ * has never written. An operator who clears the calendar id in the console has
+ * disconnected Google on purpose, and a redeploy must not silently reconnect
+ * it — so `normalizeCalendarSettings` distinguishes "absent" from "empty".
+ */
+const ACCOUNT_CALENDAR_DEFAULTS = Object.freeze({
+  bitesites: Object.freeze({
+    workingHours: NINE_TO_FIVE_WEEKDAYS,
+    // The business calendar owns the meetings. The personal one is read for
+    // conflicts only — see `busyCalendarIds` — so a dentist appointment on the
+    // gmail account blocks the slot without putting client meetings there.
+    googleCalendarId: 'jensy@bitesites.org',
+    busyCalendarIds: Object.freeze(['jensyjimenez723@gmail.com'])
+  })
 });
 
 export function calendarDefaultsForAccount(accountId = LEGACY_ACCOUNT_ID) {
   const id = readAccountId(accountId, { fallback: LEGACY_ACCOUNT_ID });
   const label = ACCOUNTS[id]?.label || ACCOUNTS[LEGACY_ACCOUNT_ID].label;
+  const overrides = ACCOUNT_CALENDAR_DEFAULTS[id] || {};
   return {
     ...DEFAULT_CALENDAR_SETTINGS,
-    workingHours: { ...DEFAULT_CALENDAR_SETTINGS.workingHours },
+    workingHours: { ...(overrides.workingHours || DEFAULT_CALENDAR_SETTINGS.workingHours) },
+    googleCalendarId: overrides.googleCalendarId || '',
+    busyCalendarIds: [...(overrides.busyCalendarIds || [])],
     meetingTitle: `${label} consultation`,
     hostName: `${label} specialist`
   };
@@ -200,10 +231,40 @@ export function normalizeCalendarSettings(input = {}, { accountId = LEGACY_ACCOU
     // Neither of these is a secret — a calendar ID is an email address — so
     // they live in settings where an admin can change them without a redeploy.
     // Only the service-account key is held in Secret Manager.
-    googleCalendarId: clean(source.googleCalendarId, 300),
+    //
+    // `in` rather than a falsy check: an operator who saves an empty calendar
+    // id has disconnected Google deliberately, and the account default must not
+    // reinstate it on the next read.
+    googleCalendarId: 'googleCalendarId' in source
+      ? clean(source.googleCalendarId, 300)
+      : defaults.googleCalendarId,
+    busyCalendarIds: 'busyCalendarIds' in source
+      ? normalizeBusyCalendarIds(source.busyCalendarIds)
+      : [...defaults.busyCalendarIds],
     googleImpersonate: clean(source.googleImpersonate, 200),
     googleSyncEnabled: source.googleSyncEnabled !== false
   };
+}
+
+/**
+ * Extra calendars consulted for conflicts but never written to.
+ *
+ * This is how a personal calendar keeps the AI from booking over a real
+ * commitment without any client meeting ever landing on it. Accepts an array or
+ * a comma/newline separated string, because the console offers a single field.
+ */
+export function normalizeBusyCalendarIds(input) {
+  const list = Array.isArray(input) ? input : String(input || '').split(/[\s,;]+/);
+  const seen = new Set();
+  const ids = [];
+  for (const entry of list) {
+    const id = clean(entry, 300).toLowerCase();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+    if (ids.length >= 10) break;
+  }
+  return ids;
 }
 
 // --------------------------------------------------------------- slot tokens
@@ -266,7 +327,9 @@ export function computeAvailableSlots({
   const config = normalizeCalendarSettings(settings);
   const slotMs = config.slotMinutes * MINUTE_MS;
   const strideMs = (config.slotMinutes + config.bufferMinutes) * MINUTE_MS;
-  const maxResults = int(limit, 1, 50, 3);
+  // The ceiling is a runaway guard, not a product rule: an agent asks for 3,
+  // the public booking page asks for a month of them.
+  const maxResults = int(limit, 1, 2000, 3);
 
   const windowStart = Math.max(Number(fromMs) || nowMs, nowMs + config.leadTimeMinutes * MINUTE_MS);
   const windowEnd = Math.min(
@@ -486,7 +549,10 @@ export async function loadBlockingAppointments(db, {
  */
 export async function findAvailability(db, {
   requestedWindow = '', fromMs = 0, toMs = 0, nowMs = Date.now(), limit = 3, google = null,
-  accountId = LEGACY_ACCOUNT_ID
+  accountId = LEGACY_ACCOUNT_ID,
+  // A voice agent offers three times, so 50 is a generous guard there. The
+  // public booking page paints a whole month at once and raises it.
+  maxLimit = 50
 } = {}) {
   const account = requireAccountId(accountId, { field: 'calendar.accountId' });
   const settings = await loadCalendarSettings(db, account);
@@ -513,10 +579,11 @@ export async function findAvailability(db, {
   // "how close can we get": gather the whole window, then rank by distance so
   // the first slot is either the exact ask or the nearest thing to it.
   const targetMs = Number(resolved.targetMs) || 0;
-  const maxResults = int(limit, 1, 50, 3);
+  const ceiling = int(maxLimit, 1, 2000, 50);
+  const maxResults = int(limit, 1, ceiling, 3);
   let slots = computeAvailableSlots({
     settings, busy, fromMs: resolved.fromMs, toMs: searchEnd, nowMs,
-    limit: targetMs ? 50 : maxResults
+    limit: targetMs ? ceiling : maxResults
   });
   let requestedTime = null;
   if (targetMs) {
@@ -803,10 +870,16 @@ const CALENDAR_API = 'https://www.googleapis.com/calendar/v3';
  * a real user. `googleapis` is deliberately not a dependency — three REST calls
  * do not justify that install size in a Cloud Function.
  */
-export function createGoogleCalendarClient({ credentialsJson, calendarId, impersonate = '' } = {}) {
+export function createGoogleCalendarClient({
+  credentialsJson, calendarId, impersonate = '', busyCalendarIds = []
+} = {}) {
   const rawCredentials = clean(credentialsJson, 20000);
   const targetCalendar = clean(calendarId, 300);
   if (!rawCredentials || !targetCalendar) return null;
+  // Read-only conflict sources. The target is always among them; a duplicate
+  // entry would ask Google for the same calendar twice.
+  const conflictCalendars = normalizeBusyCalendarIds(busyCalendarIds)
+    .filter(id => id !== targetCalendar.toLowerCase());
 
   let credentials;
   try {
@@ -847,17 +920,41 @@ export function createGoogleCalendarClient({ credentialsJson, calendarId, impers
 
   return {
     calendarId: targetCalendar,
+    busyCalendarIds: conflictCalendars,
 
+    /**
+     * Busy periods across the meeting calendar and every conflict-only
+     * calendar, as one merged list.
+     *
+     * Google answers per calendar and reports an unreadable one in that
+     * calendar's `errors` rather than failing the request. A calendar nobody
+     * shared with the service account is therefore skipped with a warning: the
+     * remaining conflicts still block, which is strictly better than treating
+     * the whole window as free.
+     */
     async freeBusy(fromMs, toMs) {
+      const items = [targetCalendar, ...conflictCalendars].map(id => ({ id }));
       const result = await request('/freeBusy', {
         method: 'POST',
         body: {
           timeMin: new Date(fromMs).toISOString(),
           timeMax: new Date(toMs).toISOString(),
-          items: [{ id: targetCalendar }]
+          items
         }
       });
-      const periods = result?.calendars?.[targetCalendar]?.busy || [];
+
+      const periods = [];
+      for (const { id } of items) {
+        const entry = result?.calendars?.[id];
+        const errors = entry?.errors || [];
+        if (errors.length) {
+          console.warn('[calendar] free/busy unavailable for', id,
+            errors.map(error => error?.reason).filter(Boolean).join(', '));
+          continue;
+        }
+        periods.push(...(entry?.busy || []));
+      }
+
       return periods
         .map(period => ({
           startMs: new Date(period.start).getTime(),
@@ -866,12 +963,20 @@ export function createGoogleCalendarClient({ credentialsJson, calendarId, impers
         .filter(period => Number.isFinite(period.startMs) && Number.isFinite(period.endMs));
     },
 
+    /**
+     * Create or update the event.
+     *
+     * `conferenceDataVersion=1` is what makes Google act on a `createRequest`
+     * and mint the Meet link; without it Google silently drops the conference
+     * block and returns an event with no way to join.
+     */
     async upsertEvent(eventId, event) {
+      const query = { conferenceDataVersion: 1 };
       return eventId
         ? request(`/calendars/${encodeURIComponent(targetCalendar)}/events/${encodeURIComponent(eventId)}`,
-            { method: 'PATCH', body: event })
+            { method: 'PATCH', body: event, query })
         : request(`/calendars/${encodeURIComponent(targetCalendar)}/events`,
-            { method: 'POST', body: event });
+            { method: 'POST', body: event, query });
     },
 
     async deleteEvent(eventId) {
@@ -908,6 +1013,18 @@ export function buildGoogleEvent(appointment, settings) {
     start: { dateTime: new Date(toMillis(appointment.startAt)).toISOString(), timeZone: settings.timezone },
     end: { dateTime: new Date(toMillis(appointment.endAt)).toISOString(), timeZone: settings.timezone },
     status: appointment.status === 'cancelled' ? 'cancelled' : 'confirmed',
+    // A consultation is a video call, so the event carries its own Meet link.
+    // `requestId` is the appointment id rather than a random value: Google
+    // treats a repeat of the same id as the same request, so the retry sweep
+    // re-syncing an event cannot mint a second conference for one meeting.
+    ...(appointment.status === 'cancelled' ? {} : {
+      conferenceData: {
+        createRequest: {
+          requestId: `bitesites-${clean(appointment.id, 200)}`,
+          conferenceSolutionKey: { type: 'hangoutsMeet' }
+        }
+      }
+    }),
     extendedProperties: {
       private: {
         bitesitesAppointmentId: clean(appointment.id, 200),
@@ -915,6 +1032,26 @@ export function buildGoogleEvent(appointment, settings) {
       }
     }
   };
+}
+
+/**
+ * The join link Google minted for an event.
+ *
+ * `conferenceData.entryPoints` is the current shape and `hangoutLink` the
+ * older one; Google populates both for Meet, and reading either means a change
+ * on their side does not quietly leave every confirmation email without a way
+ * to join the call.
+ */
+export function readMeetUrl(event) {
+  const entry = (event?.conferenceData?.entryPoints || [])
+    .find(point => point?.entryPointType === 'video' && point?.uri);
+  return clean(entry?.uri || event?.hangoutLink, 500);
+}
+
+/** Google builds the conference asynchronously; 'success' means the link is real. */
+function conferencePending(event) {
+  const status = event?.conferenceData?.createRequest?.status?.statusCode;
+  return status === 'pending';
 }
 
 /**
@@ -950,15 +1087,22 @@ export async function syncAppointmentToGoogle(db, appointmentId, { client, setti
     }
 
     const event = await client.upsertEvent(existingEventId, buildGoogleEvent(appointment, config));
+    const meetUrl = readMeetUrl(event);
+    // Google can answer before the conference exists. Leaving the row 'pending'
+    // hands it to the five-minute maintenance sweep, which re-sends the same
+    // requestId and collects the link — rather than marking the meeting done
+    // with no way to join it.
+    const awaitingConference = !meetUrl && conferencePending(event);
     await ref.set({
       googleEventId: clean(event.id, 300),
       googleEventLink: clean(event.htmlLink, 500),
-      googleSyncState: 'synced',
+      ...(meetUrl ? { googleMeetUrl: meetUrl } : {}),
+      googleSyncState: awaitingConference ? 'pending' : 'synced',
       googleSyncedAt: FieldValue.serverTimestamp(),
       googleSyncError: FieldValue.delete(),
       updatedAt: FieldValue.serverTimestamp()
     }, { merge: true });
-    return { ok: true, eventId: clean(event.id, 300) };
+    return { ok: true, eventId: clean(event.id, 300), meetUrl, awaitingConference };
   } catch (error) {
     console.warn('[calendar] Google sync failed', id, error?.message);
     await ref.set({

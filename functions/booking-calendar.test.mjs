@@ -14,6 +14,7 @@ import {
   zonedParts,
   zonedWallClockToUtc,
   calendarDefaultsForAccount,
+  normalizeBusyCalendarIds,
   DEFAULT_CALENDAR_SETTINGS
 } from './booking-calendar.js';
 
@@ -78,6 +79,91 @@ test('each entity receives its own calendar identity defaults', () => {
   assert.equal(calendarDefaultsForAccount('bitesites').meetingTitle, 'BiteSites consultation');
   assert.equal(calendarDefaultsForAccount('fine-line-group').meetingTitle, 'The Fine Line Group consultation');
   assert.equal(calendarDefaultsForAccount('stone-bellisimo').meetingTitle, 'Stone Bellisimo consultation');
+});
+
+test('BiteSites defaults to nine-to-five weekdays; the partner entities are untouched', () => {
+  const bitesites = calendarDefaultsForAccount('bitesites');
+  for (const weekday of ['1', '2', '3', '4', '5']) {
+    assert.deepEqual(bitesites.workingHours[weekday], [['09:00', '17:00']],
+      `weekday ${weekday} is not 9–5`);
+  }
+  assert.equal(bitesites.workingHours['0'], undefined, 'Sunday should be closed');
+  assert.equal(bitesites.workingHours['6'], undefined, 'Saturday should be closed');
+
+  // The partner calendars still read from the shared default, so changing the
+  // BiteSites schedule cannot silently reschedule someone else's business.
+  assert.deepEqual(
+    calendarDefaultsForAccount('fine-line-group').workingHours,
+    DEFAULT_CALENDAR_SETTINGS.workingHours
+  );
+});
+
+test('BiteSites writes meetings to the business calendar and reads the personal one for conflicts', () => {
+  const defaults = calendarDefaultsForAccount('bitesites');
+  assert.equal(defaults.googleCalendarId, 'jensy@bitesites.org');
+  assert.deepEqual(defaults.busyCalendarIds, ['jensyjimenez723@gmail.com']);
+  // A partner entity inherits neither — those are one owner's calendars.
+  assert.equal(calendarDefaultsForAccount('stone-bellisimo').googleCalendarId, '');
+  assert.deepEqual(calendarDefaultsForAccount('stone-bellisimo').busyCalendarIds, []);
+});
+
+test('an account default fills a field the stored settings never wrote, and only that', () => {
+  // Nothing stored: the account default applies.
+  assert.equal(
+    normalizeCalendarSettings({}, { accountId: 'bitesites' }).googleCalendarId,
+    'jensy@bitesites.org'
+  );
+  // Cleared on purpose in the console: disconnection must survive a redeploy.
+  assert.equal(
+    normalizeCalendarSettings({ googleCalendarId: '' }, { accountId: 'bitesites' }).googleCalendarId,
+    ''
+  );
+  assert.deepEqual(
+    normalizeCalendarSettings({ busyCalendarIds: [] }, { accountId: 'bitesites' }).busyCalendarIds,
+    []
+  );
+  // A stored value always wins over the default.
+  assert.equal(
+    normalizeCalendarSettings({ googleCalendarId: 'other@example.com' }, { accountId: 'bitesites' })
+      .googleCalendarId,
+    'other@example.com'
+  );
+});
+
+test('conflict-only calendar ids are deduped, lowercased and bounded', () => {
+  assert.deepEqual(
+    normalizeBusyCalendarIds([' One@Example.com ', 'one@example.com', '', 'two@example.com']),
+    ['one@example.com', 'two@example.com']
+  );
+  // The console offers a single comma-separated field.
+  assert.deepEqual(
+    normalizeBusyCalendarIds('a@example.com, b@example.com'),
+    ['a@example.com', 'b@example.com']
+  );
+  assert.equal(normalizeBusyCalendarIds(null).length, 0);
+  assert.equal(
+    normalizeBusyCalendarIds(Array.from({ length: 40 }, (unused, i) => `c${i}@example.com`)).length,
+    10
+  );
+});
+
+test('a busy period on another calendar removes the slot', () => {
+  const config = settings({ leadTimeMinutes: 0 });
+  const open = computeAvailableSlots({
+    settings: config, busy: [], nowMs: MONDAY_8AM_EDT, limit: 1
+  });
+  assert.equal(iso(open[0].startMs), '2026-06-15T13:00:00.000Z', 'expected the 09:00 EDT slot');
+
+  // The same window, with the personal calendar busy over it. `freeBusy` merges
+  // every calendar into this one list, so blocking is not conditional on which
+  // calendar the commitment came from.
+  const blocked = computeAvailableSlots({
+    settings: config,
+    busy: [{ startMs: open[0].startMs, endMs: open[0].endMs }],
+    nowMs: MONDAY_8AM_EDT,
+    limit: 1
+  });
+  assert.notEqual(blocked[0].startMs, open[0].startMs);
 });
 
 test('first offered slot respects lead time, not just opening hours', () => {

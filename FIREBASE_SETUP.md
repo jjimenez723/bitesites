@@ -567,6 +567,38 @@ Finally, set `googleCalendarId` and `googleSyncEnabled` in the Admin calendar
 settings. Never commit the JSON key or place it in a Vite/client environment
 variable.
 
+Current BiteSites wiring:
+
+| | |
+|---|---|
+| Service account | `bitesites-calendar@bitesites-org.iam.gserviceaccount.com` |
+| Meetings are written to | `6da92e6a…@group.calendar.google.com` (shared booking calendar) |
+| Read for conflicts only | `jensyjimenez723@gmail.com` |
+
+### Blocking time from a calendar we never write to
+
+`busyCalendarIds` in the calendar settings lists calendars consulted for
+free/busy and never written to. It exists so a personal commitment stops the
+voice agent and the public booking page offering that slot, without any client
+meeting ever appearing on the personal calendar.
+
+Each one has to be shared with the service account separately — a service
+account can only see what has been shared with it, and Google answers a
+calendar it cannot read with `notFound` inside the free/busy response rather
+than failing the request. `createGoogleCalendarClient` logs that and skips the
+calendar, so an unshared calendar degrades to "no conflicts known", not to a
+broken booking flow. It also means an unshared calendar silently fails to
+block. To share one:
+
+1. Open Google Calendar as the calendar's owner.
+2. Settings for that calendar → **Share with specific people or groups** → **Add people**.
+3. Paste `bitesites-calendar@bitesites-org.iam.gserviceaccount.com`.
+4. Permission **See only free/busy (hide details)** is enough. Send.
+
+Verify from the console: **Admin → Calendar → Schedule settings** lists the
+conflict calendars, and a slot that overlaps a personal event stops being
+offered by *Find times* within a minute.
+
 ## Commercial analytics and CRM return path
 
 Every new website lead now carries its random browser/session ids, first- and last-touch

@@ -72,7 +72,8 @@ async function calendarClient(db, accountId) {
   return createGoogleCalendarClient({
     credentialsJson: secretValue(GOOGLE_CALENDAR_CREDENTIALS),
     calendarId: settings.googleCalendarId,
-    impersonate: settings.googleImpersonate
+    impersonate: settings.googleImpersonate,
+    busyCalendarIds: settings.busyCalendarIds
   });
 }
 
