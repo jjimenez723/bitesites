@@ -48,6 +48,11 @@ export const text = (value, max = 500) => clean(value, max);
  * keeps that id; `conversationCollection` is the collection that document
  * lives in. Nothing here changes what a tool *does* — only how the result is
  * filed.
+ *
+ * `ratingNote` is the one exception, and it earns it: request_rating performs
+ * the same act for both agents, but a rating card cannot appear in the same
+ * place in a chat window and over a live call, so the agent has to be told
+ * where its card actually went. The effect is shared; the sentence is not.
  */
 export const WEB_AGENT_IDENTITY = Object.freeze({
   byteVoice: Object.freeze({
@@ -62,7 +67,8 @@ export const WEB_AGENT_IDENTITY = Object.freeze({
     agentId: 'byte-web',
     agentName: 'Byte',
     clientName: 'Bite Sites',
-    logTag: '[byte-web]'
+    logTag: '[byte-web]',
+    ratingNote: 'The rating is queued and will appear on their screen the moment this call ends — you cannot put a form over a live conversation. Invite it in one short sentence, say honest feedback genuinely helps the team, and carry on.'
   }),
   bitChat: Object.freeze({
     source: 'bit_chat',
@@ -76,7 +82,8 @@ export const WEB_AGENT_IDENTITY = Object.freeze({
     agentId: 'bit-chat',
     agentName: 'Bit',
     clientName: 'Bite Sites',
-    logTag: '[bit-chat]'
+    logTag: '[bit-chat]',
+    ratingNote: 'The rating card is on their screen now, below your message. Write one short line inviting it — never describe the buttons or where to tap — and do not ask again.'
   })
 });
 
@@ -381,6 +388,41 @@ export async function recordInterestSignal(db, { sessionRef, session, args }) {
     }, { merge: true });
   }
   return { ok: true };
+}
+
+/**
+ * Put the one-to-five rating card on the visitor's screen.
+ *
+ * Both agents used to promise this card in words while something else kept
+ * the promise: Bit's rating rendered only if the model called end_chat, and
+ * Byte's only if the call record happened to close as `completed` after ten
+ * seconds. An agent that said "there's a quick rating on screen" and then
+ * wound down any other way told the visitor about a thing that never came.
+ *
+ * So asking is its own act now, on the bench both agents share — the sentence
+ * and the card come out of one tool call, and neither can happen without the
+ * other. Ending stays a separate decision, which is the useful part: Bit can
+ * ask for a rating the moment a booking lands and keep answering questions
+ * afterwards.
+ *
+ * Once per session. A second card is nagging, and it would land underneath one
+ * the visitor may already be typing into.
+ */
+export async function requestRating(db, { sessionRef, session, args, agent } = {}) {
+  if (session?.ratingRequested) {
+    return {
+      ok: true,
+      shown: false,
+      alreadyShown: true,
+      note: 'You have already asked for the rating this session and the card is theirs to use or ignore. Do not ask again.'
+    };
+  }
+  await sessionRef.set({
+    ratingRequested: true,
+    ratingRequestedAt: FieldValue.serverTimestamp(),
+    ratingReason: text(args?.reason, 60)
+  }, { merge: true });
+  return { ok: true, shown: true, note: agent?.ratingNote || 'The rating is on their screen. Invite it in one short line and do not ask again.' };
 }
 
 /**

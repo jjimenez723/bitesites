@@ -260,10 +260,13 @@ export const bookPublicAppointment = onCall(options, async request => {
 
   // Neither of these is allowed to fail the booking: the meeting is already
   // committed in Firestore, and the maintenance sweep re-pushes Google.
-  await syncAppointmentToGoogle(db, booked.appointmentId, {
+  // The return value carries the Meet link so the confirmation screen can show
+  // it immediately. A failure here still leaves the booking standing — the
+  // maintenance sweep re-pushes, and the confirmation email carries the link.
+  const synced = await syncAppointmentToGoogle(db, booked.appointmentId, {
     client: await calendarClient(db, settings).catch(() => null),
     settings
-  }).catch(() => {});
+  }).catch(() => null);
 
   const leadId = await createBookingLead(db, {
     attendee: { name, email, phone, company },
@@ -291,6 +294,7 @@ export const bookPublicAppointment = onCall(options, async request => {
     startIso: booked.startIso,
     spoken: booked.spoken,
     timezone: settings?.timezone || '',
-    durationMinutes: settings?.slotMinutes || 0
+    durationMinutes: settings?.slotMinutes || 0,
+    meetUrl: synced?.meetUrl || ''
   };
 });

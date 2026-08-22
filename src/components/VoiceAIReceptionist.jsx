@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   endVoiceCall, isLiveState, loadVoiceAgent, observeVoiceState,
-  observeVoiceTranscript, startVoiceCall
+  observeVoiceTranscript, startVoiceCall, voiceRatingRequested
 } from '../lib/byte-voice';
 import { finishCall, logCallState, logCallTranscript, startCall } from '../lib/conversations';
 import { trackEvent } from '../lib/analytics';
@@ -210,7 +210,11 @@ export function VoiceAIReceptionist({ open, onClose, onComplete }) {
     // The thank-you redirect used to fire here, which yanked the visitor away
     // before the rating screen could ever render. Now the call end reveals the
     // rating; onComplete waits until that flow finishes in finishFeedback.
-    if (resolvedOutcome === 'completed' && durationSec >= 10) {
+    //
+    // Ten seconds is a guess at "was there a conversation here". When Byte
+    // called request_rating she has already said one is coming, and a guess
+    // must never overrule the promise the visitor actually heard.
+    if (resolvedOutcome === 'completed' && (voiceRatingRequested() || durationSec >= 10)) {
       completedCallRef.current = callId;
       feedbackDoneRef.current = false;
       setCompletedCallId(callId);

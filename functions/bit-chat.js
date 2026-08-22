@@ -40,7 +40,7 @@ import {
 import {
   WEB_AGENT_IDENTITY, bookMeeting, checkAvailability, finalizeSession, holdSessionSlot,
   lookupApprovedPricing, lookupCoreKnowledge, recordInterestSignal, requestHumanFollowup,
-  saveContactDetails, text, webCalendarClient
+  requestRating, saveContactDetails, text, webCalendarClient
 } from './web-agent-tools.js';
 
 const OPENAI_API_KEY = defineSecret('OPENAI_API_KEY');
@@ -370,6 +370,13 @@ async function runTool(db, { tool, args, sessionRef, session, google }) {
         }
       };
     }
+    case 'request_rating': {
+      const result = await requestRating(db, { sessionRef, session, args, agent: AGENT });
+      // The card rides the same channel as a booking confirmation or a link,
+      // so the rating lands in the transcript where Bit asked for it rather
+      // than being bolted onto whatever turns out to be the last message.
+      return { result, card: result.shown ? { type: 'rating' } : null };
+    }
     case 'end_chat': {
       const reason = ['completed', 'booked', 'no_fit', 'visitor_left'].includes(text(args?.reason, 40))
         ? text(args.reason, 40) : 'completed';
@@ -377,7 +384,7 @@ async function runTool(db, { tool, args, sessionRef, session, google }) {
       return {
         result: {
           ok: true, ending: true,
-          note: 'Write a short warm goodbye now, mention the quick one-to-five rating that appears on screen, and stop.'
+          note: 'Write a short warm goodbye now and stop. If you have not called request_rating yet, call it in this same turn so the card is actually there — otherwise say nothing about a rating.'
         },
         ended: true
       };

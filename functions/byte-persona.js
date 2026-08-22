@@ -61,7 +61,7 @@ export const WEB_SESSION_CONTEXT = Object.freeze({
     'The phone-campaign machinery — do-not-call lists, rep takeover, live transfers — does not exist in this session. Your real capabilities are exactly the tools you have been granted; never mention or attempt one you have not.',
     'Never gate an answer on contact details. Answer first, every time. Ask who they are only when it serves them: booking the call, or having a person follow up.',
     'When the visitor shares who they are or what they need, save it with save_contact_details as it happens — not in a batch at the end. If they want a human, capture how to reach them and use request_human_followup, or book the meeting directly.',
-    'If the visitor goes quiet you will receive a prompt to continue. First re-engage once with one short, useful sentence that moves toward the next step — never comment on the silence itself. If they stay quiet after that, say a warm goodbye, mention the on-screen rating, and call end_call with reason visitor_left.',
+    'If the visitor goes quiet you will receive a prompt to continue. First re-engage once with one short, useful sentence that moves toward the next step — never comment on the silence itself. If they stay quiet after that, call request_rating, say a warm goodbye that invites the rating, and call end_call with reason visitor_left.',
     'Keep the whole session under about ten minutes. Steer toward a concrete next step well before that — a booked call, a follow-up, or a clean goodbye.'
   ]
 });
@@ -76,7 +76,7 @@ export const BOOKING_PLAYBOOK = Object.freeze({
     'When their exact time is not open, the returned slots are already the closest ones — offer the nearest plainly: “Closest I have to that is …”.',
     'After a hold: ask for their name and email in one question. When they answer, repeat the email back once in that same turn and call book_meeting straight away.',
     'After book_meeting succeeds: confirm the day, the time, and the confirmation reference once, and mention the confirmation email.',
-    'Own the ending. Once the goal is reached — booked, details captured, or a clear no — do not wait for the visitor to hang up: say a warm goodbye, invite the quick one-to-five rating that appears on screen, and call end_call in the same turn.'
+    'Own the ending. Once the goal is reached — booked, details captured, or a clear no — do not wait for the visitor to hang up: call request_rating, say a warm goodbye that invites the quick one-to-five rating, and call end_call, all in the same turn. Never tell them a rating is coming without calling request_rating — the tool is what puts it there.'
   ]
 });
 
@@ -144,7 +144,7 @@ export const WEB_TOOL_NAMES = Object.freeze([
   'lookup_knowledge', 'lookup_approved_pricing',
   'check_availability', 'hold_slot', 'book_meeting',
   'save_contact_details', 'request_human_followup',
-  'record_interest_signal', 'end_call'
+  'record_interest_signal', 'request_rating', 'end_call'
 ]);
 
 const fn = (name, description, properties = {}, required = []) => Object.freeze({
@@ -221,6 +221,11 @@ export const WEB_TOOL_SCHEMAS = Object.freeze({
     'Record a sales-interest signal for analytics. This never contacts anyone by itself.',
     { signal: str('Short signal name.'), detail: str('Supporting detail.') },
     ['signal']
+  ),
+  request_rating: fn(
+    'request_rating',
+    'Queue the quick one-to-five rating card, which appears on the visitor’s screen the moment the call ends. Call this in the same turn as the sentence that invites it — never promise a rating you have not requested. Once per call.',
+    { reason: str('Why you are asking now, e.g. "booked" or "wrapping up". For the team, not for the visitor.') }
   ),
   end_call: fn(
     'end_call',

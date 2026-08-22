@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { feedbackErrorMessage, submitConversationFeedback } from '../lib/feedback';
+import '../conversation-rating.css';
 
 /**
  * The 1–5 rating card shown after a conversation with Bit or Byte.

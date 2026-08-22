@@ -991,7 +991,7 @@ export function createGoogleCalendarClient({
 }
 
 /** Google Calendar event body for an appointment. */
-export function buildGoogleEvent(appointment, settings) {
+export function buildGoogleEvent(appointment, settings, { conference = true } = {}) {
   const attendee = appointment.attendee || {};
   const accountId = readAccountId(appointment.accountId, { fallback: LEGACY_ACCOUNT_ID });
   const accountLabel = ACCOUNTS[accountId]?.label || 'BiteSites';
@@ -1017,7 +1017,7 @@ export function buildGoogleEvent(appointment, settings) {
     // `requestId` is the appointment id rather than a random value: Google
     // treats a repeat of the same id as the same request, so the retry sweep
     // re-syncing an event cannot mint a second conference for one meeting.
-    ...(appointment.status === 'cancelled' ? {} : {
+    ...(appointment.status === 'cancelled' || !conference ? {} : {
       conferenceData: {
         createRequest: {
           requestId: `bitesites-${clean(appointment.id, 200)}`,
@@ -1032,6 +1032,20 @@ export function buildGoogleEvent(appointment, settings) {
       }
     }
   };
+}
+
+/**
+ * Google refusing to build the conference, as opposed to refusing the event.
+ *
+ * A service account with no domain-wide delegation cannot mint a Meet link and
+ * is told "Invalid conference type value". That is a missing capability, not a
+ * broken booking, so the event is retried without a conference rather than
+ * left unsynced — the meeting reaching the calendar matters more than the
+ * video link, and the link starts working on its own the day delegation is
+ * configured.
+ */
+function isConferenceRejection(error) {
+  return /conference/i.test(String(error?.message || ''));
 }
 
 /**
@@ -1061,11 +1075,30 @@ function conferencePending(event) {
  */
 export async function syncAppointmentToGoogle(db, appointmentId, { client, settings } = {}) {
   const id = clean(appointmentId, 200);
-  if (!client || !id) return { ok: false, skipped: true };
+  if (!id) return { ok: false, skipped: true };
 
   const ref = db.doc(`appointments/${id}`);
   const snapshot = await ref.get();
+  // Read before any write: `set` with merge would otherwise conjure a document
+  // for an appointment id that does not exist.
   if (!snapshot.exists) return { ok: false, skipped: true };
+
+  // No Google at all — disabled, unconfigured, or the client failed to build.
+  // The booking still stands, but the row must not be left saying 'pending'
+  // forever: the confirmation email waits on that state to learn whether a Meet
+  // link is coming, and a silent return here would mean an attendee who booked
+  // never hears back. 'failed' is honest, unblocks the email, and keeps the
+  // appointment eligible for the retry sweep once Google is connected.
+  if (!client) {
+    if (snapshot.get('googleSyncState') === 'pending') {
+      await ref.set({
+        googleSyncState: 'failed',
+        googleSyncError: 'google_not_connected',
+        updatedAt: FieldValue.serverTimestamp()
+      }, { merge: true }).catch(() => {});
+    }
+    return { ok: false, skipped: true };
+  }
   const appointment = { id, ...snapshot.data() };
   const accountId = readAccountId(appointment.accountId, { fallback: LEGACY_ACCOUNT_ID });
 
@@ -1086,7 +1119,15 @@ export async function syncAppointmentToGoogle(db, appointmentId, { client, setti
       return { ok: true, removed: true };
     }
 
-    const event = await client.upsertEvent(existingEventId, buildGoogleEvent(appointment, config));
+    let event;
+    try {
+      event = await client.upsertEvent(existingEventId, buildGoogleEvent(appointment, config));
+    } catch (error) {
+      if (!isConferenceRejection(error)) throw error;
+      console.warn('[calendar] Meet link unavailable, syncing without one:', clean(error?.message, 200));
+      event = await client.upsertEvent(existingEventId,
+        buildGoogleEvent(appointment, config, { conference: false }));
+    }
     const meetUrl = readMeetUrl(event);
     // Google can answer before the conference exists. Leaving the row 'pending'
     // hands it to the five-minute maintenance sweep, which re-sends the same

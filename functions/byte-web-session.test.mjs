@@ -209,6 +209,14 @@ const overtime = await tool(s1, 'lookup_knowledge', { query: 'process' });
 check('an expired session winds the call down', overtime.body?.error === 'session_over' && overtime.body.endsCall === true);
 
 const s2 = (await mint({}, { ip: '198.51.100.8' })).body;
+const rating = await tool(s2, 'request_rating', { reason: 'wrapping up' });
+check('request_rating queues the post-call card without ending the call',
+  rating.body?.shown === true && rating.body.showsRating === true && rating.body.endsCall === false
+  && (await db.doc(`webVoiceSessions/${s2.sessionId}`).get()).get('ratingRequested') === true);
+const ratingAgain = await tool(s2, 'request_rating', {});
+check('asking twice is refused, not duplicated',
+  ratingAgain.body?.alreadyShown === true && ratingAgain.body.showsRating === false);
+
 const ended = await tool(s2, 'end_call', { reason: 'no_fit' });
 check('end_call ends and finalizes', ended.body?.ending === true && ended.body.endsCall === true
   && (await db.doc(`webVoiceSessions/${s2.sessionId}`).get()).get('status') === 'completed');

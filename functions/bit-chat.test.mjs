@@ -304,9 +304,23 @@ await turn(s1, 'how does a project run?');
 check('the tool budget exhausts', (await toolOutput(s1.sessionId, 'lookup_knowledge'))?.error === 'tool_budget_exhausted');
 
 const s2 = (await open({ chatId: chatDoc.id }, { ip: '198.51.100.22' })).body;
-script(wants('end_chat', { reason: 'booked' }), say('Lovely talking — there is a quick rating on screen.'));
-const ended = await turn(s2, 'that is everything, thanks');
-check('end_chat ends the conversation and shows the rating',
+script(wants('request_rating', { reason: 'booked' }), say('Before you go — how did I do?'));
+const rated = await turn(s2, 'that is everything, thanks');
+check('request_rating puts the rating card on screen',
+  rated.body?.cards?.some(card => card.type === 'rating')
+  && (await toolOutput(s2.sessionId, 'request_rating'))?.shown === true
+  && (await db.doc(`bitChatSessions/${s2.sessionId}`).get()).get('ratingRequested') === true);
+check('the rating card does not end the conversation', rated.body?.ended === false);
+
+script(wants('request_rating', {}), say('Still there whenever you want it.'));
+const again = await turn(s2, 'sure');
+check('asking twice does not stack a second card',
+  !again.body?.cards?.some(card => card.type === 'rating')
+  && (await toolOutput(s2.sessionId, 'request_rating'))?.alreadyShown === true);
+
+script(wants('end_chat', { reason: 'booked' }), say('Lovely talking.'));
+const ended = await turn(s2, 'goodbye');
+check('end_chat ends the conversation',
   ended.body?.ended === true
   && (await db.doc(`bitChatSessions/${s2.sessionId}`).get()).get('status') === 'completed');
 

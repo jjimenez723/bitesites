@@ -31,7 +31,7 @@ import { buildByteWebRuntime, BYTE_CORE_KNOWLEDGE, BYTE_WEB_PROFILE } from './by
 import {
   WEB_AGENT_IDENTITY, bookMeeting, checkAvailability, finalizeSession, holdSessionSlot,
   lookupApprovedPricing, lookupCoreKnowledge, recordInterestSignal, requestHumanFollowup,
-  saveContactDetails, text, webCalendarClient
+  requestRating, saveContactDetails, text, webCalendarClient
 } from './web-agent-tools.js';
 
 const OPENAI_API_KEY = defineSecret('OPENAI_API_KEY');
@@ -278,11 +278,14 @@ export const byteWebTools = onRequest(
         case 'record_interest_signal':
           result = await recordInterestSignal(db, { sessionRef, session, args });
           break;
+        case 'request_rating':
+          result = await requestRating(db, { sessionRef, session, args, agent: AGENT });
+          break;
         case 'end_call': {
           const reason = ['completed', 'booked', 'no_fit', 'visitor_left'].includes(text(args.reason, 40))
             ? text(args.reason, 40) : 'completed';
           await finalizeSession(db, sessionRef, session, { reason, agent: AGENT });
-          result = { ok: true, ending: true, note: 'Say a short warm goodbye, mention that a quick one-to-five rating will appear on screen and that honest feedback genuinely helps the team, then stop speaking.' };
+          result = { ok: true, ending: true, note: 'Say a short warm goodbye and stop speaking. If you have not called request_rating yet, call it in this same turn so the card is actually queued — otherwise say nothing about a rating.' };
           break;
         }
         default:
@@ -293,6 +296,6 @@ export const byteWebTools = onRequest(
       result = { ok: false, error: 'server_action_failed' };
     }
 
-    res.json({ ...result, endsCall: result?.ending === true });
+    res.json({ ...result, endsCall: result?.ending === true, showsRating: result?.shown === true });
   }
 );

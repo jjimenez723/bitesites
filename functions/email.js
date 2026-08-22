@@ -135,6 +135,25 @@ export const DEFAULT_EMAIL_TEMPLATES = {
     }),
     text: 'Hi {{first_name}},\n\nYour {{meeting_title}} is confirmed. A {{host_name}} will call you at the time below.\n\nMeeting time: {{meeting_time}}\nConfirmation reference: {{confirmation_ref}}\n\nThere is nothing to prepare. If the time stops working, reply to this email and we will move it.'
   },
+  // The video twin of `meeting_booked`. Two templates rather than one with a
+  // conditional block, because `renderTemplate` only substitutes variables —
+  // a single template would have to render a "Join" button whose href is empty
+  // whenever Google has not produced a link, and a dead button in a
+  // confirmation email is worse than not promising a link at all.
+  meeting_booked_video: {
+    name: 'Meeting confirmed (video)',
+    description: 'Confirms a booked consultation that has a Google Meet link, with the day, time, reference, and join button.',
+    category: 'transactional',
+    subject: 'Confirmed: your BiteSites call — {{meeting_time}}',
+    html: shell({
+      preheader: 'Your consultation is booked. Your video link is inside.',
+      title: 'Your call is booked',
+      body: '<p style="margin:0 0 16px;">Hi {{first_name}},</p><p style="margin:0 0 16px;">Your {{meeting_title}} is confirmed. You will meet a {{host_name}} on Google Meet at the time below.</p><p style="margin:0 0 16px;padding:14px 16px;border:1px solid #e5e5e5;border-radius:10px;background:#fafafa;"><span style="display:block;color:#777777;font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;">Meeting time</span><strong style="display:block;margin-top:3px;color:#222222;font-size:15px;">{{meeting_time}}</strong><span style="display:block;margin-top:8px;color:#777777;font-size:12px;">Confirmation reference: <strong style="color:#222222;">{{confirmation_ref}}</strong></span></p><p style="margin:0;color:#6b6b6b;font-size:13px;line-height:20px;">There is nothing to prepare. If the time stops working, reply to this email and we will move it.</p>',
+      cta: { href: '{{meet_url}}', label: 'Join the video call', note: 'The same link is on the calendar invite, so you can join from either.' },
+      footer: 'This confirms a meeting you booked with BiteSites. Reply to this email to reschedule or cancel.'
+    }),
+    text: 'Hi {{first_name}},\n\nYour {{meeting_title}} is confirmed. You will meet a {{host_name}} on Google Meet at the time below.\n\nMeeting time: {{meeting_time}}\nJoin the video call: {{meet_url}}\nConfirmation reference: {{confirmation_ref}}\n\nThere is nothing to prepare. If the time stops working, reply to this email and we will move it.'
+  },
   conversation_feedback: {
     name: 'Conversation feedback',
     description: 'Asks a visitor to rate a completed conversation with Bit or Byte.',

@@ -24,7 +24,7 @@ const GREETING_INSTRUCTION = 'Greet the visitor now — briefly and warmly, as B
 
 const NUDGE_INSTRUCTION = 'The visitor has gone quiet. Without commenting on the silence, re-engage them now in one or two short sentences that move toward the most useful next step — the question they left open, booking the 20-minute call, or asking directly what date and time works for them.';
 
-const FAREWELL_INSTRUCTION = 'The visitor has stayed quiet. Say one warm goodbye sentence, mention that a quick one-to-five rating will appear on screen and honest feedback helps the team, and call the end_call tool with reason visitor_left in this same turn.';
+const FAREWELL_INSTRUCTION = 'The visitor has stayed quiet. Call the request_rating tool, say one warm goodbye sentence that invites the quick one-to-five rating, and call the end_call tool with reason visitor_left — all in this same turn.';
 
 // How long Byte waits in silence before re-engaging, then before saying
 // goodbye. The persona is told to close rather than sit in listening mode.
@@ -39,6 +39,9 @@ let state = 'idle';
 const stateListeners = new Set();
 const transcriptListeners = new Set();
 let activeCall = null;
+// Set when Byte calls request_rating. A form cannot go over a live call, so
+// the request is held here until the widget tears the call screen down.
+let ratingRequested = false;
 
 function setState(next) {
   if (state === next) return;
@@ -54,6 +57,15 @@ export function observeVoiceState(listener) {
   stateListeners.add(listener);
   try { listener(state); } catch { /* listener error */ }
   return () => stateListeners.delete(listener);
+}
+
+/**
+ * Did Byte ask for the rating on this call? Read synchronously as the call
+ * closes — no listener, because nothing renders from it directly: it only
+ * decides whether the widget reveals its post-call rating screen.
+ */
+export function voiceRatingRequested() {
+  return ratingRequested;
 }
 
 export function observeVoiceTranscript(listener) {
@@ -127,6 +139,7 @@ export function endVoiceCall() {
 
 export async function startVoiceCall({ callId = '' } = {}) {
   if (activeCall) endVoiceCall();
+  ratingRequested = false;
   if (typeof RTCPeerConnection === 'undefined') throw new Error('This browser does not support live voice calls.');
   if (!navigator?.mediaDevices?.getUserMedia) throw new Error('This browser cannot access a microphone.');
 
@@ -239,6 +252,7 @@ export async function startVoiceCall({ callId = '' } = {}) {
     pendingTools = Math.max(0, pendingTools - 1);
     touchActivity();
     if (stopped) return;
+    if (result.showsRating === true) ratingRequested = true;
     if (result.endsCall === true) {
       windingDown = true;
       // Belt and braces: if the goodbye's drain event never arrives, hang up

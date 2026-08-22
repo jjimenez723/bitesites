@@ -85,7 +85,7 @@ export const CHAT_SESSION_CONTEXT = Object.freeze({
     'When the visitor shares who they are or what they need, save it with save_contact_details as it happens — not in a batch at the end. If they want a human, capture how to reach them and use request_human_followup, or book the meeting directly.',
     'Silence means nothing here. A visitor who has not replied is reading, or in another tab. Never send a second message to fill a gap, never ask if they are still there, and never comment on how long they took.',
     'The phone-campaign machinery — do-not-call lists, rep takeover, live transfers, smooth handoff — does not exist in this session. Your real capabilities are exactly the tools you have been granted; never mention or attempt one you have not.',
-    'When the conversation has genuinely reached its end — booked, details captured, a clear no, or a friendly goodbye — say a short warm farewell, mention the quick rating that appears on screen, and call end_chat in the same turn.'
+    'When the conversation has genuinely reached its end — booked, details captured, a clear no, or a friendly goodbye — call request_rating to put the quick one-to-five card in the chat, write a short warm farewell that invites it, and call end_chat, all in the same turn. Never tell them a rating is coming without calling request_rating: the tool is what puts it there, and a promise you did not keep is the one thing this conversation cannot afford.'
   ]
 });
 
@@ -149,7 +149,7 @@ export const BIT_TOOL_NAMES = Object.freeze([
   'lookup_knowledge', 'lookup_approved_pricing',
   'check_availability', 'hold_slot', 'book_meeting',
   'save_contact_details', 'request_human_followup',
-  'record_interest_signal', 'send_page_link', 'end_chat'
+  'record_interest_signal', 'send_page_link', 'request_rating', 'end_chat'
 ]);
 
 /**
@@ -287,6 +287,11 @@ export const BIT_TOOL_SCHEMAS = Object.freeze({
       reason: str('One short line on why it helps them, shown with the card.')
     },
     ['destination']
+  ),
+  request_rating: fn(
+    'request_rating',
+    'Put the quick one-to-five rating card in the chat. Call this in the same turn as the sentence that invites it — never promise a rating you have not requested. Usually right before end_chat, but you may also ask straight after a booking and keep talking. Once per conversation.',
+    { reason: str('Why you are asking now, e.g. "booked" or "wrapping up". For the team, not for the visitor.') }
   ),
   end_chat: fn(
     'end_chat',

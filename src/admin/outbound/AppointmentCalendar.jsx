@@ -719,6 +719,11 @@ function ScheduleSettings({ accountId, settings, google, onSaved, openRef }) {
                 placeholder="you@yourdomain.com"
                 onChange={event => set('googleCalendarId', event.target.value)} />
             </label>
+            <label className="full"><span>Act as (Workspace user) — required for automatic Google Meet links</span>
+              <input value={draft.googleImpersonate || ''} maxLength={200}
+                placeholder="you@yourdomain.com"
+                onChange={event => set('googleImpersonate', event.target.value)} />
+            </label>
             <label className="full"><span>Also block time from — read for conflicts, never written to</span>
               <input value={busyList} maxLength={600}
                 placeholder="personal@gmail.com, team@yourdomain.com"
@@ -728,7 +733,7 @@ function ScheduleSettings({ accountId, settings, google, onSaved, openRef }) {
           </div>
           <p className="cal-note">
             {google?.hasCredentials
-              ? 'Service-account key is installed. Share each calendar above with the service account, then save. A calendar we cannot read is skipped, not treated as free.'
+              ? 'Service-account key is installed. Share each calendar above with the service account, then save. A calendar we cannot read is skipped, not treated as free. Google Meet links need domain-wide delegation plus an “Act as” user — without them meetings still sync, just without a video link.'
               : 'No service-account key yet. Bookings still work and will sync once GOOGLE_CALENDAR_CREDENTIALS is set.'}
           </p>
           <label className="cal-toggle">

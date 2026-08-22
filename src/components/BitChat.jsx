@@ -176,7 +176,7 @@ export function BitChat({ onClose, origin, initialAnswer }) {
       return;
     }
     bodyRef.current?.scrollTo({ top: bodyRef.current.scrollHeight, behavior: 'smooth' });
-  }, [entries, isThinking, chips]);
+  }, [entries, isThinking, chips, ended]);
 
   useLayoutEffect(() => {
     const onKeyDown = event => { if (event.key === 'Escape') onClose(); };
@@ -239,6 +239,15 @@ export function BitChat({ onClose, origin, initialAnswer }) {
     busyRef.current = false;
   }
 
+  // Where a submitted rating gets filed, and whether Bit already asked for one.
+  // Both are read off state we already hold, so there is no third place for the
+  // answer to be wrong.
+  const ratingSource = {
+    sourceType: chatIdRef.current ? 'chat' : 'lead',
+    sourceId: chatIdRef.current || leadIdRef.current
+  };
+  const ratingAsked = entries.some(entry => entry.card?.type === 'rating');
+
   /** Internal navigation only — every href came from the server's whitelist. */
   const followLink = href => {
     const [path, hash] = String(href).split('#');
@@ -285,7 +294,10 @@ export function BitChat({ onClose, origin, initialAnswer }) {
       <div className="bit-conversation">
         {entries.map(entry => {
           if (entry.role === 'visitor') return <div className="bit-message user" key={entry.key}>{entry.text}</div>;
-          if (entry.role === 'card') return <BitCard card={entry.card} key={entry.key} onFollow={followLink} />;
+          if (entry.role === 'card') {
+            if (entry.card?.type === 'rating') return <ConversationRating key={entry.key} agent="bit" {...ratingSource} />;
+            return <BitCard card={entry.card} key={entry.key} onFollow={followLink} />;
+          }
           return <div className="bit-turn" key={entry.key}>
             <span className="bit-turn-avatar" aria-hidden="true"><BitMascot /></span>
             <div className="chat-bubble bit-bubble">{entry.text}</div>
@@ -298,11 +310,7 @@ export function BitChat({ onClose, origin, initialAnswer }) {
           {chips.map(chip => <button type="button" key={chip.label} onClick={() => send(chip.send)}>{chip.label}</button>)}
         </div>}
 
-        {ended && <ConversationRating
-          agent="bit"
-          sourceType={chatIdRef.current ? 'chat' : 'lead'}
-          sourceId={chatIdRef.current || leadIdRef.current}
-        />}
+        {ended && !ratingAsked && <ConversationRating agent="bit" {...ratingSource} />}
       </div>
     </div>
 

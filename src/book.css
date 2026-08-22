@@ -186,3 +186,6 @@
   .book-card-narrow { padding: 30px 22px; }
   .book-form-grid { grid-template-columns: minmax(0, 1fr); }
 }
+
+.book-meet { color: #4c1d95; text-decoration: none; font-weight: 650; word-break: break-all; }
+.book-meet:hover { text-decoration: underline; }

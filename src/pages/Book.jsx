@@ -219,7 +219,8 @@ export default function Book() {
           <p className="book-kicker">Confirmed</p>
           <h1>You’re booked</h1>
           <p className="book-lede">
-            A confirmation is on its way to <strong>{form.email}</strong>. There is nothing to prepare.
+            A confirmation is on its way to <strong>{form.email}</strong>, with the video link and a
+            calendar invite. There is nothing to prepare.
           </p>
           <dl className="book-receipt">
             <div><dt>When</dt><dd>
@@ -231,6 +232,13 @@ export default function Book() {
             </dd></div>
             <div><dt>Length</dt><dd>{confirmed.durationMinutes || meta.durationMinutes} minutes</dd></div>
             <div><dt>Reference</dt><dd className="book-ref">{confirmed.confirmationRef}</dd></div>
+            {confirmed.meetUrl ? (
+              <div><dt>Join</dt><dd>
+                <a href={confirmed.meetUrl} target="_blank" rel="noreferrer" className="book-meet">
+                  {confirmed.meetUrl.replace(/^https?:\/\//, '')}
+                </a>
+              </dd></div>
+            ) : null}
           </dl>
           <p className="book-fineprint">
             Need to move it? Reply to the confirmation email and we will find another time.
@@ -250,12 +258,13 @@ export default function Book() {
           <h1>{meta.meetingTitle || 'Book a consultation'}</h1>
           <ul className="book-facts">
             {meta.durationMinutes ? <li><span aria-hidden="true">◷</span>{meta.durationMinutes} minutes</li> : null}
-            <li><span aria-hidden="true">☎</span>Phone call</li>
+            <li><span aria-hidden="true">▷</span>Google Meet video call</li>
             {meta.timezone ? <li><span aria-hidden="true">◎</span>{meta.timezone.replace(/_/g, ' ')}</li> : null}
           </ul>
           <p className="book-lede">
             Tell us what you are trying to solve and we will bring a recommendation, not a pitch deck.
-            No prep needed — {meta.hostName ? `a ${meta.hostName}` : 'a specialist'} calls you at the time you pick.
+            No prep needed — {meta.hostName ? `a ${meta.hostName}` : 'a specialist'} meets you on Google Meet
+            at the time you pick. The link is in your confirmation email and on the calendar invite.
           </p>
         </aside>
 

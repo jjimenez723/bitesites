@@ -1,0 +1,32 @@
+/* The 1–5 card ConversationRating renders after a conversation with Bit or
+ * Byte. It used to live in feedback.css, which only the standalone /feedback
+ * and /email-preferences routes import — so on the homepage, where the card is
+ * actually used, none of it ever loaded and the rating rendered as a bare
+ * unstyled form at the bottom of a dark chat. It travels with the component
+ * now, so it cannot be left behind again.
+ */
+.conversation-rating{display:grid;gap:9px;margin-top:18px;padding:16px;border:1px solid rgba(124,58,237,.22);border-radius:14px;background:#faf8ff;color:#222}.conversation-rating>strong{font-size:14px}.conversation-rating>span{color:#666;font-size:11px}.conversation-rating-buttons{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}.conversation-rating-buttons button{padding:8px;border:1px solid #d7d2e4;border-radius:8px;background:#fff;color:#222;font-weight:800;cursor:pointer}.conversation-rating-buttons button.selected{border-color:#111;background:#111;color:#fff}.conversation-rating textarea{box-sizing:border-box;width:100%;padding:9px;border:1px solid #d7d2e4;border-radius:8px;font:inherit;font-size:12px;resize:vertical}.conversation-rating-submit{padding:9px;border:0;border-radius:8px;background:#111;color:#fff;font:inherit;font-size:12px;font-weight:800}.conversation-rating-submit:disabled{opacity:.45}.conversation-rating p{margin:0;font-size:11px}.conversation-rating p.error{color:#a32727}.conversation-rating-thanks{margin:18px 0 0;padding:13px;border-radius:12px;background:#edf9f0;color:#176a2f;font-size:12px;font-weight:700}.conversation-rating.compact{width:min(360px,80vw);margin-top:14px;background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.18);color:#fff}.conversation-rating.compact>span{color:rgba(255,255,255,.6)}.conversation-rating-thanks.compact{color:#d8ffe2;background:rgba(45,180,90,.16)}
+@media(max-width:600px){.conversation-rating.compact{width:min(310px,84vw)}}
+/* Modern comment box: soft field, focus glow, live character count. */
+.conversation-rating-note{position:relative;display:grid;gap:4px}
+.conversation-rating-note textarea{box-sizing:border-box;width:100%;min-height:76px;padding:12px 13px;border:1.5px solid #d7d2e4;border-radius:12px;background:#fff;color:#222;font:inherit;font-size:13px;line-height:1.55;resize:vertical;transition:border-color .18s ease,box-shadow .18s ease}
+.conversation-rating-note textarea::placeholder{color:#9a93ad}
+.conversation-rating-note textarea:focus{outline:none;border-color:#7c3aed;box-shadow:0 0 0 3px rgba(124,58,237,.16)}
+.conversation-rating-note small{justify-self:end;color:#9a93ad;font-size:10px;font-variant-numeric:tabular-nums}
+
+/* Panel variant: the full-screen post-call card inside the dark voice shell. */
+.conversation-rating.panel{width:min(400px,86vw);margin-top:20px;padding:20px;border:1px solid rgba(255,255,255,.14);border-radius:18px;background:rgba(255,255,255,.07);color:#fff;backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}
+.conversation-rating.panel>strong{font-size:15px}
+.conversation-rating.panel>span{color:rgba(255,255,255,.55);font-size:11px}
+.conversation-rating.panel .conversation-rating-buttons{gap:8px}
+.conversation-rating.panel .conversation-rating-buttons button{padding:12px 0;border-color:rgba(255,255,255,.22);border-radius:11px;background:rgba(255,255,255,.06);color:#fff;font-size:15px;transition:transform .15s ease,background .15s ease,border-color .15s ease}
+.conversation-rating.panel .conversation-rating-buttons button:hover{transform:translateY(-2px);background:rgba(255,255,255,.14)}
+.conversation-rating.panel .conversation-rating-buttons button.selected{border-color:#7fe3ff;background:rgba(127,227,255,.2);color:#fff;box-shadow:0 0 0 3px rgba(127,227,255,.14)}
+.conversation-rating.panel .conversation-rating-note textarea{border-color:rgba(255,255,255,.2);background:rgba(0,0,0,.28);color:#fff}
+.conversation-rating.panel .conversation-rating-note textarea::placeholder{color:rgba(255,255,255,.42)}
+.conversation-rating.panel .conversation-rating-note textarea:focus{border-color:#7fe3ff;box-shadow:0 0 0 3px rgba(127,227,255,.16)}
+.conversation-rating.panel .conversation-rating-note small{color:rgba(255,255,255,.4)}
+.conversation-rating.panel .conversation-rating-submit{padding:12px;border-radius:11px;background:#fff;color:#111;font-size:13px}
+.conversation-rating.panel .conversation-rating-submit:not(:disabled):hover{background:#e9f9ff}
+.conversation-rating.panel p.error{color:#ff9aab}
+.conversation-rating-thanks.panel{margin-top:20px;padding:16px 20px;border-radius:14px;background:rgba(45,180,90,.18);color:#d8ffe2;font-size:13px;font-weight:700}

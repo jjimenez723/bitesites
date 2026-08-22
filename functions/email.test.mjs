@@ -67,7 +67,7 @@ test('system templates use the simple white email layout', () => {
 test('covers the account, lead, feedback, access, broadcast, and operations lifecycle', () => {
   const expected = [
     'welcome', 'password_reset', 'new_account_admin', 'lead_received',
-    'meeting_booked', 'conversation_feedback', 'new_lead_admin', 'manual_lead_admin',
+    'meeting_booked', 'meeting_booked_video', 'conversation_feedback', 'new_lead_admin', 'manual_lead_admin',
     'outbound_call_lead_admin', 'access_granted',
     'access_revoked', 'operational_alert', 'announcement'
   ];

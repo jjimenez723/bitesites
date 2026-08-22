@@ -575,6 +575,35 @@ Current BiteSites wiring:
 | Meetings are written to | `6da92e6a…@group.calendar.google.com` (shared booking calendar) |
 | Read for conflicts only | `jensyjimenez723@gmail.com` |
 
+### Automatic Google Meet links
+
+Every booked appointment asks Google to attach a Meet conference
+(`conferenceDataVersion=1`, with the appointment id as the `requestId` so the
+retry sweep cannot mint a second conference for one meeting). The link is stored
+as `googleMeetUrl`, shown in the console's appointment detail, returned to the
+public booking page, and sent in the `meeting_booked_video` email.
+
+**A bare service account cannot create Meet links.** Google answers
+`Invalid conference type value` — minting a conference needs a real Workspace
+identity. `syncAppointmentToGoogle` catches exactly that rejection and re-sends
+the event without a conference, so the meeting still reaches the calendar; only
+the video link is lost. Nothing breaks while this is unconfigured.
+
+To turn Meet links on, delegate the service account to a Workspace user
+(bitesites.org is a Workspace domain, so this is available):
+
+1. admin.google.com as a super admin → **Security → Access and data control →
+   API controls → Domain-wide delegation → Manage domain-wide delegation**.
+2. **Add new**, Client ID `110476204608012464696`.
+3. OAuth scopes, comma separated:
+   `https://www.googleapis.com/auth/calendar.events,https://www.googleapis.com/auth/calendar.events.freebusy`
+4. In **Admin → Calendar → Schedule settings**, set **Act as** to
+   `jensy@bitesites.org` (stored as `googleImpersonate`) and save.
+
+Verify by booking a test slot on /book: the confirmation screen shows a Join
+link, and the console's appointment detail gains a **Join Meet** button. Until
+step 4 is saved the fallback keeps running, so there is no broken window.
+
 ### Blocking time from a calendar we never write to
 
 `busyCalendarIds` in the calendar settings lists calendars consulted for
