@@ -137,7 +137,7 @@ Before deployment:
 
 Then deploy the Firestore rules/indexes, Firebase Functions, and Firebase Hosting rewrites from this branch.
 
-Do not merge/deploy if the Hybrid Dialer V2 CI workflow is red.
+Do not merge/deploy if the Outbound AI CI workflow is red.
 
 ## 7. Configure an AI agent before dialing
 

@@ -206,7 +206,7 @@ function installWorkspace(label, cwd) {
 function validate() {
   ensureNode22();
   heading('Validating Hybrid Dialer V2');
-  npm(['run', 'secrets:check']);
+  npm(['run', 'secrets:check', '--', '--all']);
   npm(['run', 'build']);
   npm(['run', 'test:hybrid-dialer']);
   npm(['run', 'test:agent-runtime']);

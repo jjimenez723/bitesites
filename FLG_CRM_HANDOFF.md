@@ -135,7 +135,7 @@ Ledger rules (owner-approved design — do not change casually):
 ```
 npm run test:crm     # 33/33 pass (16 server client/sanitizer, 8 ledger, 9 frontend)
 npm run build        # passes (chunk-size warnings pre-date this work)
-npm run secrets:check# passes (note: it only scans *staged* files)
+npm run secrets:check# passes (staged files; add `-- --all` for the whole tree)
 ```
 
 Also verified once end-to-end: `fetchCrmSnapshot` against the live API returned

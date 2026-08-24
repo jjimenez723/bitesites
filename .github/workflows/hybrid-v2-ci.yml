@@ -1,8 +1,15 @@
-name: Hybrid Dialer V2 CI
+name: Outbound AI CI
 
 on:
   pull_request:
     branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: outbound-ai-ci-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -10,7 +17,7 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -25,16 +32,10 @@ jobs:
           npm --prefix services/realtime-sideband ci
 
       - name: Secret scan
-        run: npm run secrets:check
+        run: npm run secrets:check -- --all
 
-      - name: Build React app
-        run: npm run build
-
-      - name: Hybrid orchestration tests
-        run: npm run test:hybrid-dialer
-
-      - name: Agent runtime tests
-        run: npm run test:agent-runtime
+      - name: Complete repository test suite
+        run: npm run test:all
 
       - name: Check Firebase Functions
         run: npm --prefix functions run check
