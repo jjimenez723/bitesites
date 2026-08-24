@@ -27,6 +27,26 @@ Line Group it is an appropriately routed consultation; urgent property-damage
 or life-safety situations must be escalated rather than sold. For BiteSites it
 is a specialist discovery/scoping appointment.
 
+## How this plan is maintained
+
+This document is read by agents and by the owner to decide what is safe to do
+next, so it has to stay true rather than aspirational. Two rules, stated in full
+in [CLAUDE.md](./CLAUDE.md):
+
+1. **Claim before you start.** Mark the item you are about to work on, in
+   place, before the first code change, and delete the marker in the commit
+   that finishes the work. [CLAUDE.md](./CLAUDE.md) carries the exact one-line
+   format and the command that lists outstanding claims. A marker you did not
+   write is a signal to check `git status` for uncommitted work before
+   touching those files, not a signal that the work is finished.
+
+2. **Update this document in the same commit as the change.** A row in the table
+   below that describes a control the code does not have is worse than a missing
+   row, because the launch gates in
+   [OUTBOUND_LAUNCH_AUTHORIZATION.md](./OUTBOUND_LAUNCH_AUTHORIZATION.md) are
+   decided from it. Keep the split between what is implemented, what is blocked,
+   and on whom, explicit and current.
+
 ## What is implemented locally
 
 Nothing in this section has been deployed by this workstream.

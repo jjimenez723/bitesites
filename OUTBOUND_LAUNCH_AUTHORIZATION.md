@@ -4,6 +4,9 @@ Last updated: 2026-08-24
 
 This document separates business decisions already supplied by the owner from
 permissions that still require an explicit decision or an outside authority.
+It is only trustworthy if the readiness plan feeding it is current, so an agent
+changing outbound behavior updates both in the same commit — see
+[CLAUDE.md](./CLAUDE.md) for the documentation and work-claiming conventions.
 It does not authorize external dialing by itself. The production campaign must
 remain paused until every external-canary gate is evidenced and signed off.
 

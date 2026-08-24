@@ -7,6 +7,13 @@ npm install
 npm run dev        # http://localhost:5173
 ```
 
+## Working on this repo
+
+See **[CLAUDE.md](CLAUDE.md)** for the two conventions this repository depends on:
+claim a piece of the plan before you start it, and update the documentation in the
+same commit as the change. Both exist because several agents work here across
+sessions that cannot see each other.
+
 ## Backend
 
 Form submissions and authentication run on Firebase (project `bitesites-org`). Both the
@@ -23,7 +30,7 @@ See **[CLOUDFLARE_REDIRECTS.md](CLOUDFLARE_REDIRECTS.md)** for the canonical-dom
 redirect configuration, verification, and rollback steps.
 
 ```bash
-npm run test:rules                 # security-rule test suite (45 assertions)
+npm run test:rules                 # security-rule test suite (156 assertions)
 npm run test:email                 # HTML template rendering and escaping
 npm run test:lifecycle             # CRM/calendar stage + economics webhook
 npm run test:analytics             # durable, session-deduplicated funnel totals
