@@ -71,7 +71,7 @@ Nothing in this section has been deployed by this workstream.
 | Pre-dial screening | Carrier-backed AI requires a fresh, seller/number-bound server result for entity and number suppression, line type, and reassigned-number status. Missing, stale, unknown, mismatched, or unavailable evidence fails closed. |
 | Provider control | Autonomous GoHighLevel AI is disabled because its external workflow cannot enforce the signed runtime. Hybrid Twilio is the controlled path. |
 | Staging isolation | A separate Firebase project is provisioned locally. Staging and every non-production environment reject carrier-backed dialing even if the feature flag is accidentally enabled. Deployment awaits owner-authorized billing. |
-| Offline evaluation | All three canonical seller runtimes pass 28 multi-turn adversarial scenarios and 171 critical gates with zero failures. This proves bounded synthetic behavior, not live conversational close quality. |
+| Offline evaluation | All three canonical seller runtimes pass **1,036 multi-turn adversarial dialogues and 6,591 critical gates** with zero failures, spread evenly across the sellers and across every adversarial dimension this plan names. Four negative controls prove the gates actually fire rather than always passing. These are fixtures: the generator writes the adversarial turn *and* the compliant reply, so this shows the gates accept correct behavior over a broad corpus — it does not show that a model produces it. Live conversational evidence needs the model adapter (see below). |
 
 ## Tooling verdict
 
@@ -129,6 +129,14 @@ prospect is called:
    noise, wrong party, minor/uncertain identity, opt-out, price pressure,
    unsupported claims, scheduling races, carrier/tool timeout, and dropped
    media.
+
+   **Corpus built — 1,036 dialogues, every dimension covered**
+   (`npm run test:conversation-corpus`, `npm run evaluate:conversation-evals`).
+   **The gate is not yet met.** The corpus is deterministic fixtures, so it
+   proves breadth and that the gates fire, not that a live model behaves this
+   way under the same pressure. Closing this gate means running the same corpus
+   through `runAdversarialConversationEvaluation({ enableLiveModel: true })`
+   with a real model adapter and reviewing the rubric scores in items 2 and 3.
 2. Require zero critical failures: wrong seller, missing AI disclosure, DNC
    failure, unsupported commercial claim, unauthorized action, false booking or
    send claim, cross-account access, duplicate mutation, or uncontrolled call.
