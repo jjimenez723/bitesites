@@ -7,6 +7,11 @@ dist/
 .dev.vars
 .dev.vars.*
 
+# Environment selections are local deployment metadata. Keep the reviewed
+# examples, never an actual project/domain selection.
+config/environments/*.json
+!config/environments/*.example.json
+
 # Firebase CLI
 .firebase/
 firebase-debug.log

@@ -38,7 +38,7 @@ export default function CampaignList({ campaigns, loading, error, refresh, provi
         <div className="card-head">
           <div>
             <h3>Campaigns</h3>
-            <p>Select one to see its queue, its live dialer and its metrics.</p>
+            <p>Select one to see its queue, live dialer, and outcomes. Arming a campaign never places a call; the dialer still requires an approved plan and a separate preflight.</p>
           </div>
           <div className="card-head-actions">
             <button className="btn-admin" type="button" onClick={refresh}>Refresh</button>
@@ -87,8 +87,8 @@ export default function CampaignList({ campaigns, loading, error, refresh, provi
                           <button className="btn-admin" type="button" disabled={action.busy}
                             onClick={() => act(() => campaign.status === 'paused'
                               ? outbound.resumeCampaign(campaign.id)
-                              : outbound.startCampaign(campaign.id), 'Started.')}>
-                            {campaign.status === 'paused' ? 'Resume' : 'Start'}
+                              : outbound.startCampaign(campaign.id), 'Campaign armed.')}>
+                            {campaign.status === 'paused' ? 'Resume' : 'Arm campaign'}
                           </button>
                         )}
                         {campaign.status === 'running' && (

@@ -41,6 +41,10 @@ import { sealCallPlanSnapshot } from './call-plan.js';
 import { warmSidebandForSession } from './hybrid-sideband-warmup.js';
 import { isSuppressed, suppressNumber } from './inbound-compliance.js';
 import {
+  requiresExternalPreDialScreening, resolvePreDialScreening
+} from './pre-dial-screening.js';
+import { externalDialingAdmission } from './deployment-environment.js';
+import {
   LEGACY_ACCOUNT_ID, requireAccountId, readAccountId,
   checkAccountAlignment, accountMismatchLabel, sanitizePartnerOutcomes
 } from './accounts.js';
@@ -886,6 +890,14 @@ export async function dialNext(db, sessionId, {
   if (campaign.status === 'paused' || campaign.status === 'cancelled') {
     return { started: [], reason: `campaign_${campaign.status}` };
   }
+  // A separate Firebase project is not enough to make an outbound rehearsal
+  // safe: shared carrier credentials could still reach real phones. Refuse
+  // carrier-backed calls before we warm a sideband, lock a target or contact a
+  // provider. Mock dialing remains available to emulator tests.
+  const dialingAdmission = externalDialingAdmission(campaign.provider);
+  if (!dialingAdmission.allowed) {
+    return { started: [], reason: 'external_dialing_disabled', admission: dialingAdmission };
+  }
   const campaignAccountId = readAccountId(campaign.accountId, { fallback: LEGACY_ACCOUNT_ID });
 
   const configured = session.mode === 'parallel'
@@ -945,14 +957,19 @@ export async function dialNext(db, sessionId, {
     // is worth a document read to be sure we are reading it for the number we
     // are about to ring rather than one resolved earlier in the slice.
     const automatedVoice = ['ai', 'hybrid'].includes(session.operatingMode);
+    const phoneE164 = contact.phoneE164 || target.phoneE164;
     const consent = automatedVoice
-      ? await resolveAIVoiceConsent(db, { target, campaign, phoneE164: contact.phoneE164 || target.phoneE164, now })
+      ? await resolveAIVoiceConsent(db, { target, campaign, phoneE164, now })
       : target.consent;
+    const externalScreening = requiresExternalPreDialScreening({ campaign, automatedVoice })
+      ? await resolvePreDialScreening(db, { campaign, phoneE164, consent, now })
+      : { eligible: true, reasons: [] };
     const compliance = evaluateCompliance({
       target: { ...target, consent }, contact, campaign, now,
       internalDoNotCall: contact.contactability?.doNotCall === true || contact.doNotCall === true,
-      suppressed: await isSuppressed(db, contact.phoneE164 || target.phoneE164),
-      automatedVoice
+      suppressed: await isSuppressed(db, phoneE164),
+      automatedVoice,
+      externalScreening
     });
 
     if (!compliance.eligible) {
@@ -1092,6 +1109,10 @@ export async function runAICampaignSlice(db, campaignId, {
   const campaign = { id: campaignId, ...campaignSnapshot.data() };
   if (campaign.status !== 'running') return { started: [], reason: `campaign_${campaign.status}` };
   if (campaign.mode !== 'ai') return { started: [], reason: 'not_an_ai_campaign' };
+  const dialingAdmission = externalDialingAdmission(campaign.provider);
+  if (!dialingAdmission.allowed) {
+    return { started: [], reason: 'external_dialing_disabled', admission: dialingAdmission };
+  }
   const campaignAccountId = readAccountId(campaign.accountId, { fallback: LEGACY_ACCOUNT_ID });
 
   const support = assertSupports(campaign.provider, 'ai', 1);

@@ -11,11 +11,11 @@ const Check = ({ done }) => (
 // flow, so the mode has to be restated at the point of no return — a rep who
 // works the numbered steps downwards would otherwise start a session on the
 // default and only discover the ownership rule when the phone rings.
-const MODE_NAMES = { human: 'Human only', hybrid: 'Hybrid', ai: 'AI only' };
+const MODE_NAMES = { human: 'Human only', hybrid: 'Hybrid', ai: 'AI-led' };
 const MODE_SUMMARY = {
   human: 'Every answered call is routed to you.',
   hybrid: 'The first answered call is routed to you; the rest are handled by AI.',
-  ai: 'No call is routed to you. The session runs server-side and keeps dialing if this browser disconnects.'
+  ai: 'No call is routed to you. The session runs server-side only within its approved plans and safety limits.'
 };
 
 export default function CallPlanFlow({ campaign, session, operatingMode = 'hybrid', onOpenQueue, onStartSession, onStartCalls, startDisabled, startBlocker = '', interactive = true, canManage = true }) {

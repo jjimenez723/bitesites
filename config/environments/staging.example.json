@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "environment": "staging",
+  "firebaseProjectId": "REPLACE_WITH_A_DEDICATED_STAGING_PROJECT_ID",
+  "publicAppUrl": "https://REPLACE_WITH_A_STAGING_HOST.example",
+  "region": "us-central1",
+  "sidebandService": "bitesites-realtime-sideband-staging",
+  "externalDialing": "disabled"
+}

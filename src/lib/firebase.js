@@ -9,7 +9,7 @@
 // which is useful for pointing a staging build at a separate project.
 
 import { initializeApp } from 'firebase/app';
-import { getFirestore } from 'firebase/firestore';
+import { connectFirestoreEmulator, getFirestore } from 'firebase/firestore';
 import { initializeAppCheck, ReCaptchaEnterpriseProvider } from 'firebase/app-check';
 
 const env = import.meta.env;
@@ -27,6 +27,14 @@ const firebaseConfig = {
 export const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app);
 
+// Local UI rehearsals must never read or mutate production by accident. Vite
+// development connects to emulators only when the ignored local environment
+// explicitly opts in; production/staging builds never enter this branch.
+if (env.DEV && env.VITE_USE_FIREBASE_EMULATORS === 'true') {
+  const [host, rawPort] = String(env.VITE_FIRESTORE_EMULATOR_HOST || '127.0.0.1:8085').split(':');
+  connectFirestoreEmulator(db, host || '127.0.0.1', Number(rawPort) || 8085);
+}
+
 // firebase/auth is not exported from here on purpose: only the admin dashboard
 // signs anyone in, and re-exporting it would drag the whole auth SDK into any
 // bundle that only wanted `db`. See ./auth.js, which owns the instance.
@@ -37,6 +45,7 @@ export const db = getFirestore(app);
 // public — it is embedded in the page by design — so it ships as the default.
 const recaptchaSiteKey =
   env.VITE_RECAPTCHA_SITE_KEY || '6Lf0cV0tAAAAAGZIrvImMY7t-5MYmA6Xd2tGBC3M';
+const appCheckEnabled = env.VITE_APPCHECK_ENABLED !== 'false';
 
 // On localhost, register a debug token in the Firebase console instead of
 // solving a live reCAPTCHA challenge. Set the var to `true` to have the SDK
@@ -50,13 +59,15 @@ if (env.DEV && env.VITE_APPCHECK_DEBUG_TOKEN) {
 // App Check enabled in development so localhost receives a real attestation;
 // otherwise Auth succeeds but every Firestore request is rejected. For LAN IPs
 // and tunnels, use the debug-token path above instead.
-try {
-  initializeAppCheck(app, {
-    provider: new ReCaptchaEnterpriseProvider(recaptchaSiteKey),
-    isTokenAutoRefreshEnabled: true
-  });
-} catch (error) {
-  // Never let attestation failure blank the marketing site — a lead that cannot
-  // be attested should surface as a failed submit, not a broken page.
-  console.warn('[firebase] App Check failed to initialise', error);
+if (appCheckEnabled) {
+  try {
+    initializeAppCheck(app, {
+      provider: new ReCaptchaEnterpriseProvider(recaptchaSiteKey),
+      isTokenAutoRefreshEnabled: true
+    });
+  } catch (error) {
+    // Never let attestation failure blank the marketing site — a lead that cannot
+    // be attested should surface as a failed submit, not a broken page.
+    console.warn('[firebase] App Check failed to initialise', error);
+  }
 }

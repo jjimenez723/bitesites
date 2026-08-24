@@ -45,8 +45,10 @@ Nothing in this section has been deployed by this workstream.
 | Booking | Firestore owns holds and attribution; Google Calendar owns live availability and events. Configured calendars are checked immediately before commit and fail closed when unavailable. Confirmed bookings invite the attendee once. |
 | AI media | A 20-second attachment deadline and durable reconciler end the PSTN and Realtime legs if no valid controller attaches. |
 | Operating limits | Every non-mock provider is capped server-side at one live leg, one attempt, a 24-hour minimum retry interval, and a 10-minute call limit, including stale campaign documents. |
+| Pre-dial screening | Carrier-backed AI requires a fresh, seller/number-bound server result for entity and number suppression, line type, and reassigned-number status. Missing, stale, unknown, mismatched, or unavailable evidence fails closed. |
 | Provider control | Autonomous GoHighLevel AI is disabled because its external workflow cannot enforce the signed runtime. Hybrid Twilio is the controlled path. |
-| Offline evaluation | All three canonical seller runtimes pass the bounded policy/tool rehearsal with zero critical failures. This proves configuration boundaries, not conversational close quality. |
+| Staging isolation | A separate Firebase project is provisioned locally. Staging and every non-production environment reject carrier-backed dialing even if the feature flag is accidentally enabled. Deployment awaits owner-authorized billing. |
+| Offline evaluation | All three canonical seller runtimes pass 28 multi-turn adversarial scenarios and 171 critical gates with zero failures. This proves bounded synthetic behavior, not live conversational close quality. |
 
 ## Tooling verdict
 
@@ -184,12 +186,17 @@ without competing with the main action.
 ## Deployment sequence
 
 1. Review and commit the local implementation.
-2. Deploy rules and indexes first; wait for index readiness.
-3. Deploy functions and Realtime sideband with production secrets.
-4. Seed seller profiles/knowledge using dry-run output, then verify the exact
+2. Authorize staging billing and deploy the non-dialing staging stack.
+3. Pass staging callable/UI smoke tests without production credentials.
+4. Deploy rules and indexes first; wait for index readiness.
+5. Deploy functions and Realtime sideband with production secrets.
+6. Seed seller profiles/knowledge using dry-run output, then verify the exact
    production documents.
-5. Keep all campaigns paused and recording disabled.
-6. Run read-only preflight and provider health checks.
-7. Run the 10-call internal-consent cohort.
-8. Close legal, DNC, carrier, calendar, handoff, and budget blockers.
-9. Obtain explicit owner authorization for the 25/day external canary.
+7. Keep all campaigns paused and recording disabled.
+8. Run read-only preflight and provider health checks.
+9. Run the 10-call internal-consent cohort.
+10. Close legal, DNC, carrier, calendar, handoff, and budget blockers.
+11. Obtain explicit owner authorization for the 25/day external canary.
+
+The owner-facing decision record is in
+[OUTBOUND_LAUNCH_AUTHORIZATION.md](./OUTBOUND_LAUNCH_AUTHORIZATION.md).

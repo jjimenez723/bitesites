@@ -655,6 +655,9 @@ await testEnv.withSecurityRulesDisabled(async context => {
   await setDoc(doc(db, 'consentEvidenceCandidates', 'candidate_1'), { status: 'pending_review', phoneE164: '+12015550142' });
   await setDoc(doc(db, 'consentGrants', 'grant_1'), { status: 'active', phoneE164: '+12015550142' });
   await setDoc(doc(db, 'consentGrantEvents', 'grant_1', 'events', 'issued'), { type: 'issued', at: new Date() });
+  await setDoc(doc(db, 'preDialScreenings', 'screen_1'), {
+    sellerAccountId: 'bitesites', phoneHash: 'hash', status: 'cleared', checkedAt: new Date()
+  });
   await setDoc(doc(db, 'scrapeJobs', 'job1'), { provider: 'mock', status: 'queued' });
   await setDoc(doc(db, 'scrapeJobs', 'job1', 'results', 'r1'), { raw: { name: 'x' } });
   await setDoc(doc(db, 'importRuns', 'run1'), { sourceSystem: 'watcher_leads', status: 'completed' });
@@ -830,6 +833,19 @@ await it('no browser can forge, approve, revoke, or rewrite a consent grant', as
   await assertFails(setDoc(doc(adminByDoc, 'consentEvidenceCandidates', 'candidate_forged'), { status: 'pending_review' }));
   await assertFails(updateDoc(doc(adminByDoc, 'consentGrants', 'grant_1'), { status: 'revoked' }));
   await assertFails(setDoc(doc(adminByDoc, 'consentGrantEvents', 'grant_1', 'events', 'revoked'), { type: 'revoked' }));
+});
+
+describe('pre-dial screening ledger — admin-read, server-write');
+
+await it('only an admin can inspect a pre-dial screening result', async () => {
+  await assertSucceeds(getDoc(doc(adminByDoc, 'preDialScreenings', 'screen_1')));
+  await assertFails(getDoc(doc(outboundRep, 'preDialScreenings', 'screen_1')));
+  await assertFails(getDoc(doc(anon, 'preDialScreenings', 'screen_1')));
+});
+
+await it('no browser can forge or extend a pre-dial clearance', async () => {
+  await assertFails(setDoc(doc(adminByDoc, 'preDialScreenings', 'screen_forged'), { status: 'cleared' }));
+  await assertFails(updateDoc(doc(adminByDoc, 'preDialScreenings', 'screen_1'), { expiresAt: new Date('2099-01-01') }));
 });
 
 await it('anonymous visitor cannot read scrape jobs', () =>

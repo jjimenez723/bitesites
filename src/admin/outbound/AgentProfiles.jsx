@@ -72,6 +72,16 @@ const OFFER_TRACKS = [
 ];
 const MAX_OFFER_TRACKS = 4;
 
+// These are product boundaries, not profile choices. The runtime enforces the
+// same values; reflecting them here prevents a manager from configuring an
+// apparent authority that the caller can never receive.
+const RUNTIME_LOCKED_PERMISSIONS = {
+  mayQuotePricing: 'Pricing authority is not enabled for outbound AI.',
+  mayOfferDiscount: 'Discount authority is not enabled for outbound AI.',
+  mayCloseSale: 'AI can qualify and book an approved next step, not bind a sale.',
+  mayCollectPayment: 'Payment collection is not enabled for outbound AI.'
+};
+
 const VOICES = ['marin', 'cedar', 'alloy', 'ash', 'ballad', 'coral', 'echo', 'sage', 'shimmer', 'verse'];
 const REASONING_MODELS = new Set(['gpt-realtime-2', 'gpt-realtime-2.1', 'gpt-realtime-2.1-mini']);
 const PRESET_SETTINGS = {
@@ -84,6 +94,18 @@ const PRESET_SETTINGS = {
 
 const splitLines = value => String(value || '').split('\n').map(item => item.trim()).filter(Boolean);
 const joinLines = value => (Array.isArray(value) ? value : []).join('\n');
+
+const withRuntimeSafety = profile => ({
+  ...profile,
+  permissions: {
+    ...(profile.permissions || {}),
+    mayQuotePricing: false,
+    mayOfferDiscount: false,
+    mayCloseSale: false,
+    mayCollectPayment: false,
+    maxDiscountPercent: 0
+  }
+});
 
 function cloneProfile(profile = EMPTY) {
   return JSON.parse(JSON.stringify({ ...EMPTY, ...profile,
@@ -130,6 +152,12 @@ export default function AgentProfiles() {
   useEffect(() => { refresh().catch(() => setLoading(false)); }, [refresh]);
 
   const selected = useMemo(() => profiles.find(profile => profile.id === selectedId) || null, [profiles, selectedId]);
+  const activeAccountId = readAccountId(draft.accountId);
+  const activeAccount = activeAccountId ? ACCOUNTS[activeAccountId] : null;
+  const availableKnowledgeBases = useMemo(() => knowledgeBases.filter(kb => (
+    kb.status !== 'archived'
+    && readAccountId(kb.accountId, { fallback: LEGACY_ACCOUNT_ID }) === activeAccountId
+  )), [knowledgeBases, activeAccountId]);
   const customVoiceInvalid = draft.voiceSettings.source === 'custom'
     && !/^voice_[A-Za-z0-9_-]+$/.test(draft.voiceSettings.customVoiceId || '');
   const reasoningCapable = REASONING_MODELS.has(draft.model);
@@ -150,6 +178,15 @@ export default function AgentProfiles() {
     });
   };
 
+  const setAccount = accountId => {
+    setDraft(current => ({
+      ...cloneProfile(current),
+      accountId,
+      knowledgeBaseIds: [],
+      offerTracks: accountId === 'bitesites' ? current.offerTracks : []
+    }));
+  };
+
   const applyPreset = preset => {
     setDraft(current => {
       const next = cloneProfile(current);
@@ -159,10 +196,12 @@ export default function AgentProfiles() {
   };
 
   const save = async () => {
+    const safeDraft = withRuntimeSafety(draft);
     const result = selected
-      ? await action.run(() => outbound.updateAgentProfile(selected.id, draft), 'Agent profile updated.')
-      : await action.run(() => outbound.createAgentProfile(draft), 'Agent profile created.');
+      ? await action.run(() => outbound.updateAgentProfile(selected.id, safeDraft), 'Agent profile updated.')
+      : await action.run(() => outbound.createAgentProfile(safeDraft), 'Agent profile created.');
     if (!result) return;
+    setDraft(cloneProfile(safeDraft));
     if (result.profileId) setSelectedId(result.profileId);
     await refresh();
   };
@@ -188,7 +227,9 @@ export default function AgentProfiles() {
   };
 
   const runPreview = async () => {
-    const result = await action.run(() => outbound.previewAgentRuntime({ profile: { id: selectedId || 'preview', version: selected?.version || 1, ...draft } }), 'Runtime validated.');
+    const result = await action.run(() => outbound.previewAgentRuntime({
+      profile: withRuntimeSafety({ id: selectedId || 'preview', version: selected?.version || 1, ...draft })
+    }), 'Runtime validated.');
     if (result) setPreview(result);
   };
 
@@ -229,10 +270,12 @@ export default function AgentProfiles() {
   };
 
   const permission = (key, label) => (
-    <label className="hybrid-permission" key={key}>
-      <input type="checkbox" checked={draft.permissions[key] === true}
+    <label className={`hybrid-permission${RUNTIME_LOCKED_PERMISSIONS[key] ? ' is-locked' : ''}`} key={key}
+      title={RUNTIME_LOCKED_PERMISSIONS[key] || undefined}>
+      <input type="checkbox" checked={RUNTIME_LOCKED_PERMISSIONS[key] ? false : draft.permissions[key] === true}
+        disabled={Boolean(RUNTIME_LOCKED_PERMISSIONS[key])}
         onChange={event => setField(['permissions', key], event.target.checked)} />
-      <span>{label}</span>
+      <span>{label}{RUNTIME_LOCKED_PERMISSIONS[key] && <small>Locked</small>}</span>
     </label>
   );
 
@@ -280,7 +323,7 @@ export default function AgentProfiles() {
                 <select
                   value={selected ? readAccountId(draft.accountId, { fallback: LEGACY_ACCOUNT_ID }) : draft.accountId}
                   disabled={Boolean(selected)}
-                  onChange={event => setField(['accountId'], event.target.value)}
+                  onChange={event => setAccount(event.target.value)}
                 >
                   <option value="">Select an account…</option>
                   {ACCOUNT_IDS.map(id => <option key={id} value={id}>{ACCOUNTS[id].label}</option>)}
@@ -386,7 +429,7 @@ export default function AgentProfiles() {
                 onChange={event => setField(['responseSettings', 'maxOutputTokens'], Number(event.target.value))} /></label>
               <label className="full"><span>Accent guidance</span><input maxLength={300} value={draft.personality.accent || ''} onChange={event => setField(['personality', 'accent'], event.target.value)} placeholder="Example: Light, stable New York accent; clear and not exaggerated." /></label>
               <label className="full"><span>Language policy</span><textarea rows={2} maxLength={500} value={draft.personality.languagePolicy || ''} onChange={event => setField(['personality', 'languagePolicy'], event.target.value)} /></label>
-              <label className="full"><span>Pronunciation guidance</span><textarea rows={2} maxLength={1000} value={draft.personality.pronunciationGuidance || ''} onChange={event => setField(['personality', 'pronunciationGuidance'], event.target.value)} placeholder="Example: BiteSites is pronounced ‘bite sites’. Say URLs letter by letter when clarity matters." /></label>
+              <label className="full"><span>Pronunciation guidance</span><textarea rows={2} maxLength={1000} value={draft.personality.pronunciationGuidance || ''} onChange={event => setField(['personality', 'pronunciationGuidance'], event.target.value)} placeholder={`Example: Explain how to pronounce ${activeAccount?.label || 'the seller name'} and any service-specific terms.`} /></label>
             </div>
           </fieldset>
 
@@ -416,13 +459,13 @@ export default function AgentProfiles() {
                 </>
               )}
             </div>
-            <p className="hybrid-config-note">Noise reduction filters the prospect’s incoming audio before turn detection and the model. BiteSites does not add synthetic office or call-center ambience to calls.</p>
+            <p className="hybrid-config-note">Noise reduction filters the prospect’s incoming audio before turn detection and the model. The platform does not add synthetic office or call-center ambience to calls.</p>
           </fieldset>
 
           <fieldset className="hybrid-fieldset hybrid-config-section">
             <legend>Objective & actions</legend>
             <div className="outbound-form-grid">
-              <label className="full"><span>Primary sales objective</span><textarea rows={3} value={draft.objective.primaryGoal || ''} onChange={event => setField(['objective', 'primaryGoal'], event.target.value)} placeholder="Qualify the business, explain the relevant BiteSites offer, and close or book when permitted." /></label>
+              <label className="full"><span>Primary sales objective</span><textarea rows={3} value={draft.objective.primaryGoal || ''} onChange={event => setField(['objective', 'primaryGoal'], event.target.value)} placeholder="Qualify the business, explain the relevant offer, and book an approved next step." /></label>
             </div>
 
             <div className="hybrid-permissions-grid">
@@ -434,33 +477,42 @@ export default function AgentProfiles() {
               {permission('maySendSms', 'Send approved SMS follow-up')}
               {permission('maySendEmail', 'Send approved email follow-up')}
             </div>
-            {draft.permissions.mayOfferDiscount && (
-              <label className="hybrid-inline-number">Max discount %
-                <input type="number" min="0" max="100" value={draft.permissions.maxDiscountPercent || 0}
-                  onChange={event => setField(['permissions', 'maxDiscountPercent'], Number(event.target.value))} />
-              </label>
-            )}
+            <p className="hybrid-config-note">The AI is appointment-capable. Pricing, discounts, binding sale closure, and payment are hard-locked off. Follow-up channels still require the prospect to confirm that channel during the conversation.</p>
           </fieldset>
 
           <fieldset className="hybrid-fieldset hybrid-config-section">
-            <legend>Offer tracks & audition</legend>
-            <p className="hybrid-config-note">
-              Selected services get the full pitch, discovery questions, and objection handling. Every other BiteSites
-              service stays a one-line pointer the agent can acknowledge without inventing detail. The first track
-              selected is the one it leads with; pick up to {MAX_OFFER_TRACKS}.
-            </p>
-            <div className="hybrid-kb-choices">
-              {OFFER_TRACKS.map(([key, label]) => {
-                const position = draft.offerTracks.indexOf(key);
-                const atLimit = position < 0 && draft.offerTracks.length >= MAX_OFFER_TRACKS;
-                return (
-                  <label key={key} className={atLimit ? 'is-disabled' : ''}>
-                    <input type="checkbox" checked={position >= 0} disabled={atLimit} onChange={() => toggleOfferTrack(key)} />
-                    <span>{position === 0 ? `${label} · leads` : label}</span>
-                  </label>
-                );
-              })}
-            </div>
+            <legend>Sales playbook & audition</legend>
+            {!activeAccount && (
+              <p className="hybrid-config-note">Select the seller account first. Its approved services and conversion goal determine what this caller may discuss.</p>
+            )}
+            {activeAccountId === 'bitesites' && (
+              <>
+                <p className="hybrid-config-note">
+                  Selected services get the full pitch, discovery questions, and objection handling. Every other BiteSites
+                  service stays a one-line pointer the agent can acknowledge without inventing detail. The first track
+                  selected is the one it leads with; pick up to {MAX_OFFER_TRACKS}.
+                </p>
+                <div className="hybrid-kb-choices">
+                  {OFFER_TRACKS.map(([key, label]) => {
+                    const position = draft.offerTracks.indexOf(key);
+                    const atLimit = position < 0 && draft.offerTracks.length >= MAX_OFFER_TRACKS;
+                    return (
+                      <label key={key} className={atLimit ? 'is-disabled' : ''}>
+                        <input type="checkbox" checked={position >= 0} disabled={atLimit} onChange={() => toggleOfferTrack(key)} />
+                        <span>{position === 0 ? `${label} · leads` : label}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+            {activeAccount && activeAccountId !== 'bitesites' && (
+              <div className="hybrid-runtime-preview" aria-label={`${activeAccount.label} approved playbook`}>
+                <strong>{activeAccount.sales.conversionLabel}</strong>
+                <span>{activeAccount.sales.primaryObjective}</span>
+                {activeAccount.sales.serviceLines.map(service => <span key={service}>{service}</span>)}
+              </div>
+            )}
             <div className="outbound-form-grid">
               <label className="full"><span>Audition script <small>(spoken verbatim by “Play voice sample”)</small></span>
                 <textarea rows={3} maxLength={1200} value={draft.auditionScript || ''}
@@ -482,9 +534,10 @@ export default function AgentProfiles() {
 
           <fieldset className="hybrid-fieldset hybrid-config-section">
             <legend>Knowledge bases</legend>
-            {!knowledgeBases.length && <p className="admin-note">No knowledge bases yet.</p>}
+            {!activeAccountId && <p className="admin-note">Select an account to see its approved knowledge bases.</p>}
+            {activeAccountId && !availableKnowledgeBases.length && <p className="admin-note">No knowledge bases for this account yet.</p>}
             <div className="hybrid-kb-choices">
-              {knowledgeBases.filter(kb => kb.status !== 'archived').map(kb => (
+              {availableKnowledgeBases.map(kb => (
                 <label key={kb.id}>
                   <input type="checkbox" checked={draft.knowledgeBaseIds.includes(kb.id)} onChange={() => toggleKnowledge(kb.id)} />
                   <span>{kb.name}</span>
@@ -495,12 +548,12 @@ export default function AgentProfiles() {
         </div>
 
         <AgentPreviewControls
-          profile={{ id: selectedId || 'preview', version: selected?.version || 1, ...draft }}
-          disabled={!draft.name.trim() || customVoiceInvalid}
+          profile={withRuntimeSafety({ id: selectedId || 'preview', version: selected?.version || 1, ...draft })}
+          disabled={!draft.name.trim() || !activeAccountId || customVoiceInvalid}
         />
 
         <div className="hybrid-agent-actions">
-          <button className="btn-admin" type="button" disabled={action.busy || customVoiceInvalid} onClick={runPreview}>Validate live configuration</button>
+          <button className="btn-admin" type="button" disabled={action.busy || !activeAccountId || customVoiceInvalid} onClick={runPreview}>Validate live configuration</button>
           {preview && (
             <div className="hybrid-runtime-preview">
               <strong>Ready for the next call</strong>
@@ -523,12 +576,12 @@ export default function AgentProfiles() {
       <div className="admin-card hybrid-kb-editor">
         <div className="card-head"><div><h3>Knowledge Base</h3><p>Add approved facts the live AI is allowed to retrieve.</p></div></div>
         <div className="outbound-form-grid">
-          <label><span>New knowledge base name</span><input value={kbName} onChange={event => setKbName(event.target.value)} placeholder="BiteSites Services & Pricing" /></label>
+          <label><span>New knowledge base name</span><input value={kbName} onChange={event => setKbName(event.target.value)} placeholder={`${activeAccount?.label || 'Seller'} approved sales playbook`} /></label>
           <div className="hybrid-field-button"><button className="btn-admin" type="button" disabled={!kbName.trim() || !readAccountId(draft.accountId) || action.busy} onClick={createKb}>Create knowledge base</button></div>
           <label><span>Knowledge base</span>
             <select className="admin-select" value={kbDoc.knowledgeBaseId} onChange={event => setKbDoc(current => ({ ...current, knowledgeBaseId: event.target.value }))}>
               <option value="">Select…</option>
-              {knowledgeBases.filter(kb => kb.status !== 'archived').map(kb => <option key={kb.id} value={kb.id}>{kb.name}</option>)}
+              {availableKnowledgeBases.map(kb => <option key={kb.id} value={kb.id}>{kb.name}</option>)}
             </select>
           </label>
           <label><span>Document title</span><input value={kbDoc.title} onChange={event => setKbDoc(current => ({ ...current, title: event.target.value }))} /></label>

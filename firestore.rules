@@ -623,6 +623,16 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // A current consent grant is necessary but not sufficient for an
+    // artificial-voice call. The server also resolves national/entity DNC,
+    // reassigned-number, validation and line-type evidence into this bounded
+    // ledger. Operators may inspect the result; browsers can never manufacture
+    // a "clear" record or extend its expiry.
+    match /preDialScreenings/{screeningId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
     match /scrapeJobs/{jobId} {
       allow read: if isAdmin();
       allow write: if false;

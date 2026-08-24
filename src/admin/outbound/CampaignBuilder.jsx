@@ -80,6 +80,21 @@ export default function CampaignBuilder({ providers = [], campaign = null, onSav
   );
   const provider = providers.find(entry => entry.id === form.provider);
   const needsAgentProfile = form.provider === 'twilio' && form.mode === 'parallel';
+  const isLiveProvider = form.provider !== 'mock';
+  const concurrencyOptions = isLiveProvider ? [1] : [1, 2, 3, 4, 5];
+
+  // The backend is the authority and already enforces this profile.  Mirror it
+  // here so a live operator never believes a higher volume setting is in
+  // effect. Mock campaigns remain useful for capacity rehearsals.
+  useEffect(() => {
+    if (!isLiveProvider) return;
+    setForm(current => {
+      const retryDelayMinutes = Math.max(1440, Number(current.retryDelayMinutes) || 1440);
+      if (Number(current.concurrency) === 1 && Number(current.maxAttempts) === 1
+        && Number(current.retryDelayMinutes) === retryDelayMinutes) return current;
+      return { ...current, concurrency: 1, maxAttempts: 1, retryDelayMinutes };
+    });
+  }, [isLiveProvider]);
 
   useEffect(() => {
     let cancelled = false;
@@ -121,7 +136,14 @@ export default function CampaignBuilder({ providers = [], campaign = null, onSav
 
   const submit = async event => {
     event.preventDefault();
-    const payload = { ...form, concurrency: Number(form.concurrency), maxAttempts: Number(form.maxAttempts), retryDelayMinutes: Number(form.retryDelayMinutes) };
+    const payload = {
+      ...form,
+      concurrency: isLiveProvider ? 1 : Number(form.concurrency),
+      maxAttempts: isLiveProvider ? 1 : Number(form.maxAttempts),
+      retryDelayMinutes: isLiveProvider
+        ? Math.max(1440, Number(form.retryDelayMinutes) || 1440)
+        : Number(form.retryDelayMinutes)
+    };
     const result = campaign?.id
       ? await action.run(() => outbound.updateCampaign(campaign.id, payload), 'Saved.')
       : await action.run(() => outbound.createCampaign(payload), 'Created.');
@@ -192,10 +214,12 @@ export default function CampaignBuilder({ providers = [], campaign = null, onSav
           {form.mode === 'parallel' && (
             <label>
               <span>Simultaneous lines</span>
-              <select value={form.concurrency} onChange={event => set('concurrency', Number(event.target.value))}>
-                {[1, 2, 3, 4, 5].map(value => <option key={value} value={value}>{value}</option>)}
+              <select value={form.concurrency} disabled={isLiveProvider} onChange={event => set('concurrency', Number(event.target.value))}>
+                {concurrencyOptions.map(value => <option key={value} value={value}>{value}</option>)}
               </select>
-              <small>The first verified human answer connects; every other leg is cancelled.</small>
+              <small>{isLiveProvider
+                ? 'Live campaigns are capped at one line. Use the mock provider to rehearse multi-line routing.'
+                : 'The first verified human answer connects; every other leg is cancelled.'}</small>
             </label>
           )}
 
@@ -261,12 +285,16 @@ export default function CampaignBuilder({ providers = [], campaign = null, onSav
 
           <label>
             <span>Maximum attempts</span>
-            <input type="number" min="1" max="10" value={form.maxAttempts} onChange={event => set('maxAttempts', event.target.value)} />
+            <input type="number" min="1" max={isLiveProvider ? '1' : '10'} disabled={isLiveProvider}
+              value={form.maxAttempts} onChange={event => set('maxAttempts', event.target.value)} />
+            {isLiveProvider && <small>Live campaigns allow one attempt per target until a reviewed policy changes.</small>}
           </label>
 
           <label>
             <span>Retry delay (minutes)</span>
-            <input type="number" min="15" max="10080" value={form.retryDelayMinutes} onChange={event => set('retryDelayMinutes', event.target.value)} />
+            <input type="number" min={isLiveProvider ? '1440' : '15'} max="10080" value={form.retryDelayMinutes}
+              onChange={event => set('retryDelayMinutes', event.target.value)} />
+            {isLiveProvider && <small>At least 24 hours. The runtime repeats this check before every call.</small>}
           </label>
 
           <label>

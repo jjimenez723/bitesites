@@ -8,6 +8,9 @@
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { clean } from './prospect-normalization.js';
 import { evaluateAIVoiceConsent, resolveAIVoiceConsent } from './outbound-compliance.js';
+import {
+  requiresExternalPreDialScreening, resolvePreDialScreening
+} from './pre-dial-screening.js';
 
 export const CALL_CONTROLLERS = ['unassigned', 'human', 'ai', 'transitioning', 'none'];
 export const REP_STATES = ['available', 'busy', 'listening', 'transitioning', 'offline'];
@@ -208,6 +211,17 @@ export async function attachAIController(db, callId, aiSessionId, {
   });
   if (!consent.eligible) {
     throw new Error(`AI voice consent is not valid: ${consent.reasons.join(', ')}`);
+  }
+  if (requiresExternalPreDialScreening({ campaign, automatedVoice: true })) {
+    const screening = await resolvePreDialScreening(db, {
+      campaign,
+      phoneE164: call.phoneE164 || targetSnapshot.get('phoneE164'),
+      consent: resolvedConsent,
+      now
+    });
+    if (!screening.eligible) {
+      throw new Error(`AI pre-dial screening is not valid: ${screening.reasons.join(', ')}`);
+    }
   }
 
   await ref.set({

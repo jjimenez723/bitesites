@@ -13,6 +13,7 @@
 
 import { normalizePhone, resolveTimezone } from './prospect-normalization.js';
 import { getAccount } from './accounts.js';
+import { requiresExternalPreDialScreening } from './pre-dial-screening.js';
 
 export const DEFAULT_CALLING_WINDOW = {
   // Federal telemarketing practice in the US is 8am–9pm local. The default here
@@ -239,7 +240,8 @@ export function evaluateCompliance({
   now = new Date(),
   suppressed = false,
   internalDoNotCall = false,
-  automatedVoice = false
+  automatedVoice = false,
+  externalScreening = null
 } = {}) {
   const reasons = [];
 
@@ -288,6 +290,14 @@ export function evaluateCompliance({
     ? evaluateAIVoiceConsent({ target, campaign, phoneE164 })
     : { eligible: true, reasons: [], basis: '' };
   reasons.push(...aiConsent.reasons);
+  const externalScreeningRequired = requiresExternalPreDialScreening({
+    campaign, automatedVoice: aiVoiceRequired
+  });
+  if (externalScreeningRequired && externalScreening?.eligible !== true) {
+    reasons.push(...(Array.isArray(externalScreening?.reasons) && externalScreening.reasons.length
+      ? externalScreening.reasons
+      : ['external_screening_missing']));
+  }
   const seller = getAccount(campaign.accountId);
 
   return {
@@ -298,6 +308,15 @@ export function evaluateCompliance({
     // The latter is campaign metadata, not consent for this individual number.
     consentBasis: aiVoiceRequired ? aiConsent.basis : String(campaign.consentBasis || 'not_recorded'),
     aiVoiceConsent: aiConsent,
+    externalScreening: externalScreeningRequired
+      ? {
+          eligible: externalScreening?.eligible === true,
+          id: String(externalScreening?.id || ''),
+          checkedAt: externalScreening?.checkedAt || null,
+          expiresAt: externalScreening?.expiresAt || null,
+          lineType: String(externalScreening?.lineType || '')
+        }
+      : { eligible: true, id: '', checkedAt: null, expiresAt: null, lineType: '' },
     doNotCall: reasons.includes('do_not_call') || reasons.includes('do_not_contact'),
     localTimeAllowed: window.allowed,
     timezone,
@@ -326,7 +345,20 @@ export const COMPLIANCE_REASON_LABELS = {
   invalid_caller_id: 'Campaign caller ID is missing or not E.164',
   ai_consent_not_documented: 'AI calling requires documented written consent for this number',
   ai_consent_seller_mismatch: 'AI consent is not documented for this seller',
-  ai_consent_phone_mismatch: 'AI consent does not match the dialled number'
+  ai_consent_phone_mismatch: 'AI consent does not match the dialled number',
+  external_screening_missing: 'Current DNC, reassigned-number, and line screening is missing',
+  external_screening_policy_mismatch: 'Pre-dial screening uses an obsolete policy',
+  external_screening_seller_mismatch: 'Pre-dial screening belongs to another seller',
+  external_screening_phone_mismatch: 'Pre-dial screening belongs to another number',
+  external_screening_not_cleared: 'Pre-dial screening has not cleared this number',
+  external_screening_stale: 'Pre-dial screening has expired',
+  national_dnc_not_cleared: 'National Do Not Call screening is missing or matched',
+  entity_dnc_not_cleared: 'Seller-specific Do Not Call screening is missing or matched',
+  number_reassigned: 'The number was reassigned after consent was obtained',
+  reassigned_number_not_cleared: 'Reassigned-number screening is unavailable or inconclusive',
+  reassigned_number_consent_date_mismatch: 'Reassigned-number screening did not use the consent date',
+  phone_validation_not_cleared: 'The carrier could not validate this phone number',
+  line_type_not_callable: 'The carrier line type is unknown or not callable'
 };
 
 /**

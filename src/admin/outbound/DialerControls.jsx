@@ -56,7 +56,7 @@ export default function DialerControls({ campaignId, campaigns = [], onSelectCam
   const [profilesLoading, setProfilesLoading] = useState(true);
   const [agentProfileId, setAgentProfileId] = useState('');
   const [operatingMode, setOperatingMode] = useState('hybrid');
-  const [concurrency, setConcurrency] = useState(3);
+  const [concurrency, setConcurrency] = useState(1);
   const [autoTakeover, setAutoTakeover] = useState(false);
   const [sessionOverride, setSessionOverride] = useState('');
   const [dialIssue, setDialIssue] = useState(null);
@@ -132,7 +132,7 @@ export default function DialerControls({ campaignId, campaigns = [], onSelectCam
         sessionOverride: override,
         autoTakeover: guidedMode ? false : autoTakeover,
         operatingMode,
-        concurrency
+        concurrency: campaign?.provider && campaign.provider !== 'mock' ? 1 : concurrency
       }),
       'Hybrid session started.'
     );
@@ -187,7 +187,7 @@ export default function DialerControls({ campaignId, campaigns = [], onSelectCam
     const result = await action.run(
       () => outbound.setHybridOperatingMode(sessionId, nextMode, agentProfileId),
       nextMode === 'ai'
-        ? 'AI-only calling enabled. Calls continue if this browser disconnects.'
+        ? 'AI-led calling enabled. Only approved plans may run if this browser disconnects.'
         : `${nextMode === 'human' ? 'Human-only' : 'Hybrid'} calling enabled.`
     );
     if (!result) setOperatingMode(previous);
@@ -259,6 +259,9 @@ export default function DialerControls({ campaignId, campaigns = [], onSelectCam
 
   const sessionCampaign = campaigns.find(entry => entry.id === session?.campaignId) || campaign;
   const providerReady = sessionCampaign?.provider === 'twilio';
+  const liveSafetyProfile = Boolean(sessionCampaign?.provider && sessionCampaign.provider !== 'mock');
+  const displayedConcurrency = liveSafetyProfile ? 1 : Math.max(1, Number(session?.concurrency || concurrency) || 1);
+  const concurrencyOptions = liveSafetyProfile ? [1] : [1, 2, 3, 4, 5];
   const counts = sessionCampaign?.counts || {};
   const preflightBlocker = sessionRecovery.loading ? 'Wait while your active session is checked.'
     : !providerReady ? 'Select a Twilio campaign; Hybrid calling needs conference control.'
@@ -284,7 +287,7 @@ export default function DialerControls({ campaignId, campaigns = [], onSelectCam
           <div>
             <h3>Session configuration — {sessionCampaign?.name || campaignId}</h3>
             <p>
-              Choose Human, Hybrid, or AI ownership and maintain between one and five concurrent lines automatically.
+              Choose Human, Hybrid, or AI ownership. Production sessions are limited to one controlled line until the reviewed rollout gates allow a higher limit.
             </p>
           </div>
           <div className="card-head-actions">
@@ -315,20 +318,22 @@ export default function DialerControls({ campaignId, campaigns = [], onSelectCam
                 <select className="admin-select" value={operatingMode} onChange={changeOperatingMode}>
                   <option value="human">Human — rep handles calls</option>
                   <option value="hybrid">Hybrid — rep + AI overflow</option>
-                  <option value="ai">AI — fully autonomous</option>
+                  <option value="ai">AI — approved plan, server-owned</option>
                 </select>
                 <small>{operatingMode === 'human'
-                  ? `${concurrency} predictive line${concurrency === 1 ? '' : 's'} while the rep is free; sibling legs end when one person answers.`
+                  ? `${displayedConcurrency} predictive line${displayedConcurrency === 1 ? '' : 's'} while the rep is free; sibling legs end when one person answers.`
                   : operatingMode === 'ai'
-                    ? `${concurrency} AI line${concurrency === 1 ? '' : 's'} continue server-side after the rep disconnects.`
-                    : `${concurrency} line${concurrency === 1 ? '' : 's'} stay active; the first answer goes to the rep and overflow goes to AI.`}</small>
+                    ? `${displayedConcurrency} AI line${displayedConcurrency === 1 ? '' : 's'} may continue server-side after the rep disconnects.`
+                    : `${displayedConcurrency} line${displayedConcurrency === 1 ? '' : 's'} stay active; the first answer goes to the rep and overflow goes to AI.`}</small>
               </label>
               <label>
                 <span>Concurrent lines</span>
-                <select className="admin-select" value={concurrency} onChange={changeConcurrency}>
-                  {[1, 2, 3, 4, 5].map(value => <option key={value} value={value}>{value}</option>)}
+                <select className="admin-select" value={displayedConcurrency} disabled={liveSafetyProfile} onChange={changeConcurrency}>
+                  {concurrencyOptions.map(value => <option key={value} value={value}>{value}</option>)}
                 </select>
-                <small>The session keeps this many eligible calls active whenever capacity is available.</small>
+                <small>{liveSafetyProfile
+                  ? 'Production safety profile: one live line at a time.'
+                  : 'The session keeps this many eligible calls active whenever capacity is available.'}</small>
               </label>
               <label>
                 <span>AI agent profile {operatingMode === 'human' && <small>(optional)</small>}</span>
@@ -358,10 +363,17 @@ export default function DialerControls({ campaignId, campaigns = [], onSelectCam
               </label>}
               {guidedMode && <div className="hybrid-toggle is-locked"><span><strong>Manual takeover</strong><small>Review the live context before joining an AI-led call. Auto Takeover is locked off in guided mode.</small></span></div>}
               <div className="hybrid-concurrency-lock">
-                <strong>{concurrency} line{concurrency === 1 ? '' : 's'}</strong>
+                <strong>{displayedConcurrency} line{displayedConcurrency === 1 ? '' : 's'}</strong>
                 <span>Current session concurrency</span>
               </div>
             </div>
+
+            {liveSafetyProfile && (
+              <div className="hybrid-safety-profile" role="note">
+                <span aria-hidden="true">⌁</span>
+                <div><strong>Production safety profile</strong><p>One live line, one attempt, a 24-hour retry floor, no recording, and no autonomous pricing, payment, or contract authority.</p></div>
+              </div>
+            )}
 
             {!profilesLoading && !profiles.length && (
               <p className="admin-note">Create an AI agent profile in AI Agents before starting the Hybrid Dialer.</p>
@@ -374,8 +386,8 @@ export default function DialerControls({ campaignId, campaigns = [], onSelectCam
               <span className="pill running"><i />Dialer session</span>
               <label className="hybrid-inline-toggle">
                 <span>Lines</span>
-                <select className="admin-select" value={session?.concurrency || concurrency} disabled={action.busy} onChange={changeConcurrency}>
-                  {[1, 2, 3, 4, 5].map(value => <option key={value} value={value}>{value}</option>)}
+                <select className="admin-select" value={displayedConcurrency} disabled={action.busy || liveSafetyProfile} onChange={changeConcurrency}>
+                  {concurrencyOptions.map(value => <option key={value} value={value}>{value}</option>)}
                 </select>
               </label>
               <select className="admin-select" value={session?.operatingMode || operatingMode} disabled={action.busy} onChange={changeOperatingMode}>

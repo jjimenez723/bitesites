@@ -241,6 +241,33 @@ test('AI voice consent is target-level, seller-specific, and fail-closed', () =>
   }).eligible, true);
 });
 
+test('carrier-backed AI also requires an independently resolved pre-dial screening', () => {
+  const target = {
+    phoneE164: '+12015550142', timezone: 'America/New_York', attemptCount: 0,
+    consent: {
+      grantId: 'consent-grant-99', verificationState: 'verified', status: 'active',
+      basis: 'written_opt_in', sellerAccountId: 'bitesites', phoneE164: '+12015550142',
+      evidenceArtifactId: 'artifact-99', disclosureVersion: 'ai-voice-v1',
+      reviewedBy: 'compliance-owner', reviewedAt: new Date('2026-01-01T13:00:00Z'),
+      grantedAt: new Date('2026-01-01T12:00:00Z'), checkedAt: MONDAY_10AM_NY
+    }
+  };
+  const campaign = { ...CAMPAIGN, mode: 'ai', provider: 'twilio', accountId: 'bitesites' };
+  const missing = evaluateCompliance({ target, campaign, now: MONDAY_10AM_NY });
+  assert.equal(missing.eligible, false);
+  assert.ok(missing.reasons.includes('external_screening_missing'));
+
+  const cleared = evaluateCompliance({
+    target, campaign, now: MONDAY_10AM_NY,
+    externalScreening: {
+      eligible: true, reasons: [], id: 'screen_opaque', checkedAt: MONDAY_10AM_NY,
+      expiresAt: new Date('2026-02-01T15:00:00Z'), lineType: 'mobile'
+    }
+  });
+  assert.equal(cleared.eligible, true);
+  assert.equal(cleared.externalScreening.id, 'screen_opaque');
+});
+
 test('the next window opening is inside the window, and never today when today is over', () => {
   const opening = nextWindowOpening(new Date('2026-01-05T23:30:00Z'), 'America/New_York', CAMPAIGN);
   assert.ok(opening, 'an opening should exist within the week');

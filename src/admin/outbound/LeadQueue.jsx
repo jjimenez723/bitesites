@@ -16,8 +16,15 @@ const STATE_GROUPS = {
   done: ['completed', 'do_not_call', 'invalid_number', 'failed', 'cancelled']
 };
 
-export default function LeadQueue({ campaignId, campaigns = [], onSelectCampaign, onOpenProspect, canManage = true }) {
-  const [group, setGroup] = useState('workable');
+export default function LeadQueue({
+  campaignId,
+  campaigns = [],
+  onSelectCampaign,
+  onOpenProspect,
+  canManage = true,
+  initialGroup = 'workable'
+}) {
+  const [group, setGroup] = useState(STATE_GROUPS[initialGroup] ? initialGroup : 'workable');
   const [contactType, setContactType] = useState('all');
   const [search, setSearch] = useState('');
   const [bulk, setBulk] = useState({ action: '', processed: 0, message: '', error: '' });

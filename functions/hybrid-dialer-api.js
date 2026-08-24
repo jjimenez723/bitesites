@@ -33,6 +33,7 @@ import { maintainHybridCapacity } from './hybrid-capacity.js';
 import { hybridOutboundEventsUrl } from './hybrid-urls.js';
 import { validHybridTwilioRequest } from './hybrid-twilio-signature.js';
 import { aiMediaAttachDeadline, failClosedAIMediaAttachment, isAIMediaAttachPending } from './hybrid-media-failsafe.js';
+import { externalDialingAdmission } from './deployment-environment.js';
 
 export const HYBRID_TWILIO_ACCOUNT_SID = defineSecret('TWILIO_ACCOUNT_SID');
 export const HYBRID_TWILIO_AUTH_TOKEN = defineSecret('TWILIO_AUTH_TOKEN');
@@ -343,6 +344,13 @@ export const stopHybridListen = onCall(callOptions, async request => {
 
 export const getHybridVoiceAccessToken = onCall({ ...callOptions, secrets: TWILIO_CONTROL_SECRETS }, async request => {
   const { uid } = await requireDialer(request);
+  // A Twilio browser token can originate a client call independently of the
+  // campaign queue. Do not let staging bypass the server-side dial admission
+  // simply by connecting the browser SDK directly.
+  const dialingAdmission = externalDialingAdmission('twilio');
+  if (!dialingAdmission.allowed) {
+    throw new HttpsError('failed-precondition', `External dialing is disabled (${dialingAdmission.reason}).`);
+  }
   const accountSid = secretValue(HYBRID_TWILIO_ACCOUNT_SID);
   const apiKeySid = secretValue(HYBRID_TWILIO_API_KEY_SID);
   const apiKeySecret = secretValue(HYBRID_TWILIO_API_KEY_SECRET);

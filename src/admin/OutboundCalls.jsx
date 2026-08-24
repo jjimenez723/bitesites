@@ -38,6 +38,16 @@ const TABS = [
   ['settings', 'Settings']
 ];
 
+// Keep the console organized around the work a person is doing, not the
+// collections in Firestore.  The key list above remains the single authority
+// for permissions and deep links; this only supplies visual hierarchy.
+const TAB_GROUPS = [
+  { key: 'operate', label: 'Operate', tabs: ['campaigns', 'queue', 'dialer', 'calendar', 'history'] },
+  { key: 'build', label: 'Build', tabs: ['prospects', 'agents'] },
+  { key: 'monitor', label: 'Monitor', tabs: ['coaching', 'later', 'settings'] },
+  { key: 'admin', label: 'Admin', tabs: ['discovery', 'review', 'consent'] }
+];
+
 const REP_TAB_KEYS = new Set(['queue', 'dialer', 'calendar', 'later', 'history']);
 const MANAGER_TAB_KEYS = new Set([
   'campaigns', 'prospects', 'queue', 'dialer', 'coaching', 'agents',
@@ -53,6 +63,9 @@ export default function OutboundCalls({ role = 'admin', currentUid = '' }) {
       : TABS.filter(([key]) => REP_TAB_KEYS.has(key)),
     [canManage, role]
   );
+  const orderedTabs = useMemo(() => TAB_GROUPS.flatMap(group => group.tabs
+    .map(key => visibleTabs.find(([tabKey]) => tabKey === key))
+    .filter(Boolean)), [visibleTabs]);
   const requestedTab = searchParams.get('tab');
   const initialTab = visibleTabs.some(([key]) => key === requestedTab)
     ? requestedTab
@@ -60,6 +73,7 @@ export default function OutboundCalls({ role = 'admin', currentUid = '' }) {
   const [tab, setTabState] = useState(initialTab);
   const [campaignId, setCampaignId] = useState('');
   const [prospectId, setProspectId] = useState(null);
+  const [queueEntry, setQueueEntry] = useState({ group: 'workable', key: 0 });
   const [config, setConfig] = useState({ data: null, loading: true, error: null });
   const tabRefs = useRef([]);
 
@@ -74,6 +88,11 @@ export default function OutboundCalls({ role = 'admin', currentUid = '' }) {
     updated.set('tab', next);
     setSearchParams(updated, { replace: true });
   }, [searchParams, setSearchParams, visibleTabs]);
+
+  const openQueue = useCallback(group => {
+    setQueueEntry(current => ({ group, key: current.key + 1 }));
+    setTab('queue');
+  }, [setTab]);
 
   useEffect(() => {
     if (requestedTab && visibleTabs.some(([key]) => key === requestedTab) && requestedTab !== tab) {
@@ -101,19 +120,27 @@ export default function OutboundCalls({ role = 'admin', currentUid = '' }) {
   }, [campaigns.rows, campaignId]);
 
   const onTabKeyDown = event => {
-    const index = visibleTabs.findIndex(([key]) => key === tab);
+    const index = orderedTabs.findIndex(([key]) => key === tab);
     if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return;
     event.preventDefault();
     const next = event.key === 'ArrowRight'
-      ? (index + 1) % visibleTabs.length
-      : (index - 1 + visibleTabs.length) % visibleTabs.length;
-    setTab(visibleTabs[next][0]);
+      ? (index + 1) % orderedTabs.length
+      : (index - 1 + orderedTabs.length) % orderedTabs.length;
+    setTab(orderedTabs[next][0]);
     tabRefs.current[next]?.focus();
   };
 
   const sources = config.data?.leadSources || [];
   const providers = config.data?.callingProviders || [];
   const activeCampaign = campaigns.rows.find(entry => entry.id === campaignId) || null;
+  const groupedTabs = useMemo(() => TAB_GROUPS.map(group => ({
+    ...group,
+    tabs: group.tabs
+      .map(key => visibleTabs.find(([tabKey]) => tabKey === key))
+      .filter(Boolean)
+  })).filter(group => group.tabs.length), [visibleTabs]);
+  const campaignStatus = activeCampaign?.status || 'not selected';
+  const campaignCounts = activeCampaign?.counts || {};
 
   return (
     <>
@@ -136,25 +163,73 @@ export default function OutboundCalls({ role = 'admin', currentUid = '' }) {
       </header>
 
       <div className="admin-body">
+        <section className="outbound-workspace-bar" aria-label="Current outbound workspace">
+          <div className="outbound-workspace-copy">
+            <span className="outbound-eyebrow">Current workspace</span>
+            <h2>{activeCampaign?.name || 'Choose a campaign'}</h2>
+            <p>
+              {activeCampaign
+                ? 'Prepare and review call plans before opening the dialer. Starting a campaign only arms its queue; it never places a call by itself.'
+                : 'Select a campaign to see its readiness, queue, dialer, and appointment context in one place.'}
+            </p>
+          </div>
+          <dl className="outbound-workspace-stats">
+            <div>
+              <dt>Status</dt>
+              <dd><span className={`pill ${campaignStatus}`}>{campaignStatus.replace(/_/g, ' ')}</span></dd>
+            </div>
+            <div>
+              <dt>Ready</dt>
+              <dd>{activeCampaign ? Number(campaignCounts.ready) || 0 : '—'}</dd>
+            </div>
+            <div>
+              <dt>Awaiting review</dt>
+              <dd>{activeCampaign ? Number(campaignCounts.pending) || 0 : '—'}</dd>
+            </div>
+          </dl>
+          <div className="outbound-workspace-actions">
+            {activeCampaign && (
+              <button
+                className="btn-admin"
+                type="button"
+                onClick={() => openQueue(Number(campaignCounts.pending) > 0 ? 'pending' : 'workable')}
+              >
+                Review queue
+              </button>
+            )}
+            <button className="btn-admin" type="button" onClick={() => setTab('campaigns')}>Campaigns</button>
+          </div>
+        </section>
+
         <div className="outbound-subnav" role="tablist" aria-label="Outbound sections" onKeyDown={onTabKeyDown}>
-          {visibleTabs.map(([key, label], index) => (
-            <button
-              key={key}
-              type="button"
-              role="tab"
-              id={`outbound-tab-${key}`}
-              aria-selected={tab === key}
-              aria-current={tab === key ? 'page' : undefined}
-              aria-controls="outbound-panel"
-              tabIndex={tab === key ? 0 : -1}
-              ref={element => { tabRefs.current[index] = element; }}
-              onClick={() => setTab(key)}
-            >
-              {label}
-              {key === 'campaigns' && campaigns.rows.length > 0 && (
-                <span className="outbound-subnav-count">{campaigns.rows.length}</span>
-              )}
-            </button>
+          {groupedTabs.map(group => (
+            <div className="outbound-subnav-group" key={group.key} role="presentation">
+              <span className="outbound-subnav-label">{group.label}</span>
+              <div className="outbound-subnav-buttons" role="presentation">
+                {group.tabs.map(([key, label]) => {
+                  const index = orderedTabs.findIndex(([tabKey]) => tabKey === key);
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      role="tab"
+                      id={`outbound-tab-${key}`}
+                      aria-selected={tab === key}
+                      aria-current={tab === key ? 'page' : undefined}
+                      aria-controls="outbound-panel"
+                      tabIndex={tab === key ? 0 : -1}
+                      ref={element => { tabRefs.current[index] = element; }}
+                      onClick={() => key === 'queue' ? openQueue('workable') : setTab(key)}
+                    >
+                      {label}
+                      {key === 'campaigns' && campaigns.rows.length > 0 && (
+                        <span className="outbound-subnav-count">{campaigns.rows.length}</span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           ))}
         </div>
 
@@ -187,7 +262,8 @@ export default function OutboundCalls({ role = 'admin', currentUid = '' }) {
           )}
           {tab === 'review' && <ImportReview onOpen={setProspectId} />}
           {tab === 'queue' && (
-            <LeadQueue campaignId={campaignId} campaigns={campaigns.rows}
+            <LeadQueue key={`${campaignId}:${queueEntry.key}`} campaignId={campaignId} campaigns={campaigns.rows}
+              initialGroup={queueEntry.group}
               canManage={canManage}
               onSelectCampaign={setCampaignId} onOpenProspect={canManage ? setProspectId : null} />
           )}
@@ -196,7 +272,7 @@ export default function OutboundCalls({ role = 'admin', currentUid = '' }) {
               campaignId={campaignId}
               campaigns={campaigns.rows}
               onSelectCampaign={setCampaignId}
-              onOpenQueue={() => setTab('queue')}
+              onOpenQueue={() => openQueue('workable')}
               role={role}
             />
           )}

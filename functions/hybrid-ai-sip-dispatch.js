@@ -17,6 +17,7 @@ import { clean } from './prospect-normalization.js';
 import {
   AI_MEDIA_ATTACH_PENDING, failClosedAIMediaAttachment, isAIMediaAttachExpired
 } from './hybrid-media-failsafe.js';
+import { externalDialingAdmission } from './deployment-environment.js';
 
 const TWILIO_ACCOUNT_SID = defineSecret('TWILIO_ACCOUNT_SID');
 const TWILIO_AUTH_TOKEN = defineSecret('TWILIO_AUTH_TOKEN');
@@ -169,6 +170,19 @@ export const dispatchHybridAIToSip = onDocumentWritten(
       return;
     }
     if (job.status !== 'pending' || job.sipCallSid) return;
+
+    // Defense in depth: a staging project must never create an OpenAI SIP leg,
+    // even if a stale trigger/document bypassed the dialer admission gate.
+    // `terminateFailedAIMedia` only tears down an already-existing carrier leg;
+    // it never originates a new external call.
+    const dialingAdmission = externalDialingAdmission('twilio');
+    if (!dialingAdmission.allowed) {
+      await terminateFailedAIMedia(db, callId, {
+        reason: `external_dialing_disabled:${dialingAdmission.reason}`,
+        source: 'sip_dispatch_environment_gate', realtimeCallId: clean(job.realtimeCallId, 240)
+      });
+      return;
+    }
 
     const projectId = clean(OPENAI_PROJECT_ID.value(), 160);
     if (!projectId) {

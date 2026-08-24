@@ -10,15 +10,57 @@
  * palette in a second file is how two screens in one product stop matching.
  */
 
+.bs-admin .outbound-workspace-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 20px;
+  align-items: center;
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 100% 0, rgba(0, 113, 227, .12), transparent 36%),
+    linear-gradient(145deg, rgba(30, 30, 40, .96), rgba(20, 20, 27, .96));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .03);
+}
+.bs-admin .outbound-workspace-copy { min-width: 0; }
+.bs-admin .outbound-workspace-copy .outbound-eyebrow { margin-bottom: 4px; }
+.bs-admin .outbound-workspace-copy h2 { font-size: clamp(18px, 2vw, 24px); line-height: 1.15; }
+.bs-admin .outbound-workspace-copy p {
+  max-width: 700px; margin-top: 6px; color: var(--ink-3); font-size: 12px; line-height: 1.5;
+}
+.bs-admin .outbound-workspace-stats {
+  display: grid; grid-template-columns: repeat(3, minmax(76px, auto)); gap: 18px;
+  margin: 0; padding: 0 20px; border-left: 1px solid var(--line); border-right: 1px solid var(--line);
+}
+.bs-admin .outbound-workspace-stats div { display: grid; gap: 3px; }
+.bs-admin .outbound-workspace-stats dt {
+  color: var(--ink-3); font-size: 10px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase;
+}
+.bs-admin .outbound-workspace-stats dd {
+  margin: 0; color: var(--ink); font-size: 17px; font-weight: 650; font-variant-numeric: tabular-nums;
+}
+.bs-admin .outbound-workspace-stats .pill { font-size: 10px; white-space: nowrap; }
+.bs-admin .outbound-workspace-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+
 .bs-admin .outbound-subnav {
+  display: flex; gap: 14px 18px; flex-wrap: wrap;
+  padding: 2px 2px 0; margin-bottom: 2px;
+}
+.bs-admin .outbound-subnav-group { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.bs-admin .outbound-subnav-label {
+  color: var(--ink-3); font-size: 10px; font-weight: 750;
+  letter-spacing: .08em; text-transform: uppercase;
+}
+.bs-admin .outbound-subnav-buttons {
   display: flex; gap: 2px; flex-wrap: wrap;
   background: var(--surface-2); border: 1px solid var(--line);
-  border-radius: 12px; padding: 4px; margin-bottom: 18px;
+  border-radius: 10px; padding: 3px;
 }
 .bs-admin .outbound-subnav button {
   border: 0; background: transparent; color: var(--ink-3);
-  padding: 7px 14px; border-radius: 9px; cursor: pointer;
-  font-size: 12.5px; font-weight: 600; transition: .15s;
+  padding: 6px 10px; border-radius: 7px; cursor: pointer;
+  font-size: 12px; font-weight: 600; transition: background .15s, color .15s;
 }
 .bs-admin .outbound-subnav button:hover { color: var(--ink-2); }
 .bs-admin .outbound-subnav button[aria-current='page'] { background: var(--surface-3); color: var(--ink); }
@@ -226,9 +268,19 @@
 }
 
 @media (max-width: 1080px) {
+  .bs-admin .outbound-workspace-bar { grid-template-columns: minmax(0, 1fr) auto; }
+  .bs-admin .outbound-workspace-actions { grid-column: 1 / -1; justify-content: flex-start; }
   .bs-admin .outbound-live { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 760px) {
+  .bs-admin .outbound-workspace-bar { display: flex; flex-direction: column; align-items: stretch; gap: 14px; padding: 16px; }
+  .bs-admin .outbound-workspace-stats { padding: 13px 0 0; border: 0; border-top: 1px solid var(--line); }
+  .bs-admin .outbound-workspace-actions { justify-content: stretch; }
+  .bs-admin .outbound-workspace-actions .btn-admin { flex: 1 1 0; justify-content: center; }
+  .bs-admin .outbound-subnav { display: grid; gap: 10px; }
+  .bs-admin .outbound-subnav-group { display: grid; gap: 4px; }
+  .bs-admin .outbound-subnav-buttons { overflow-x: auto; flex-wrap: nowrap; scrollbar-width: thin; }
+  .bs-admin .outbound-subnav button { white-space: nowrap; }
   .bs-admin .outbound-form-grid { grid-template-columns: minmax(0, 1fr); }
   .bs-admin .outbound-form-grid label.full { grid-column: auto; }
 }
