@@ -38,6 +38,9 @@ import {
 import { clean, normalizeConsent, normalizePhone, resolveTimezone, deterministicId } from './prospect-normalization.js';
 import { normalizeOfferTrackKeys } from './offer-tracks.js';
 import { sealCallPlanSnapshot } from './call-plan.js';
+import {
+  assertCampaignMayDial, campaignSafetyLockEngaged, safetyStopCampaignSessions, tripCampaignCircuitBreaker
+} from './campaign-circuit-breaker.js';
 import { warmSidebandForSession } from './hybrid-sideband-warmup.js';
 import { isSuppressed, suppressNumber } from './inbound-compliance.js';
 import {
@@ -246,6 +249,12 @@ export async function updateCampaign(db, campaignId, input) {
 }
 
 /**
+ * The statuses that put a campaign back on the phone. Only these are refused
+ * while the safety circuit breaker holds an unresolved critical incident.
+ */
+const DIALING_STATUSES = new Set(['running']);
+
+/**
  * Campaign lifecycle. `pause` is the emergency stop: it flips the status, and
  * every entry point below re-reads it, so an in-flight session stops recruiting
  * new targets within one poll rather than at the end of its list.
@@ -253,17 +262,28 @@ export async function updateCampaign(db, campaignId, input) {
 export async function setCampaignStatus(db, campaignId, status, { actor = '' } = {}) {
   if (!CAMPAIGN_STATUSES.includes(status)) throw new Error(`Unknown campaign status: ${status}`);
   const ref = db.doc(`outboundCampaigns/${campaignId}`);
-  const snapshot = await ref.get();
-  if (!snapshot.exists) throw new Error('Campaign not found');
 
-  const update = { status, updatedAt: FieldValue.serverTimestamp() };
-  if (status === 'running') update.startedAt = snapshot.get('startedAt') || FieldValue.serverTimestamp();
-  if (status === 'paused') update.pausedAt = FieldValue.serverTimestamp();
-  if (status === 'completed' || status === 'cancelled') update.completedAt = FieldValue.serverTimestamp();
-  await ref.set(update, { merge: true });
+  // Transactional because of the safety lock: reading the lock and writing
+  // `running` as two separate operations leaves a window in which a breaker
+  // trip lands between them and is immediately overwritten by the resume.
+  await db.runTransaction(async tx => {
+    const snapshot = await tx.get(ref);
+    if (!snapshot.exists) throw new Error('Campaign not found');
 
-  await db.collection(`outboundCampaigns/${campaignId}/events`).doc().set({
-    type: 'status_change', status, actor: clean(actor, 128), at: FieldValue.serverTimestamp()
+    // The only transition the breaker forbids. Pausing, cancelling or closing
+    // a halted campaign stays available: an operator must always be able to
+    // move it further from the phone, never back onto it.
+    if (DIALING_STATUSES.has(status)) assertCampaignMayDial(snapshot.data() || {});
+
+    const update = { status, updatedAt: FieldValue.serverTimestamp() };
+    if (status === 'running') update.startedAt = snapshot.get('startedAt') || FieldValue.serverTimestamp();
+    if (status === 'paused') update.pausedAt = FieldValue.serverTimestamp();
+    if (status === 'completed' || status === 'cancelled') update.completedAt = FieldValue.serverTimestamp();
+    tx.set(ref, update, { merge: true });
+
+    tx.create(db.collection(`outboundCampaigns/${campaignId}/events`).doc(), {
+      type: 'status_change', status, actor: clean(actor, 128), at: FieldValue.serverTimestamp()
+    });
   });
 
   // Cancelling releases every lock; an operator who hits cancel expects the
@@ -370,7 +390,27 @@ async function rejectedForAccountMismatch(db, { target, campaign, campaignAccoun
     + `${campaign.id} serves "${verdict.expected}" — not dialled`
   );
   rejected.push({ targetId: target.id, reason: 'account_mismatch' });
-  return true;
+
+  // Reaching the wrong seller's contact is not a per-target data fault to log
+  // and step past. The campaign's account binding is wrong, so the next target
+  // is queued to repeat it. Halt the campaign, not just this leg.
+  const breaker = await tripCampaignCircuitBreaker(db, {
+    campaignId: campaign.id,
+    accountId: verdict.expected,
+    reason: 'account_boundary_violation',
+    source: 'outbound_dialer',
+    detail: `target resolved to account "${verdict.found || 'unresolved'}"`,
+    targetId: target.id,
+    now
+  }).catch(error => {
+    // Never let the halt's own failure resurrect the dial loop: the caller
+    // still treats this target as rejected, and the campaign stays suspect.
+    console.error(`[outbound] could not halt campaign ${campaign.id}: ${error?.message || error}`);
+    return { engaged: false, failed: true };
+  });
+
+  return { rejected: true, halted: breaker.engaged || breaker.idempotent || breaker.failed || false,
+    incidentId: breaker.incidentId || '' };
 }
 
 /**
@@ -820,6 +860,10 @@ export async function startDialerSession(db, { campaignId, userUid, mode, concur
   if (campaign.status === 'paused' || campaign.status === 'cancelled') {
     throw new Error(`Campaign is ${campaign.status}`);
   }
+  // Defence in depth. The breaker pauses the campaign, so the check above
+  // normally catches this — but a stale document, or a status written by an
+  // older build, must not be able to open a session on a halted campaign.
+  assertCampaignMayDial(campaign);
 
   const operatingLimits = resolveCampaignOperatingLimits({ ...campaign, concurrency });
   const requested = mode === 'parallel' ? operatingLimits.concurrency : 1;
@@ -887,6 +931,11 @@ export async function dialNext(db, sessionId, {
   const campaignSnapshot = await db.doc(`outboundCampaigns/${session.campaignId}`).get();
   if (!campaignSnapshot.exists) throw new Error('Campaign not found');
   const campaign = { id: session.campaignId, ...campaignSnapshot.data() };
+  // Checked before the status so a halted campaign reports why it stopped
+  // rather than the generic pause the breaker wrote on its way past.
+  if (campaignSafetyLockEngaged(campaign)) {
+    return { started: [], reason: 'campaign_safety_lock', incidentId: clean(campaign.safetyLock?.incidentId, 200) };
+  }
   if (campaign.status === 'paused' || campaign.status === 'cancelled') {
     return { started: [], reason: `campaign_${campaign.status}` };
   }
@@ -943,7 +992,18 @@ export async function dialNext(db, sessionId, {
     if (!claim.claimed) { rejected.push({ targetId: candidate.id, reason: claim.reason }); continue; }
     const target = claim.target;
 
-    if (await rejectedForAccountMismatch(db, { target, campaign, campaignAccountId, now, rejected })) continue;
+    const mismatch = await rejectedForAccountMismatch(db, { target, campaign, campaignAccountId, now, rejected });
+    if (mismatch.halted) {
+      // Every remaining candidate in this slice belongs to the same mis-bound
+      // campaign, so hand the claimed ones back rather than working through
+      // them, and end the session that was about to dial them.
+      for (const claimed of claimedTargets) await releaseTarget(db, claimed.id, { state: 'ready' });
+      await safetyStopCampaignSessions(db, session.campaignId, {
+        reason: 'account_boundary_violation', now, providerConfig
+      });
+      return { started: [], rejected, reason: 'campaign_safety_lock', incidentId: mismatch.incidentId };
+    }
+    if (mismatch.rejected) continue;
 
     const contact = await loadContactForTarget(db, target);
     if (!contact) {
@@ -1107,6 +1167,7 @@ export async function runAICampaignSlice(db, campaignId, {
   const campaignSnapshot = await db.doc(`outboundCampaigns/${campaignId}`).get();
   if (!campaignSnapshot.exists) throw new Error('Campaign not found');
   const campaign = { id: campaignId, ...campaignSnapshot.data() };
+  if (campaignSafetyLockEngaged(campaign)) return { started: [], reason: 'campaign_safety_lock' };
   if (campaign.status !== 'running') return { started: [], reason: `campaign_${campaign.status}` };
   if (campaign.mode !== 'ai') return { started: [], reason: 'not_an_ai_campaign' };
   const dialingAdmission = externalDialingAdmission(campaign.provider);
@@ -1146,7 +1207,16 @@ export async function runAICampaignSlice(db, campaignId, {
     if (!claim.claimed) { rejected.push({ targetId: candidate.id, reason: claim.reason }); continue; }
     const target = claim.target;
 
-    if (await rejectedForAccountMismatch(db, { target, campaign, campaignAccountId, now, rejected })) continue;
+    const mismatch = await rejectedForAccountMismatch(db, { target, campaign, campaignAccountId, now, rejected });
+    if (mismatch.halted) {
+      // Ends this slice's own `ai_` session too, which cancels the legs it
+      // already started. A halted campaign keeps no live calls.
+      await safetyStopCampaignSessions(db, campaignId, {
+        reason: 'account_boundary_violation', now, providerConfig
+      });
+      return { started, rejected, reason: 'campaign_safety_lock', incidentId: mismatch.incidentId };
+    }
+    if (mismatch.rejected) continue;
 
     const contact = await loadContactForTarget(db, target);
     if (!contact) {

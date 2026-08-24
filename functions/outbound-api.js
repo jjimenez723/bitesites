@@ -32,6 +32,7 @@ import {
   assertAccountAccess, assertDocumentAccountAccess, assertOutboundAccess,
   resolveAccountAccess
 } from './account-access.js';
+import { listCampaignIncidents, resolveCampaignIncident } from './campaign-circuit-breaker.js';
 import { csvToRecords } from './providers/lead-sources/csv-source.js';
 import { promoteProspect } from './prospect-conversion.js';
 import {
@@ -579,6 +580,39 @@ export const revokeConsentGrantCall = onCall(callOptions, async request => {
   try {
     return await revokeConsentGrant(db, requireId(request.data?.grantId, 'grant id'), {
       reason: str(request.data?.reason, 1000), reviewerUid: uid, actorUid: uid, actorEmail: email
+    });
+  } catch (error) {
+    const code = /not found/i.test(String(error?.message)) ? 'not-found' : 'failed-precondition';
+    throw new HttpsError(code, clean(error?.message, 300));
+  }
+});
+
+// ------------------------------------------------- campaign circuit breaker
+
+// Readable by anyone who can read the campaign: an operator staring at a
+// campaign that will not start is entitled to know which incident is holding
+// it, without an admin having to relay the reason.
+export const listCampaignIncidentsCall = onCall(callOptions, async request => {
+  const { db, access } = await requireOutboundStaff(request);
+  const campaignId = requireId(request.data?.campaignId, 'campaign id');
+  await requireScopedCampaign(db, access, campaignId);
+  const incidents = await listCampaignIncidents(db, campaignId, {
+    status: str(request.data?.status, 20), limit: Number(request.data?.limit) || 50
+  });
+  return { incidents };
+});
+
+// Clearing a safety halt is the narrower privilege, gated like the consent
+// ledger rather than like dialer operation: an outbound manager runs campaigns,
+// but only an owner/admin may attest that a critical failure was dealt with.
+// Resolving still does not restart anything — see resolveCampaignIncident.
+export const resolveCampaignIncidentCall = onCall(callOptions, async request => {
+  const { db, uid, email } = await requireConsentReviewer(request);
+  try {
+    return await resolveCampaignIncident(db, {
+      incidentId: requireId(request.data?.incidentId, 'incident id'),
+      remediation: str(request.data?.remediation, 2000),
+      actor: email, actorUid: uid
     });
   } catch (error) {
     const code = /not found/i.test(String(error?.message)) ? 'not-found' : 'failed-precondition';

@@ -674,6 +674,34 @@
           "order": "ASCENDING"
         }
       ]
+    },
+    {
+      "//": "Open incidents holding a campaign closed, newest first.",
+      "collectionGroup": "campaignIncidents",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "campaignId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "detectedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "//": "Full circuit-breaker history for one campaign.",
+      "collectionGroup": "campaignIncidents",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "campaignId", "order": "ASCENDING" },
+        { "fieldPath": "detectedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "//": "Live sessions the circuit breaker has to safety-stop.",
+      "collectionGroup": "dialerSessions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "campaignId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": [

@@ -14,7 +14,7 @@ remain paused until every external-canary gate is evidenced and signed off.
 | Initial AI authority | Appointment setter, not autonomous seller | The AI may disclose, qualify, answer from approved knowledge, hand off, and book a confirmed next step. Pricing, discounts, binding acceptance, contracts, and payment are hard-disabled. |
 | Recording | Continue unrecorded | Campaign sanitization and Twilio call creation keep recording off. There is no “record first, ask later” path. |
 | Approval owner | BiteSites owner initially; representatives later | Consent grants and research approval remain admin-only. Role/account scopes are required before additional representatives receive access. |
-| Stop policy | Pause immediately on a critical event | New dialing fails closed. Cross-seller access, missing DNC persistence, unsupported commercial commitments, uncontrolled connected calls, or false tool-result claims exhaust the rollout error budget. |
+| Stop policy | Pause immediately on a critical event | New dialing fails closed, and the server owns the stop: a critical incident pauses the campaign in the same transaction that records it, ends live sessions, and blocks resume until an admin resolves it with a stated corrective action. Cross-seller access, missing DNC persistence, unsupported commercial commitments, uncontrolled connected calls, or false tool-result claims exhaust the rollout error budget. |
 | Stone Bellisimo motion | Countertop qualification; showroom visit is the close | The caller cannot quote stone/project pricing. Stone attribution uses the owner-confirmed 10% commission rate. |
 | Fine Line motion | Construction, transformation, and mitigation/restoration qualification | The caller books an assessment, does not quote work, promise emergency response, diagnose damage, or claim insurance coverage. Life-safety situations stop the sales flow. |
 | BiteSites privacy | Private business address must never be publicized | The client-importable seller registry and runtime contain no BiteSites address. |
@@ -64,7 +64,7 @@ state, or legal reliance.
 
 | Stage | Required evidence | Promotion authority |
 |---|---|---|
-| Offline backend | Full test suite; zero critical seller/tool/policy evaluation failures | Engineering owner |
+| Offline backend | Full test suite; zero critical seller/tool/policy evaluation failures; circuit breaker proven to halt, refuse resume and require admin remediation | Engineering owner |
 | Non-dialing staging | Separate Firebase project; no production bindings; external-dialing gate proven; deployed callable/UI smoke test | Engineering owner after billing/deploy authorization |
 | Internal carrier rehearsal | Ten specifically consented internal calls; 100% transcript/event review; no critical failures; provider retry/teardown evidence | Business owner |
 | External canary | Counsel sign-off; fresh DNC/reassigned/line checks; verified caller identity; calendars and human handoff staffed; budget alerts | Business owner, explicit 25/day authorization |

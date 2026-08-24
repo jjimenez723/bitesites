@@ -2642,6 +2642,10 @@ export {
   issueConsentGrantCall,
   revokeConsentGrantCall,
 
+  // Campaign safety circuit breaker.
+  listCampaignIncidentsCall,
+  resolveCampaignIncidentCall,
+
   // Dialing.
   startPowerDialerSession,
   startParallelDialerSession,

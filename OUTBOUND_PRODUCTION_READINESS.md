@@ -44,6 +44,7 @@ Nothing in this section has been deployed by this workstream.
 | Follow-up | Disabled in the launch profiles. The backend requires explicit in-call channel confirmation, resolves the recipient from the current contact record, and reports only “queued,” never “sent.” |
 | Booking | Firestore owns holds and attribution; Google Calendar owns live availability and events. Configured calendars are checked immediately before commit and fail closed when unavailable. Confirmed bookings invite the attendee once. |
 | AI media | A 20-second attachment deadline and durable reconciler end the PSTN and Realtime legs if no valid controller attaches. |
+| Circuit breaker | A critical incident pauses the campaign, records an immutable reason and safety-stops live sessions. Resume is refused until an admin resolves every open incident with a stated corrective action, and resolving returns the campaign to *paused* rather than to dialing. Lost AI media control and account-boundary violations trip it. |
 | Operating limits | Every non-mock provider is capped server-side at one live leg, one attempt, a 24-hour minimum retry interval, and a 10-minute call limit, including stale campaign documents. |
 | Pre-dial screening | Carrier-backed AI requires a fresh, seller/number-bound server result for entity and number suppression, line type, and reassigned-number status. Missing, stale, unknown, mismatched, or unavailable evidence fails closed. |
 | Provider control | Autonomous GoHighLevel AI is disabled because its external workflow cannot enforce the signed runtime. Hybrid Twilio is the controlled path. |
@@ -123,7 +124,11 @@ prospect is called:
    rate alone.
 
 One critical event pauses new dialing immediately. Resume requires a named
-owner review and a recorded corrective action.
+owner review and a recorded corrective action. This is enforced by the server
+rather than by operator discipline: `functions/campaign-circuit-breaker.js`
+writes the incident and the pause in one transaction, `setCampaignStatus`
+refuses `running` while an incident is open, and clearing the last incident
+lifts the lock without restarting anything.
 
 ## External launch blockers
 
@@ -185,7 +190,9 @@ without competing with the main action.
 
 ## Deployment sequence
 
-1. Review and commit the local implementation.
+1. Review and commit the local implementation. The `campaignIncidents` and
+   `dialerSessions` composite indexes added for the circuit breaker must be
+   built before the breaker can list or safety-stop under load.
 2. Authorize staging billing and deploy the non-dialing staging stack.
 3. Pass staging callable/UI smoke tests without production credentials.
 4. Deploy rules and indexes first; wait for index readiness.

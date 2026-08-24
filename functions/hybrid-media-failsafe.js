@@ -5,6 +5,7 @@
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { clean } from './prospect-normalization.js';
 import { recordCallAuditEvent } from './hybrid-call-orchestration.js';
+import { engageCampaignSafetyLock, safetyStopCampaignSessions } from './campaign-circuit-breaker.js';
 
 // The SIP dispatch, OpenAI accept and sideband connection all happen after a
 // human has answered.  Twenty seconds is deliberately shorter than a natural
@@ -91,6 +92,24 @@ export async function failClosedAIMediaAttachment(db, callId, {
     const at = stamp(now);
     const failure = clean(reason, 300) || 'media_attachment_failed';
     const nextRevision = Math.max(0, Number(call?.control?.revision) || 0) + 1;
+
+    // Halt the whole campaign here, in the same transaction that makes this
+    // call terminal. Losing control of a live carrier leg is a fault in the AI
+    // control plane rather than in this prospect, so the next target would be
+    // dialled straight back into it. This call performs reads, which Firestore
+    // requires to precede every write below.
+    const breaker = await engageCampaignSafetyLock(tx, db, {
+      campaignId: clean(call.campaignId, 200),
+      accountId: clean(call.accountId, 100),
+      reason: 'ai_media_control_failure',
+      source: clean(source, 100) || 'media_failsafe',
+      detail: failure,
+      callId: safeCallId,
+      sessionId: clean(call.sessionId, 200),
+      targetId: clean(call.targetId, 200),
+      now
+    });
+
     tx.set(callRef, {
       status: 'completed', endedAt: at, operator: 'none', disposition: 'ai_media_setup_failed',
       safeTerminalDisposition: 'ai_media_setup_failed',
@@ -122,14 +141,28 @@ export async function failClosedAIMediaAttachment(db, callId, {
       ok: true, idempotent: false, shouldTerminatePstn: Boolean(clean(call.providerCallId, 200)),
       shouldTerminateRealtime: Boolean(resolvedRealtimeId),
       providerCallId: clean(call.providerCallId, 200), realtimeCallId: resolvedRealtimeId,
-      sessionId: clean(call.sessionId, 200), campaignId: clean(call.campaignId, 200), failure
+      sessionId: clean(call.sessionId, 200), campaignId: clean(call.campaignId, 200), failure, breaker
     };
   });
 
   if (result.ok && !result.idempotent) {
     await recordCallAuditEvent(db, 'ai_media_attachment_failed', {
       callId: safeCallId, sessionId: result.sessionId, campaignId: result.campaignId,
-      actorType: 'system', actorId: clean(source, 100), metadata: { reason: result.failure || reason }, now
+      actorType: 'system', actorId: clean(source, 100),
+      metadata: { reason: result.failure || reason, incidentId: result.breaker?.incidentId || '' }, now
+    });
+  }
+
+  // The pause is already durable, so ending the live sessions is cleanup rather
+  // than the safety guarantee. It runs outside the transaction because it talks
+  // to the carrier, and it must never mask the fail-closed result the caller
+  // still needs in order to tear this leg down.
+  if (result.breaker?.engaged) {
+    result.breaker.sessions = await safetyStopCampaignSessions(db, result.campaignId, {
+      reason: 'ai_media_control_failure', now
+    }).catch(error => {
+      console.error(`[media-failsafe] could not stop sessions on ${result.campaignId}: ${error?.message || error}`);
+      return { stopped: [], failed: [] };
     });
   }
   return result;

@@ -655,6 +655,13 @@ await testEnv.withSecurityRulesDisabled(async context => {
   await setDoc(doc(db, 'consentEvidenceCandidates', 'candidate_1'), { status: 'pending_review', phoneE164: '+12015550142' });
   await setDoc(doc(db, 'consentGrants', 'grant_1'), { status: 'active', phoneE164: '+12015550142' });
   await setDoc(doc(db, 'consentGrantEvents', 'grant_1', 'events', 'issued'), { type: 'issued', at: new Date() });
+  await setDoc(doc(db, 'campaignIncidents', 'incident_1'), {
+    accountId: 'bitesites', campaignId: 'camp1', reason: 'ai_media_control_failure',
+    severity: 'critical', status: 'open', detectedAt: new Date()
+  });
+  await setDoc(doc(db, 'campaignIncidentEvents', 'incident_1', 'events', 'opened'), {
+    type: 'opened', at: new Date()
+  });
   await setDoc(doc(db, 'preDialScreenings', 'screen_1'), {
     sellerAccountId: 'bitesites', phoneHash: 'hash', status: 'cleared', checkedAt: new Date()
   });
@@ -833,6 +840,33 @@ await it('no browser can forge, approve, revoke, or rewrite a consent grant', as
   await assertFails(setDoc(doc(adminByDoc, 'consentEvidenceCandidates', 'candidate_forged'), { status: 'pending_review' }));
   await assertFails(updateDoc(doc(adminByDoc, 'consentGrants', 'grant_1'), { status: 'revoked' }));
   await assertFails(setDoc(doc(adminByDoc, 'consentGrantEvents', 'grant_1', 'events', 'revoked'), { type: 'revoked' }));
+});
+
+describe('campaign circuit breaker — explainable to operators, server-write only');
+
+await it('an operator scoped to the seller can see why the campaign is halted', async () => {
+  await assertSucceeds(getDoc(doc(adminByDoc, 'campaignIncidents', 'incident_1')));
+  // Scoped to bitesites by its roles doc: the operator staring at a campaign
+  // that will not start is entitled to the reason without asking an admin.
+  await assertSucceeds(getDoc(doc(staleClaimRep, 'campaignIncidents', 'incident_1')));
+  // An unscoped outbound role still fails closed, exactly as it does for the
+  // campaign, target and session records the incident refers to.
+  await assertFails(getDoc(doc(outboundRep, 'campaignIncidents', 'incident_1')));
+  await assertFails(getDoc(doc(anon, 'campaignIncidents', 'incident_1')));
+});
+
+await it('no browser can clear a safety halt or forge an incident', async () => {
+  // The whole point of the breaker is that clearing it takes a server callable
+  // with an admin behind it. A browser that could write here could resolve its
+  // own halt, or manufacture one against a campaign it merely dislikes.
+  await assertFails(updateDoc(doc(adminByDoc, 'campaignIncidents', 'incident_1'), { status: 'resolved' }));
+  await assertFails(setDoc(doc(adminByDoc, 'campaignIncidents', 'incident_forged'), { status: 'open' }));
+  await assertFails(setDoc(doc(adminByDoc, 'campaignIncidentEvents', 'incident_1', 'events', 'resolved'), { type: 'resolved' }));
+});
+
+await it('the incident event ledger stays admin-only', async () => {
+  await assertSucceeds(getDoc(doc(adminByDoc, 'campaignIncidentEvents', 'incident_1', 'events', 'opened')));
+  await assertFails(getDoc(doc(outboundRep, 'campaignIncidentEvents', 'incident_1', 'events', 'opened')));
 });
 
 describe('pre-dial screening ledger — admin-read, server-write');
