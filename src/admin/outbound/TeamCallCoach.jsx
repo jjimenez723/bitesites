@@ -4,8 +4,8 @@ import { formatDuration, formatPhone, QueryState } from './SourceBadge';
 import { joinHybridCall, leaveHybridVoice } from './voice-client';
 import LiveCallWorkspace from './LiveCallWorkspace';
 
-export default function TeamCallCoach() {
-  const calls = useTeamLiveCalls();
+export default function TeamCallCoach({ accountIds = [], allAccounts = false }) {
+  const calls = useTeamLiveCalls(accountIds, allAccounts);
   const action = useAction();
   const [workspaceCallId, setWorkspaceCallId] = useState('');
   const call = calls.rows.find(entry => entry.id === workspaceCallId) || null;

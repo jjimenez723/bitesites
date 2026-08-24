@@ -28,9 +28,11 @@ import { applyDisposition, cancelLosingLegs, markDoNotCall } from './outbound-ca
 import { getCallingProvider } from './providers/calling/index.js';
 import { clean } from './prospect-normalization.js';
 import { LEGACY_ACCOUNT_ID, requireAccountId, readAccountId } from './accounts.js';
+import { assertAccountAccess, assertDocumentAccountAccess, assertOutboundAccess, normalizeAccountScope, resolveAccountAccess } from './account-access.js';
 import { maintainHybridCapacity } from './hybrid-capacity.js';
 import { hybridOutboundEventsUrl } from './hybrid-urls.js';
 import { validHybridTwilioRequest } from './hybrid-twilio-signature.js';
+import { aiMediaAttachDeadline, failClosedAIMediaAttachment, isAIMediaAttachPending } from './hybrid-media-failsafe.js';
 
 export const HYBRID_TWILIO_ACCOUNT_SID = defineSecret('TWILIO_ACCOUNT_SID');
 export const HYBRID_TWILIO_AUTH_TOKEN = defineSecret('TWILIO_AUTH_TOKEN');
@@ -52,6 +54,77 @@ const secretValue = secret => {
   try { return secret.value() || ''; } catch { return ''; }
 };
 
+function hybridTwilioProvider(authToken = secretValue(HYBRID_TWILIO_AUTH_TOKEN)) {
+  return getCallingProvider('twilio', {
+    accountSid: secretValue(HYBRID_TWILIO_ACCOUNT_SID),
+    authToken,
+    twimlAppSid: secretValue(HYBRID_TWILIO_TWIML_APP_SID),
+    statusCallbackUrl: '',
+    hybridV2: true
+  });
+}
+
+/** End the prospect's PSTN leg after the state machine has failed closed. */
+async function endFailedAIMediaPstn(db, callId, {
+  reason, source, realtimeCallId = '', provider = null, now = new Date()
+} = {}) {
+  const result = await failClosedAIMediaAttachment(db, callId, { reason, source, realtimeCallId, now });
+  if (!result.ok) return result;
+  if (result.shouldTerminateRealtime && result.realtimeCallId) {
+    const apiKey = secretValue(HYBRID_OPENAI_API_KEY);
+    if (apiKey) {
+      try {
+        const response = await fetch(`https://api.openai.com/v1/realtime/calls/${encodeURIComponent(result.realtimeCallId)}/hangup`, {
+          method: 'POST', headers: { Authorization: `Bearer ${apiKey}` }, signal: AbortSignal.timeout(5000)
+        });
+        await db.doc(`calls/${callId}`).set({
+          'media.realtimeHangupAttemptedAt': FieldValue.serverTimestamp(),
+          'media.realtimeHangupFailed': !response.ok,
+          ...(response.ok ? { 'media.realtimeHangupConfirmedAt': FieldValue.serverTimestamp() } : {}),
+          updatedAt: FieldValue.serverTimestamp()
+        }, { merge: true });
+      } catch {
+        await db.doc(`calls/${callId}`).set({
+          'media.realtimeHangupAttemptedAt': FieldValue.serverTimestamp(),
+          'media.realtimeHangupFailed': true, updatedAt: FieldValue.serverTimestamp()
+        }, { merge: true }).catch(() => {});
+      }
+    }
+  }
+  if (!result.shouldTerminatePstn) return result;
+  try {
+    await (provider || hybridTwilioProvider()).endCall(result.providerCallId);
+    await db.doc(`calls/${callId}`).set({
+      'media.pstnEndRequestedAt': FieldValue.serverTimestamp(),
+      'media.pstnEndReason': 'ai_media_setup_failed',
+      updatedAt: FieldValue.serverTimestamp()
+    }, { merge: true });
+  } catch (error) {
+    // The terminal state and audit are durable even when a carrier timeout
+    // leaves the REST outcome unknown.  The dispatcher/reaper will retry this
+    // bounded end request rather than ever restoring AI control.
+    await db.doc(`calls/${callId}`).set({
+      'media.pstnEndError': clean(error?.message, 300),
+      'media.pstnEndLastAttemptAt': FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp()
+    }, { merge: true }).catch(() => {});
+  }
+  return result;
+}
+
+async function rejectOpenAIRealtimeCall(realtimeCallId, { statusCode = 486 } = {}) {
+  const apiKey = secretValue(HYBRID_OPENAI_API_KEY);
+  if (!apiKey || !realtimeCallId) return { attempted: false };
+  try {
+    await fetch(`https://api.openai.com/v1/realtime/calls/${encodeURIComponent(realtimeCallId)}/reject`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status_code: statusCode }), signal: AbortSignal.timeout(5000)
+    });
+    return { attempted: true };
+  } catch { return { attempted: true, failed: true }; }
+}
+
 const callOptions = { enforceAppCheck: false, maxInstances: 20 };
 const id = (value, label = 'id') => {
   const result = clean(value, 200);
@@ -59,43 +132,42 @@ const id = (value, label = 'id') => {
   return result;
 };
 
-async function callerRole(db, auth) {
-  if (auth?.token?.role) return clean(auth.token.role, 80);
-  const snapshot = await db.doc(`roles/${auth.uid}`).get();
-  return snapshot.exists ? clean(snapshot.get('role'), 80) : '';
-}
-
 async function requireDialer(request, { manageAgents = false } = {}) {
   if (!request.auth?.uid) throw new HttpsError('unauthenticated', 'Sign in first.');
   const db = getFirestore();
-  const role = await callerRole(db, request.auth);
-  const dialerRoles = new Set(['admin', 'outbound_rep', 'outbound_manager']);
-  if (!dialerRoles.has(role)) throw new HttpsError('permission-denied', 'This account cannot use the outbound dialer.');
-  if (manageAgents && !['admin', 'outbound_manager'].includes(role)) {
-    throw new HttpsError('permission-denied', 'This account cannot manage AI agent profiles.');
+  try {
+    const access = assertOutboundAccess(await resolveAccountAccess(db, request.auth), { manage: manageAgents });
+    return { db, uid: request.auth.uid, email: clean(request.auth.token?.email, 200), role: access.role, access };
+  } catch (error) {
+    throw new HttpsError('permission-denied', clean(error.message, 300));
   }
-  return { db, uid: request.auth.uid, email: clean(request.auth.token?.email, 200), role };
 }
 
-async function ownedSession(db, sessionId, uid) {
+async function ownedSession(db, sessionId, uid, access) {
   const snapshot = await db.doc(`dialerSessions/${sessionId}`).get();
   if (!snapshot.exists) throw new HttpsError('not-found', 'Session not found.');
+  try { assertDocumentAccountAccess(access, snapshot.data() || {}, { resource: 'dialer session' }); }
+  catch (error) { throw new HttpsError('permission-denied', clean(error.message, 300)); }
   if (snapshot.get('userUid') !== uid) throw new HttpsError('permission-denied', 'That dialer session belongs to another rep.');
   return { id: sessionId, ...snapshot.data() };
 }
 
-async function ownedCall(db, callId, uid) {
+async function ownedCall(db, callId, uid, access) {
   const snapshot = await db.doc(`calls/${callId}`).get();
   if (!snapshot.exists) throw new HttpsError('not-found', 'Call not found.');
   const call = { id: callId, ...snapshot.data() };
-  await ownedSession(db, call.sessionId, uid);
+  try { assertDocumentAccountAccess(access, call, { resource: 'call' }); }
+  catch (error) { throw new HttpsError('permission-denied', clean(error.message, 300)); }
+  await ownedSession(db, call.sessionId, uid, access);
   return call;
 }
 
-async function transferCall(db, callId, uid) {
+async function transferCall(db, callId, uid, access) {
   const snapshot = await db.doc(`calls/${callId}`).get();
   if (!snapshot.exists) throw new HttpsError('not-found', 'Call not found.');
   const call = { id: callId, ...snapshot.data() };
+  try { assertDocumentAccountAccess(access, call, { resource: 'call' }); }
+  catch (error) { throw new HttpsError('permission-denied', clean(error.message, 300)); }
   const transfer = call.staffTransfer || {};
   if (![transfer.fromUid, transfer.toUid].includes(uid)) {
     throw new HttpsError('permission-denied', 'This staff handoff does not belong to you.');
@@ -110,6 +182,7 @@ async function staffIdentity(db, uid, fallback = '') {
   return {
     uid,
     role: clean(roleSnapshot.get('role'), 80),
+    accountIds: normalizeAccountScope(roleSnapshot.get('accountIds')),
     email: clean(userSnapshot.get('email') || roleSnapshot.get('email'), 200),
     name: clean(userSnapshot.get('displayName'), 120)
       || clean(userSnapshot.get('email') || roleSnapshot.get('email'), 200).split('@')[0]
@@ -171,11 +244,14 @@ async function findCallByProviderSid(db, providerCallId) {
   return snapshot.empty ? null : { id: snapshot.docs[0].id, ...snapshot.docs[0].data() };
 }
 
-async function loadKnowledgeChunks(db, knowledgeBaseIds = []) {
+async function loadKnowledgeChunks(db, knowledgeBaseIds = [], { accountId = '' } = {}) {
   const chunks = [];
   for (const kbId of knowledgeBaseIds.slice(0, 8)) {
     const kbSnapshot = await db.doc(`knowledgeBases/${kbId}`).get();
     if (!kbSnapshot.exists || kbSnapshot.get('status') !== 'active') continue;
+    // A profile must never retrieve another seller's sales material merely
+    // because someone copied a knowledge-base id into its configuration.
+    if (accountId && kbSnapshot.get('accountId') !== accountId) continue;
     const docs = await db.collection(`knowledgeBases/${kbId}/documents`).where('status', '==', 'active').limit(8).get();
     for (const entry of docs.docs) {
       chunks.push({ sourceId: `${kbId}/${entry.id}`, title: entry.get('title'), text: entry.get('text'), version: entry.get('version') });
@@ -200,14 +276,19 @@ async function loadEffectiveRuntime(db, call) {
   const contactSnapshot = contactId ? await db.doc(`${contactCollection}/${contactId}`).get() : null;
   const contact = contactSnapshot?.exists ? { id: contactSnapshot.id, ...contactSnapshot.data() } : {};
 
-  const chunks = await loadKnowledgeChunks(db, profile.knowledgeBaseIds || []);
+  const chunks = await loadKnowledgeChunks(db, profile.knowledgeBaseIds || [], { accountId: profile.accountId });
 
   const compiled = compileAgentRuntime({
     profile,
     campaignOverride: campaign.agentOverride || {},
     sessionOverride: call.agentSessionOverride || {},
     campaign,
-    contact: { ...contact, researchSummary: call.researchSummary || '' },
+    // Research is snapshotted at call creation.  The current lead/prospect may
+    // have changed while the call was ringing, so it is never a source of
+    // runtime research facts.
+    contact,
+    callPlan: call.callPlan || null,
+    targetId: call.targetId,
     knowledgeChunks: chunks
   });
   return { compiled, campaign, profile, contact };
@@ -216,9 +297,9 @@ async function loadEffectiveRuntime(db, call) {
 // -------------------------------------------------------------- rep/session
 
 export const setHybridAutoTakeover = onCall(callOptions, async request => {
-  const { db, uid, role } = await requireDialer(request);
+  const { db, uid, role, access } = await requireDialer(request);
   const sessionId = id(request.data?.sessionId, 'session id');
-  await ownedSession(db, sessionId, uid);
+  await ownedSession(db, sessionId, uid, access);
   const enabled = request.data?.enabled === true;
   if (role === 'outbound_rep' && enabled) {
     throw new HttpsError('permission-denied', 'Auto Takeover is locked off in guided rep mode.');
@@ -233,11 +314,11 @@ export const setHybridAutoTakeover = onCall(callOptions, async request => {
 });
 
 export const requestHybridTakeover = onCall(callOptions, async request => {
-  const { db, uid } = await requireDialer(request);
+  const { db, uid, access } = await requireDialer(request);
   const callId = id(request.data?.callId, 'call id');
-  const call = await ownedCall(db, callId, uid);
+  const call = await ownedCall(db, callId, uid, access);
   const requested = await requestHumanHandoff(db, callId, { requestedBy: 'rep', actorId: uid });
-  const session = await ownedSession(db, call.sessionId, uid);
+  const session = await ownedSession(db, call.sessionId, uid, access);
   const repBusy = Boolean(session?.rep?.activeCallId && session.rep.activeCallId !== callId);
   if (repBusy) return { ...requested, queued: true, reason: 'rep_busy' };
   const handoff = await beginSmoothHandoff(db, call.sessionId, callId, { repUid: uid });
@@ -245,18 +326,18 @@ export const requestHybridTakeover = onCall(callOptions, async request => {
 });
 
 export const beginHybridListen = onCall(callOptions, async request => {
-  const { db, uid } = await requireDialer(request);
+  const { db, uid, access } = await requireDialer(request);
   const callId = id(request.data?.callId, 'call id');
-  const call = await ownedCall(db, callId, uid);
+  const call = await ownedCall(db, callId, uid, access);
   const result = await setListenState(db, call.sessionId, callId, { repUid: uid, listening: true });
   if (!result.ok) throw new HttpsError('failed-precondition', clean(result.reason, 200));
   return { ok: true, callId, conferenceName: clean(call?.media?.conferenceName, 120) };
 });
 
 export const stopHybridListen = onCall(callOptions, async request => {
-  const { db, uid } = await requireDialer(request);
+  const { db, uid, access } = await requireDialer(request);
   const callId = id(request.data?.callId, 'call id');
-  const call = await ownedCall(db, callId, uid);
+  const call = await ownedCall(db, callId, uid, access);
   return setListenState(db, call.sessionId, callId, { repUid: uid, listening: false });
 });
 
@@ -281,11 +362,14 @@ export const getHybridVoiceAccessToken = onCall({ ...callOptions, secrets: TWILI
 
 /** A bounded, role-filtered directory for warm transfer and coaching requests. */
 export const listHybridTransferAgents = onCall(callOptions, async request => {
-  const { db, uid } = await requireDialer(request);
+  const { db, uid, access } = await requireDialer(request);
   const roles = await db.collection('roles')
     .where('role', 'in', ['admin', 'outbound_rep', 'outbound_manager'])
     .limit(100).get();
-  const eligible = roles.docs.filter(entry => entry.id !== uid);
+  const eligible = roles.docs.filter(entry => entry.id !== uid && (
+    access.allAccounts
+    || normalizeAccountScope(entry.get('accountIds')).some(accountId => access.accountIds.includes(accountId))
+  ));
   const profiles = eligible.length
     ? await db.getAll(...eligible.map(entry => db.doc(`users/${entry.id}`)))
     : [];
@@ -310,11 +394,11 @@ export const listHybridTransferAgents = onCall(callOptions, async request => {
 
 /** Ask a specific teammate to join the same live conference. */
 export const requestHybridStaffTransfer = onCall(callOptions, async request => {
-  const { db, uid } = await requireDialer(request);
+  const { db, uid, access } = await requireDialer(request);
   const callId = id(request.data?.callId, 'call id');
   const toUid = id(request.data?.toUid, 'teammate id');
   if (toUid === uid) throw new HttpsError('invalid-argument', 'Choose another teammate.');
-  const call = await ownedCall(db, callId, uid);
+  const call = await ownedCall(db, callId, uid, access);
   if (['completed', 'cancelled', 'failed'].includes(call.status)) {
     throw new HttpsError('failed-precondition', 'This call has already ended.');
   }
@@ -327,6 +411,9 @@ export const requestHybridStaffTransfer = onCall(callOptions, async request => {
   const [from, to] = await Promise.all([staffIdentity(db, uid), staffIdentity(db, toUid)]);
   if (!['admin', 'outbound_rep', 'outbound_manager'].includes(to.role)) {
     throw new HttpsError('failed-precondition', 'That teammate does not have outbound call access.');
+  }
+  if (to.role !== 'admin' && !to.accountIds.includes(call.accountId)) {
+    throw new HttpsError('permission-denied', 'That teammate is not assigned to this seller account.');
   }
   await db.doc(`calls/${callId}`).set({
     staffTransfer: {
@@ -348,9 +435,9 @@ export const requestHybridStaffTransfer = onCall(callOptions, async request => {
 });
 
 export const acceptHybridStaffTransfer = onCall(callOptions, async request => {
-  const { db, uid } = await requireDialer(request);
+  const { db, uid, access } = await requireDialer(request);
   const callId = id(request.data?.callId, 'call id');
-  const call = await transferCall(db, callId, uid);
+  const call = await transferCall(db, callId, uid, access);
   if (call.staffTransfer?.toUid !== uid) throw new HttpsError('permission-denied', 'Only the requested teammate can accept.');
   if (call.staffTransfer?.state !== 'requested') throw new HttpsError('failed-precondition', 'This handoff is no longer waiting.');
   await db.doc(`calls/${callId}`).set({
@@ -365,9 +452,9 @@ export const acceptHybridStaffTransfer = onCall(callOptions, async request => {
 });
 
 export const declineHybridStaffTransfer = onCall(callOptions, async request => {
-  const { db, uid } = await requireDialer(request);
+  const { db, uid, access } = await requireDialer(request);
   const callId = id(request.data?.callId, 'call id');
-  const call = await transferCall(db, callId, uid);
+  const call = await transferCall(db, callId, uid, access);
   const transfer = call.staffTransfer || {};
   const state = transfer.toUid === uid ? 'declined' : 'cancelled';
   await db.doc(`calls/${callId}`).set({
@@ -387,9 +474,9 @@ export const declineHybridStaffTransfer = onCall(callOptions, async request => {
 
 /** Finish the warm handoff only after the receiving teammate has joined. */
 export const completeHybridStaffTransfer = onCall(callOptions, async request => {
-  const { db, uid } = await requireDialer(request);
+  const { db, uid, access } = await requireDialer(request);
   const callId = id(request.data?.callId, 'call id');
-  const call = await transferCall(db, callId, uid);
+  const call = await transferCall(db, callId, uid, access);
   const transfer = call.staffTransfer || {};
   if (transfer.fromUid !== uid) throw new HttpsError('permission-denied', 'The current call owner must complete the handoff.');
   if (transfer.state !== 'accepted') throw new HttpsError('failed-precondition', 'The receiving teammate must join before transfer can complete.');
@@ -429,11 +516,13 @@ export const completeHybridStaffTransfer = onCall(callOptions, async request => 
 // -------------------------------------------------------- supervisor coaching
 
 export const beginHybridCoachMonitor = onCall(callOptions, async request => {
-  const { db, uid } = await requireDialer(request, { manageAgents: true });
+  const { db, uid, access } = await requireDialer(request, { manageAgents: true });
   const callId = id(request.data?.callId, 'call id');
   const snapshot = await db.doc(`calls/${callId}`).get();
   if (!snapshot.exists) throw new HttpsError('not-found', 'Call not found.');
   const call = { id: callId, ...snapshot.data() };
+  try { assertDocumentAccountAccess(access, call, { resource: 'call' }); }
+  catch (error) { throw new HttpsError('permission-denied', clean(error.message, 300)); }
   if (call.direction !== 'outbound' || ['completed', 'cancelled', 'failed'].includes(call.status)) {
     throw new HttpsError('failed-precondition', 'Only a live outbound call can be monitored.');
   }
@@ -453,13 +542,15 @@ export const beginHybridCoachMonitor = onCall(callOptions, async request => {
 });
 
 export const sendHybridCoachCue = onCall(callOptions, async request => {
-  const { db, uid } = await requireDialer(request, { manageAgents: true });
+  const { db, uid, access } = await requireDialer(request, { manageAgents: true });
   const callId = id(request.data?.callId, 'call id');
   const message = clean(request.data?.message, 500);
   if (!message) throw new HttpsError('invalid-argument', 'Enter a coaching cue.');
   const snapshot = await db.doc(`calls/${callId}`).get();
   if (!snapshot.exists) throw new HttpsError('not-found', 'Call not found.');
   const call = { id: callId, ...snapshot.data() };
+  try { assertDocumentAccountAccess(access, call, { resource: 'call' }); }
+  catch (error) { throw new HttpsError('permission-denied', clean(error.message, 300)); }
   if (call.coaching?.state !== 'monitoring' || call.coaching?.supervisorUid !== uid) {
     throw new HttpsError('failed-precondition', 'Start private monitor mode before sending a cue.');
   }
@@ -482,11 +573,13 @@ export const sendHybridCoachCue = onCall(callOptions, async request => {
 });
 
 export const endHybridCoachMonitor = onCall(callOptions, async request => {
-  const { db, uid } = await requireDialer(request, { manageAgents: true });
+  const { db, uid, access } = await requireDialer(request, { manageAgents: true });
   const callId = id(request.data?.callId, 'call id');
   const snapshot = await db.doc(`calls/${callId}`).get();
   if (!snapshot.exists) throw new HttpsError('not-found', 'Call not found.');
   const call = { id: callId, ...snapshot.data() };
+  try { assertDocumentAccountAccess(access, call, { resource: 'call' }); }
+  catch (error) { throw new HttpsError('permission-denied', clean(error.message, 300)); }
   if (call.coaching?.supervisorUid && call.coaching.supervisorUid !== uid) {
     throw new HttpsError('permission-denied', 'Another supervisor owns this monitor session.');
   }
@@ -591,13 +684,20 @@ function validateProfileInput(profile) {
 }
 
 export const listAIAgentProfiles = onCall(callOptions, async request => {
-  const { db } = await requireDialer(request);
+  const { db, access } = await requireDialer(request);
   const snapshot = await db.collection('aiAgentProfiles').orderBy('updatedAt', 'desc').limit(100).get();
-  return { profiles: snapshot.docs.map(entry => ({ id: entry.id, ...entry.data() })) };
+  return {
+    profiles: snapshot.docs
+      .filter(entry => {
+        try { assertDocumentAccountAccess(access, entry.data() || {}, { resource: 'AI agent profile' }); return true; }
+        catch { return false; }
+      })
+      .map(entry => ({ id: entry.id, ...entry.data() }))
+  };
 });
 
 export const createAIAgentProfile = onCall(callOptions, async request => {
-  const { db, uid, email } = await requireDialer(request, { manageAgents: true });
+  const { db, uid, email, access } = await requireDialer(request, { manageAgents: true });
   // Explicit on create: a persona that does not say whose customers it may
   // speak to is the single most dangerous record in this system.
   try {
@@ -605,6 +705,8 @@ export const createAIAgentProfile = onCall(callOptions, async request => {
   } catch (error) {
     throw new HttpsError('invalid-argument', error.message);
   }
+  try { assertAccountAccess(access, request.data?.accountId); }
+  catch (error) { throw new HttpsError('permission-denied', clean(error.message, 300)); }
   const ref = db.collection('aiAgentProfiles').doc();
   const profile = validateProfileInput(normalizeProfileInput(request.data || {}));
   await ref.set({
@@ -615,11 +717,13 @@ export const createAIAgentProfile = onCall(callOptions, async request => {
 });
 
 export const updateAIAgentProfile = onCall(callOptions, async request => {
-  const { db, uid, email } = await requireDialer(request, { manageAgents: true });
+  const { db, uid, email, access } = await requireDialer(request, { manageAgents: true });
   const profileId = id(request.data?.profileId, 'profile id');
   const ref = db.doc(`aiAgentProfiles/${profileId}`);
   const snapshot = await ref.get();
   if (!snapshot.exists) throw new HttpsError('not-found', 'Agent profile not found.');
+  try { assertDocumentAccountAccess(access, snapshot.data() || {}, { resource: 'AI agent profile' }); }
+  catch (error) { throw new HttpsError('permission-denied', clean(error.message, 300)); }
   const version = Math.max(1, Number(snapshot.get('version')) || 1) + 1;
   const profile = validateProfileInput(normalizeProfileInput(request.data?.profile || {}, snapshot.data()));
 
@@ -642,16 +746,23 @@ export const updateAIAgentProfile = onCall(callOptions, async request => {
 });
 
 export const archiveAIAgentProfile = onCall(callOptions, async request => {
-  const { db, uid, email } = await requireDialer(request, { manageAgents: true });
+  const { db, uid, email, access } = await requireDialer(request, { manageAgents: true });
   const profileId = id(request.data?.profileId, 'profile id');
-  await db.doc(`aiAgentProfiles/${profileId}`).set({
+  const ref = db.doc(`aiAgentProfiles/${profileId}`);
+  const snapshot = await ref.get();
+  if (!snapshot.exists) throw new HttpsError('not-found', 'Agent profile not found.');
+  try { assertDocumentAccountAccess(access, snapshot.data() || {}, { resource: 'AI agent profile' }); }
+  catch (error) { throw new HttpsError('permission-denied', clean(error.message, 300)); }
+  await ref.set({
     status: 'archived', updatedBy: email || uid, updatedAt: FieldValue.serverTimestamp()
   }, { merge: true });
   return { ok: true };
 });
 
 export const previewAIAgentRuntime = onCall(callOptions, async request => {
-  await requireDialer(request, { manageAgents: true });
+  const { access } = await requireDialer(request, { manageAgents: true });
+  try { assertAccountAccess(access, request.data?.profile?.accountId); }
+  catch (error) { throw new HttpsError('permission-denied', clean(error.message, 300)); }
   const compiled = compileAgentRuntime({
     profile: request.data?.profile || {},
     campaignOverride: request.data?.campaignOverride || {},
@@ -667,7 +778,7 @@ export const previewAIAgentRuntime = onCall(callOptions, async request => {
 export const createAIAgentPreviewSession = onCall(
   { ...callOptions, secrets: [HYBRID_OPENAI_API_KEY] },
   async request => {
-    const { db, uid } = await requireDialer(request, { manageAgents: true });
+    const { db, uid, access } = await requireDialer(request, { manageAgents: true });
     const apiKey = secretValue(HYBRID_OPENAI_API_KEY);
     if (!apiKey) throw new HttpsError('failed-precondition', 'OpenAI is not configured for agent previews.');
 
@@ -676,9 +787,10 @@ export const createAIAgentPreviewSession = onCall(
     let preview;
     try {
       profile = validateProfileInput(normalizeProfileInput(request.data?.profile || {}));
+      assertAccountAccess(access, profile.accountId);
       profile.id = clean(request.data?.profile?.id, 200) || 'preview';
       profile.version = Math.max(1, Number(request.data?.profile?.version) || 1);
-      const knowledgeChunks = await loadKnowledgeChunks(db, profile.knowledgeBaseIds || []);
+      const knowledgeChunks = await loadKnowledgeChunks(db, profile.knowledgeBaseIds || [], { accountId: profile.accountId });
       preview = buildAgentPreviewRuntime({ profile, knowledgeChunks, mode });
     } catch (error) {
       throw new HttpsError('invalid-argument', clean(error?.message, 400) || 'The agent preview configuration is invalid.');
@@ -705,15 +817,25 @@ export const createAIAgentPreviewSession = onCall(
 // ------------------------------------------------------------- knowledge KB
 
 export const listAIKnowledgeBases = onCall(callOptions, async request => {
-  const { db } = await requireDialer(request);
+  const { db, access } = await requireDialer(request);
   const snapshot = await db.collection('knowledgeBases').orderBy('updatedAt', 'desc').limit(100).get();
-  return { knowledgeBases: snapshot.docs.map(entry => ({ id: entry.id, ...entry.data() })) };
+  return {
+    knowledgeBases: snapshot.docs
+      .filter(entry => {
+        try { assertDocumentAccountAccess(access, entry.data() || {}, { resource: 'knowledge base' }); return true; }
+        catch { return false; }
+      })
+      .map(entry => ({ id: entry.id, ...entry.data() }))
+  };
 });
 
 export const createAIKnowledgeBase = onCall(callOptions, async request => {
-  const { db, uid, email } = await requireDialer(request, { manageAgents: true });
+  const { db, uid, email, access } = await requireDialer(request, { manageAgents: true });
+  try { assertAccountAccess(access, request.data?.accountId); }
+  catch (error) { throw new HttpsError('permission-denied', clean(error.message, 300)); }
   const ref = db.collection('knowledgeBases').doc();
   await ref.set({
+    accountId: requireAccountId(request.data?.accountId, { field: 'accountId' }),
     name: clean(request.data?.name, 120) || 'Untitled knowledge base',
     description: clean(request.data?.description, 1000),
     status: 'active', version: 1,
@@ -724,10 +846,12 @@ export const createAIKnowledgeBase = onCall(callOptions, async request => {
 });
 
 export const upsertAIKnowledgeDocument = onCall(callOptions, async request => {
-  const { db, uid, email } = await requireDialer(request, { manageAgents: true });
+  const { db, uid, email, access } = await requireDialer(request, { manageAgents: true });
   const kbId = id(request.data?.knowledgeBaseId, 'knowledge base id');
   const kbSnapshot = await db.doc(`knowledgeBases/${kbId}`).get();
   if (!kbSnapshot.exists) throw new HttpsError('not-found', 'Knowledge base not found.');
+  try { assertDocumentAccountAccess(access, kbSnapshot.data() || {}, { resource: 'knowledge base' }); }
+  catch (error) { throw new HttpsError('permission-denied', clean(error.message, 300)); }
   const documentId = clean(request.data?.documentId, 200) || db.collection(`knowledgeBases/${kbId}/documents`).doc().id;
   const ref = db.doc(`knowledgeBases/${kbId}/documents/${documentId}`);
   const prior = await ref.get();
@@ -861,12 +985,7 @@ export const recordHybridCallEvent = onRequest({
   const authToken = secretValue(HYBRID_TWILIO_AUTH_TOKEN);
   if (!twilioSignatureValid(req, authToken)) { res.status(401).json({ error: 'unauthorized' }); return; }
 
-  const provider = getCallingProvider('twilio', {
-    accountSid: secretValue(HYBRID_TWILIO_ACCOUNT_SID),
-    authToken,
-    twimlAppSid: secretValue(HYBRID_TWILIO_TWIML_APP_SID),
-    statusCallbackUrl: ''
-  });
+  const provider = hybridTwilioProvider(authToken);
   const event = provider.normalizeWebhookEvent(req.body, {
     targetId: clean(req.query?.targetId, 200),
     campaignId: clean(req.query?.campaignId, 200),
@@ -933,14 +1052,21 @@ export const recordHybridCallEvent = onRequest({
       let runtime;
       try { runtime = await loadEffectiveRuntime(db, call); }
       catch (error) {
-        await callRef.set({ aiAttachError: clean(error?.message, 300), updatedAt: FieldValue.serverTimestamp() }, { merge: true });
-        res.status(200).json({ ok: true, routed: 'ai', aiPending: false, error: 'agent_config_unavailable' }); return;
+        await endFailedAIMediaPstn(db, call.id, {
+          reason: `runtime_compile_failed: ${clean(error?.message, 240) || 'unknown'}`,
+          source: 'runtime_compile', provider, now: event.at
+        });
+        res.status(200).json({ ok: true, routed: 'ai', aiPending: false, safelyEnded: true, error: 'agent_config_unavailable' }); return;
       }
+      const attachDeadlineAt = Timestamp.fromDate(aiMediaAttachDeadline(event.at));
       await callRef.set({
         agent: {
           profileId: runtime.compiled.profileId,
           profileVersion: runtime.compiled.profileVersion,
           effectiveConfigHash: runtime.compiled.effectiveConfigHash,
+          callPlanKey: runtime.compiled.callPlanKey,
+          callPlanVersion: runtime.compiled.callPlanVersion,
+          callPlanHash: runtime.compiled.callPlanHash,
           model: runtime.compiled.model,
           voice: runtime.compiled.voice
         },
@@ -948,8 +1074,10 @@ export const recordHybridCallEvent = onRequest({
       }, { merge: true });
       await db.doc(`aiMediaJobs/${call.id}`).set({
         callId: call.id, sessionId: call.sessionId, campaignId: call.campaignId,
+        accountId: call.accountId || runtime.campaign.accountId,
         conferenceName: call?.media?.conferenceName || conferenceName(call.sessionId, call.targetId),
         status: 'pending',
+        attachDeadlineAt,
         runtime: {
           model: runtime.compiled.model,
           voice: runtime.compiled.voice,
@@ -965,9 +1093,19 @@ export const recordHybridCallEvent = onRequest({
           profileId: runtime.compiled.profileId,
           profileVersion: runtime.compiled.profileVersion,
           effectiveConfigHash: runtime.compiled.effectiveConfigHash,
+          callPlanKey: runtime.compiled.callPlanKey,
+          callPlanVersion: runtime.compiled.callPlanVersion,
+          callPlanHash: runtime.compiled.callPlanHash,
           handoffPhrase: runtime.compiled.handoffPhrase
         },
         createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp()
+      }, { merge: true });
+      await callRef.set({
+        media: {
+          ...(call.media || {}), attachState: 'pending',
+          attachDeadlineAt
+        },
+        updatedAt: FieldValue.serverTimestamp()
       }, { merge: true });
     }
     res.status(200).json({ ok: true, callId: call.id, routed: routed.controller }); return;
@@ -1027,7 +1165,10 @@ function mediaSecretOk(req) {
     && timingSafeEqual(Buffer.from(expected), Buffer.from(provided));
 }
 
-export const hybridAIMediaControl = onRequest({ secrets: [HYBRID_AI_MEDIA_SECRET], maxInstances: 30 }, async (req, res) => {
+export const hybridAIMediaControl = onRequest({
+  secrets: [HYBRID_AI_MEDIA_SECRET, HYBRID_OPENAI_API_KEY, HYBRID_TWILIO_ACCOUNT_SID, HYBRID_TWILIO_AUTH_TOKEN, HYBRID_TWILIO_TWIML_APP_SID],
+  maxInstances: 30
+}, async (req, res) => {
   if (req.method !== 'POST') { res.set('Allow', 'POST').status(405).json({ error: 'method-not-allowed' }); return; }
   if (!mediaSecretOk(req)) { res.status(401).json({ error: 'unauthorized' }); return; }
   const db = getFirestore();
@@ -1039,14 +1180,27 @@ export const hybridAIMediaControl = onRequest({ secrets: [HYBRID_AI_MEDIA_SECRET
   const action = clean(req.body?.action, 60);
 
   if (action === 'attached') {
-    await attachAIController(db, callId, clean(req.body?.aiSessionId, 240), {
+    const aiSessionId = clean(req.body?.aiSessionId, 240);
+    try {
+      await attachAIController(db, callId, aiSessionId, {
       model: req.body?.model,
       voice: req.body?.voice,
       profileId: call?.agent?.profileId,
       profileVersion: call?.agent?.profileVersion,
       effectiveConfigHash: call?.agent?.effectiveConfigHash
-    });
+      });
+    } catch (error) {
+      await endFailedAIMediaPstn(db, callId, {
+        reason: `sideband_attach_failed: ${clean(error?.message, 240) || 'unknown'}`,
+        source: 'media_control_attached', realtimeCallId: aiSessionId
+      });
+      res.status(409).json({ ok: false, error: 'ai-attach-failed', safelyEnded: true }); return;
+    }
     await db.doc(`aiMediaJobs/${callId}`).set({ status: 'active', aiSessionId: clean(req.body?.aiSessionId, 240), updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+    await db.doc(`calls/${callId}`).set({
+      'media.attachState': 'active', 'media.attachedAt': FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp()
+    }, { merge: true });
     res.json({ ok: true }); return;
   }
 
@@ -1105,7 +1259,10 @@ export const hybridAIMediaControl = onRequest({ secrets: [HYBRID_AI_MEDIA_SECRET
  * to aiMediaJobs. Persistent monitoring/tool events belong in the media runtime,
  * not in this short HTTP request.
  */
-export const openAIRealtimeIncomingCall = onRequest({ secrets: [HYBRID_OPENAI_API_KEY, HYBRID_AI_MEDIA_SECRET], maxInstances: 30 }, async (req, res) => {
+export const openAIRealtimeIncomingCall = onRequest({
+  secrets: [HYBRID_OPENAI_API_KEY, HYBRID_AI_MEDIA_SECRET, HYBRID_TWILIO_ACCOUNT_SID, HYBRID_TWILIO_AUTH_TOKEN, HYBRID_TWILIO_TWIML_APP_SID],
+  maxInstances: 30
+}, async (req, res) => {
   // OpenAI webhook signature verification should be terminated by the dedicated
   // media runtime in production. This Firebase endpoint is intentionally gated
   // behind our media secret when invoked by that runtime, not exposed as the
@@ -1116,27 +1273,77 @@ export const openAIRealtimeIncomingCall = onRequest({ secrets: [HYBRID_OPENAI_AP
   const realtimeCallId = clean(req.body?.realtimeCallId || req.body?.data?.call_id, 240);
   if (!callId || !realtimeCallId) { res.status(400).json({ error: 'missing-call-identifiers' }); return; }
   const jobSnapshot = await db.doc(`aiMediaJobs/${callId}`).get();
-  if (!jobSnapshot.exists) { res.status(404).json({ error: 'media-job-not-found' }); return; }
-  const runtime = jobSnapshot.get('runtime') || {};
+  if (!jobSnapshot.exists) {
+    await rejectOpenAIRealtimeCall(realtimeCallId);
+    res.status(404).json({ error: 'media-job-not-found' }); return;
+  }
+  const job = jobSnapshot.data() || {};
+  const liveCallSnapshot = await db.doc(`calls/${callId}`).get();
+  const liveController = clean(liveCallSnapshot.get('control.controller'), 40);
+  if (['accepted', 'active'].includes(clean(job.status, 40)) && clean(job.realtimeCallId, 240) === realtimeCallId) {
+    res.status(200).json({ ok: true, realtimeCallId, idempotent: true }); return;
+  }
+  if (['accepted', 'active'].includes(clean(job.status, 40))) {
+    await rejectOpenAIRealtimeCall(realtimeCallId);
+    res.status(409).json({ error: 'different-realtime-call-already-attached' }); return;
+  }
+  if (!liveCallSnapshot.exists || !isAIMediaAttachPending(job) || !['ai', 'transitioning'].includes(liveController)) {
+    // A webhook can arrive after the deadline worker has already ended the
+    // prospect leg.  Reject rather than accidentally resurrecting an AI
+    // session from that stale SIP invite.
+    await rejectOpenAIRealtimeCall(realtimeCallId);
+    res.status(409).json({ error: 'ai-media-not-attachable' }); return;
+  }
+  const runtime = job.runtime || {};
   const apiKey = secretValue(HYBRID_OPENAI_API_KEY);
-  if (!apiKey) { res.status(503).json({ error: 'openai-not-configured' }); return; }
+  if (!apiKey) {
+    await endFailedAIMediaPstn(db, callId, {
+      reason: 'openai_api_key_not_configured', source: 'realtime_incoming', realtimeCallId
+    });
+    res.status(503).json({ error: 'openai-not-configured' }); return;
+  }
 
-  const response = await fetch(`https://api.openai.com/v1/realtime/calls/${encodeURIComponent(realtimeCallId)}/accept`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      type: 'realtime',
-      model: clean(runtime.model, 120) || 'gpt-realtime-2.1',
-      instructions: clean(runtime.instructions, 30000),
-      ...sanitizeRealtimeSessionConfig(runtime.sessionConfig, clean(runtime.voice, 120) || 'marin')
-    })
-  });
-  const body = await response.text();
-  if (!response.ok) { res.status(502).json({ error: 'openai-accept-failed', detail: clean(body, 500) }); return; }
+  let response;
+  let body = '';
+  try {
+    response = await fetch(`https://api.openai.com/v1/realtime/calls/${encodeURIComponent(realtimeCallId)}/accept`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: 'realtime',
+        model: clean(runtime.model, 120) || 'gpt-realtime-2.1',
+        instructions: clean(runtime.instructions, 30000),
+        ...sanitizeRealtimeSessionConfig(runtime.sessionConfig, clean(runtime.voice, 120) || 'marin')
+      }), signal: AbortSignal.timeout(10_000)
+    });
+    body = await response.text();
+  } catch (error) {
+    await rejectOpenAIRealtimeCall(realtimeCallId);
+    await endFailedAIMediaPstn(db, callId, {
+      reason: `openai_accept_transport_failed: ${clean(error?.message, 240) || 'unknown'}`,
+      source: 'realtime_accept', realtimeCallId
+    });
+    res.status(502).json({ error: 'openai-accept-transport-failed', safelyEnded: true }); return;
+  }
+  if (!response.ok) {
+    // Reject is the documented response for an inbound SIP invite we will not
+    // handle.  Regardless of its result, the already-answered PSTN leg is
+    // immediately ended through the carrier fail-safe.
+    await rejectOpenAIRealtimeCall(realtimeCallId);
+    await endFailedAIMediaPstn(db, callId, {
+      reason: `openai_accept_failed: ${clean(body, 240) || response.status}`,
+      source: 'realtime_accept', realtimeCallId
+    });
+    res.status(502).json({ error: 'openai-accept-failed', safelyEnded: true }); return;
+  }
   let accepted = {};
   try { accepted = JSON.parse(body); } catch { accepted = { raw: clean(body, 1000) }; }
   await db.doc(`aiMediaJobs/${callId}`).set({
     status: 'accepted', realtimeCallId, openAI: { callId: realtimeCallId, wssUrl: clean(accepted?.wss_url, 1000) },
+    updatedAt: FieldValue.serverTimestamp()
+  }, { merge: true });
+  await db.doc(`calls/${callId}`).set({
+    'media.attachState': 'accepted', 'media.realtimeCallId': realtimeCallId,
     updatedAt: FieldValue.serverTimestamp()
   }, { merge: true });
   res.status(200).json({ ok: true, realtimeCallId, wssUrl: clean(accepted?.wss_url, 1000) });

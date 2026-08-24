@@ -152,48 +152,62 @@ export function useCallTurns(callId) {
 }
 
 /** Live warm-transfer requests addressed to the signed-in teammate. */
-export const useIncomingHybridTransfers = uid =>
+export const useIncomingHybridTransfers = (uid, accountIds = [], allAccounts = false) =>
   useLiveOutboundQuery(() => {
-    if (!uid) return null;
+    if (!uid || (!allAccounts && !accountIds.length)) return null;
+    const accountClause = allAccounts ? [] : [where('accountId', 'in', accountIds.slice(0, 10))];
     return {
       cap: 20,
       q: query(
         collection(db, 'calls'),
+        ...accountClause,
         where('direction', '==', 'outbound'),
         where('staffTransfer.toUid', '==', uid),
         limit(20)
       )
     };
-  }, [uid]);
+  }, [uid, accountIds.join(','), allAccounts]);
 
 /** Manager view of currently connected outbound calls for private coaching. */
-export const useTeamLiveCalls = () =>
-  useLiveOutboundQuery(() => ({
-    cap: 100,
-    q: query(
-      collection(db, 'calls'),
-      where('direction', '==', 'outbound'),
-      where('status', '==', 'connected'),
-      limit(100)
-    )
-  }), []);
+export const useTeamLiveCalls = (accountIds = [], allAccounts = false) =>
+  useLiveOutboundQuery(() => {
+    if (!allAccounts && !accountIds.length) return null;
+    return {
+      cap: 100,
+      q: query(
+        collection(db, 'calls'),
+        ...(allAccounts ? [] : [where('accountId', 'in', accountIds.slice(0, 10))]),
+        where('direction', '==', 'outbound'),
+        where('status', '==', 'connected'),
+        limit(100)
+      )
+    };
+  }, [accountIds.join(','), allAccounts]);
 
-export const useCampaigns = () =>
-  useLiveOutboundQuery(() => ({
-    cap: LIST_CAP,
-    q: query(collection(db, 'outboundCampaigns'), orderBy('createdAt', 'desc'), limit(LIST_CAP))
-  }), []);
+export const useCampaigns = (accountIds = [], allAccounts = true) =>
+  useLiveOutboundQuery(() => {
+    if (!allAccounts && !accountIds.length) return null;
+    return {
+      cap: LIST_CAP,
+      q: query(
+        collection(db, 'outboundCampaigns'),
+        ...(allAccounts ? [] : [where('accountId', 'in', accountIds.slice(0, 10))]),
+        orderBy('createdAt', 'desc'), limit(LIST_CAP)
+      )
+    };
+  }, [accountIds.join(','), allAccounts]);
 
-export const useProspects = ({ status = 'all', system = 'all' } = {}) =>
+export const useProspects = ({ status = 'all', system = 'all', accountIds = [], allAccounts = false } = {}) =>
   useOutboundQuery(() => {
-    const clauses = [];
+    if (!allAccounts && !accountIds.length) return null;
+    const clauses = allAccounts ? [] : [where('accountId', 'in', accountIds.slice(0, 10))];
     if (status !== 'all') clauses.push(where('lifecycle.status', '==', status));
     else if (system !== 'all') clauses.push(where('source.system', '==', system));
     return {
       cap: PROSPECT_CAP,
       q: query(collection(db, 'prospects'), ...clauses, orderBy('createdAt', 'desc'), limit(PROSPECT_CAP))
     };
-  }, [status, system]);
+  }, [status, system, accountIds.join(','), allAccounts]);
 
 export const useReviewQueue = () =>
   useOutboundQuery(() => ({
@@ -223,27 +237,29 @@ export const useScrapeJobs = () =>
     q: query(collection(db, 'scrapeJobs'), orderBy('createdAt', 'desc'), limit(LIST_CAP))
   }), []);
 
-export const useTargets = (campaignId, { states = null } = {}) =>
+export const useTargets = (campaignId, { states = null, accountId = '' } = {}) =>
   useLiveOutboundQuery(() => {
     if (!campaignId) return null;
     const clauses = [where('campaignId', '==', campaignId)];
+    if (accountId) clauses.unshift(where('accountId', '==', accountId));
     if (states?.length) clauses.push(where('state', 'in', states.slice(0, 10)));
     return {
       cap: TARGET_CAP,
       q: query(collection(db, 'outboundTargets'), ...clauses, orderBy('nextAttemptAt', 'asc'), limit(TARGET_CAP))
     };
-  }, [campaignId, (states || []).join(',')]);
+  }, [campaignId, accountId, (states || []).join(',')]);
 
-export const useOutboundCalls = campaignId =>
+export const useOutboundCalls = (campaignId, accountId = '') =>
   useOutboundQuery(() => {
     const clauses = campaignId && campaignId !== 'all'
       ? [where('campaignId', '==', campaignId)]
       : [where('direction', '==', 'outbound')];
+    if (accountId) clauses.unshift(where('accountId', '==', accountId));
     return {
       cap: LIST_CAP,
       q: query(collection(db, 'calls'), ...clauses, orderBy('startedAt', 'desc'), limit(LIST_CAP))
     };
-  }, [campaignId]);
+  }, [campaignId, accountId]);
 
 export const useImportRuns = () =>
   useOutboundQuery(() => ({
@@ -251,25 +267,39 @@ export const useImportRuns = () =>
     q: query(collection(db, 'importRuns'), orderBy('startedAt', 'desc'), limit(100))
   }), []);
 
+/** Pending evidence and issued grants are admin-only audit records. */
+export const useConsentEvidenceCandidates = () =>
+  useLiveOutboundQuery(() => ({
+    cap: LIST_CAP,
+    q: query(collection(db, 'consentEvidenceCandidates'), orderBy('createdAt', 'desc'), limit(LIST_CAP))
+  }), []);
+
+export const useConsentGrants = () =>
+  useLiveOutboundQuery(() => ({
+    cap: LIST_CAP,
+    q: query(collection(db, 'consentGrants'), orderBy('issuedAt', 'desc'), limit(LIST_CAP))
+  }), []);
+
 /**
  * Appointments in a window. Live, because the voice agent books into this same
  * calendar mid-call — a rep looking at today's schedule needs to see a meeting
  * appear the moment an agent closes one.
  */
-export const useAppointments = ({ fromMs, toMs }) =>
+export const useAppointments = ({ fromMs, toMs, accountId = '' }) =>
   useLiveOutboundQuery(() => {
-    if (!fromMs || !toMs) return null;
+    if (!fromMs || !toMs || !accountId) return null;
     return {
       cap: LIST_CAP,
       q: query(
         collection(db, 'appointments'),
+        where('accountId', '==', accountId),
         where('startAt', '>=', new Date(fromMs)),
         where('startAt', '<', new Date(toMs)),
         orderBy('startAt', 'asc'),
         limit(LIST_CAP)
       )
     };
-  }, [fromMs, toMs]);
+  }, [fromMs, toMs, accountId]);
 
 export const calendar = {
   settings: accountId => callable('getCalendarSettings', { accountId }),
@@ -346,6 +376,10 @@ export const outbound = {
   prepareTarget: targetId => callable('prepareTargetForDialing', { targetId }),
   prepareCampaignResearch: campaignId => callable('prepareCampaignResearch', { campaignId }),
   approveCampaignResearch: campaignId => callable('approveCampaignResearch', { campaignId }),
+
+  createConsentEvidenceCandidate: candidate => callable('createConsentEvidenceCandidateCall', candidate),
+  issueConsentGrant: candidateId => callable('issueConsentGrantCall', { candidateId }),
+  revokeConsentGrant: (grantId, reason) => callable('revokeConsentGrantCall', { grantId, reason }),
 
   // Legacy dialer actions retained for compatibility and emulator rehearsal.
   startPowerSession: campaignId => callable('startPowerDialerSession', { campaignId }),

@@ -14,6 +14,7 @@
 import React, { useMemo, useState } from 'react';
 import { useUsers, useRoles, setRole, toDate } from './data';
 import { Pill } from './Panel';
+import { ACCOUNTS, ACCOUNT_IDS } from '../../functions/accounts.js';
 
 const when = value => {
   const date = toDate(value);
@@ -25,12 +26,30 @@ export default function Users() {
   const { rows: roles, refresh: refreshRoles } = useRoles();
   const [busyId, setBusyId] = useState(null);
   const [notice, setNotice] = useState('');
+  const [scopeDrafts, setScopeDrafts] = useState({});
 
   const roleFor = useMemo(() => {
     const map = new Map();
     for (const entry of roles) map.set(entry.id, entry.role);
     return map;
   }, [roles]);
+
+  const storedScopeFor = useMemo(() => {
+    const map = new Map();
+    for (const entry of roles) map.set(entry.id, Array.isArray(entry.accountIds) ? entry.accountIds : []);
+    return map;
+  }, [roles]);
+
+  const scopeFor = userId => scopeDrafts[userId]
+    || storedScopeFor.get(userId)
+    || ['bitesites'];
+
+  const toggleScope = (userId, accountId) => setScopeDrafts(current => {
+    const selected = new Set(scopeFor(userId));
+    if (selected.has(accountId)) selected.delete(accountId);
+    else selected.add(accountId);
+    return { ...current, [userId]: [...selected] };
+  });
 
   const act = async (id, run) => {
     setBusyId(id);
@@ -50,7 +69,11 @@ export default function Users() {
 
   // Both directions go through the one callable, which moves the role document
   // and the auth claim together. Nothing here writes roles/{uid} directly.
-  const grant = (user, role) => act(user.id, () => setRole(user.id, role));
+  const grant = (user, role) => act(user.id, () => setRole(
+    user.id,
+    role,
+    ['outbound_rep', 'outbound_manager'].includes(role) ? scopeFor(user.id) : []
+  ));
   const revoke = user => act(user.id, () => setRole(user.id, 'none'));
 
   const pending = users.filter(user => !roleFor.get(user.id));
@@ -83,6 +106,17 @@ export default function Users() {
                   {role
                     ? <Pill kind={role}>{role}</Pill>
                     : <span className="cell-dim">no access</span>}
+                  <div className="chip-row" style={{ marginTop: 8 }} aria-label="Seller access">
+                    {ACCOUNT_IDS.map(accountId => (
+                      <label className="checkbox-row" key={accountId} style={{ margin: 0 }}>
+                        <input type="checkbox"
+                          checked={scopeFor(user.id).includes(accountId)}
+                          onChange={() => toggleScope(user.id, accountId)}
+                          disabled={busy} />
+                        <span>{ACCOUNTS[accountId].label}</span>
+                      </label>
+                    ))}
+                  </div>
                 </td>
                 <td className="cell-dim">{when(user.createdAt)}</td>
                 {showActions && (
@@ -104,6 +138,13 @@ export default function Users() {
                         <button className="btn-admin" type="button" disabled={busy}
                                 onClick={() => grant(user, 'outbound_manager')}>
                           Outbound manager
+                        </button>
+                      )}
+                      {['outbound_rep', 'outbound_manager'].includes(role) && (
+                        <button className="btn-admin" type="button"
+                                disabled={busy || scopeFor(user.id).length === 0}
+                                onClick={() => grant(user, role)}>
+                          Save seller access
                         </button>
                       )}
                       {role !== 'admin' && (

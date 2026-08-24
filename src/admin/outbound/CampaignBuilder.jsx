@@ -30,10 +30,10 @@ const MODES = [
 const DAYS = [['mon', 'Mon'], ['tue', 'Tue'], ['wed', 'Wed'], ['thu', 'Thu'], ['fri', 'Fri'], ['sat', 'Sat'], ['sun', 'Sun']];
 
 const CONSENT_BASES = [
-  ['not_recorded', 'Not recorded'],
-  ['written_opt_in', 'Written opt-in'],
-  ['inbound_request', 'Inbound request'],
-  ['existing_business_relationship', 'Existing business relationship']
+  ['not_recorded', 'No documented consent'],
+  ['written_opt_in', 'Written AI / artificial-voice opt-in'],
+  ['inbound_request', 'Inbound request — not AI consent by itself'],
+  ['existing_business_relationship', 'Existing relationship — not AI consent by itself']
 ];
 
 const BLANK = {
@@ -41,10 +41,10 @@ const BLANK = {
   agentProfileId: '',
   objective: '', script: '', bookingRules: '', escalationRules: '',
   allowedDays: ['mon', 'tue', 'wed', 'thu', 'fri'],
-  localStartTime: '09:00', localEndTime: '18:00',
-  maxAttempts: 3, retryDelayMinutes: 240, voicemailPolicy: 'retry',
-  requireResearchApproval: true, recordingDisclosureRequired: true,
-  aiDisclosureRequired: true, consentBasis: 'not_recorded', recordCalls: true
+  localStartTime: '09:00', localEndTime: '19:00',
+  maxAttempts: 1, retryDelayMinutes: 1440, voicemailPolicy: 'none',
+  requireResearchApproval: true, recordingDisclosureRequired: false,
+  aiDisclosureRequired: true, consentBasis: 'not_recorded', recordCalls: false
 };
 
 /** The client-side mirror of assertSupports — same rules, rendered early. */
@@ -284,6 +284,9 @@ export default function CampaignBuilder({ providers = [], campaign = null, onSav
               {CONSENT_BASES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
             </select>
             <small>Recorded for the audit trail. It is not a legal determination.</small>
+            {form.mode === 'ai' && form.consentBasis !== 'written_opt_in' && (
+              <small className="admin-error">AI calling also requires valid seller-specific written consent on each target.</small>
+            )}
           </label>
 
           <label className="checkbox-row full">
@@ -292,17 +295,12 @@ export default function CampaignBuilder({ providers = [], campaign = null, onSav
             <span>Require a human to approve each brief before the contact is called</span>
           </label>
 
-          <label className="checkbox-row full">
-            <input type="checkbox" checked={form.recordingDisclosureRequired}
-              onChange={event => set('recordingDisclosureRequired', event.target.checked)} />
-            <span>Disclose that the call is recorded and transcribed</span>
-          </label>
+          <div className="admin-note full">Audio recording is disabled until the post-answer consent and retention controls are verified.</div>
 
           {form.mode === 'ai' && (
             <label className="checkbox-row full">
-              <input type="checkbox" checked={form.aiDisclosureRequired}
-                onChange={event => set('aiDisclosureRequired', event.target.checked)} />
-              <span>Disclose that the caller is an AI assistant</span>
+              <input type="checkbox" checked disabled />
+              <span>AI identity disclosure is mandatory</span>
             </label>
           )}
         </div>

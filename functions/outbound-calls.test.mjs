@@ -18,7 +18,7 @@ const db = getFirestore();
 
 const {
   createCampaign, updateCampaign, setCampaignStatus, importTargets,
-  startDialerSession, dialNext, stopDialerSession, claimWinningCall,
+  startDialerSession, dialNext, runAICampaignSlice, stopDialerSession, claimWinningCall,
   cancelLosingLegs, recordCallEvent, applyDisposition,
   markDoNotCall, reconcileSessions, releaseDueTargets, refreshCampaignCounts,
   sanitizeCampaign, outboundCallId, findActiveDialerSession,
@@ -30,6 +30,7 @@ const { assertSupports } = await import('./providers/calling/index.js');
 const { MockDialer } = await import('./providers/calling/mock-dialer.js');
 const { callEvent } = await import('./providers/calling/adapter.js');
 const { approveResearch, contactKey } = await import('./lead-enrichment.js');
+const { attachAIController } = await import('./hybrid-call-orchestration.js');
 
 const results = [];
 const check = (name, pass, detail = '') => {
@@ -49,7 +50,7 @@ const wipe = async name => {
 };
 
 for (const name of ['prospects', 'leads', 'outboundTargets', 'outboundCampaigns',
-  'dialerSessions', 'calls', 'leadResearch', 'outboundCallEvents']) await wipe(name);
+  'dialerSessions', 'calls', 'leadResearch', 'outboundCallEvents', 'consentGrants']) await wipe(name);
 
 // A weekday inside the default 09:00–18:00 window, in New York.
 const NOW = new Date('2026-01-05T15:00:00Z');
@@ -66,8 +67,8 @@ check('and says exactly what it is missing',
   kixieParallel.missing.includes('cancelCallLeg') && kixieParallel.missing.includes('humanAnswerDetection'),
   kixieParallel.missing.join(','));
 check('kixie does support power dialing', assertSupports('kixie', 'power', 1).ok === true);
-check('gohighlevel supports AI calls but not power dialing',
-  assertSupports('gohighlevel', 'ai', 1).ok === true && assertSupports('gohighlevel', 'power', 1).ok === false);
+check('gohighlevel autonomous AI stays disabled until its workflow can enforce the signed runtime',
+  assertSupports('gohighlevel', 'ai', 1).ok === false && assertSupports('gohighlevel', 'power', 1).ok === false);
 check('concurrency above a provider’s ceiling is refused',
   assertSupports('mock', 'parallel', 9).ok === false);
 
@@ -89,6 +90,26 @@ check('max attempts is capped', sanitized.maxAttempts === 10);
 check('retry delay has a floor', sanitized.retryDelayMinutes === 15);
 check('caller id is normalised to E.164', sanitized.callerId === '+12015550000');
 check('the campaign keeps its default Hybrid agent profile', sanitized.agentProfileId === 'website-growth-consultant');
+
+const safetyDefaults = sanitizeCampaign({
+  accountId: 'bitesites', mode: 'ai', provider: 'mock', callerId: '+15551234567'
+});
+check('new campaigns use the conservative attempt and cadence defaults',
+  safetyDefaults.maxAttempts === 1 && safetyDefaults.retryDelayMinutes === 1440);
+check('new campaigns do not leave voicemail or record before an in-call consent flow exists',
+  safetyDefaults.voicemailPolicy === 'none' && safetyDefaults.recordCalls === false
+  && safetyDefaults.recordingDisclosureRequired === false);
+check('new AI-capable campaigns cannot disable their identity disclosure', safetyDefaults.aiDisclosureRequired === true);
+check('new campaigns stop by seven in the prospect’s local timezone', safetyDefaults.localEndTime === '19:00');
+
+const liveSafetyLimits = sanitizeCampaign({
+  accountId: 'bitesites', mode: 'parallel', provider: 'hybrid-twilio',
+  concurrency: 5, maxAttempts: 10, retryDelayMinutes: 15, callerId: '+15551234567'
+});
+check('carrier-backed campaigns enforce the controlled launch ceiling server-side',
+  liveSafetyLimits.concurrency === 1
+  && liveSafetyLimits.maxAttempts === 1
+  && liveSafetyLimits.retryDelayMinutes === 1440);
 
 // ---------------------------------------------------------------------------
 console.log('\nbuilding a parallel campaign');
@@ -781,6 +802,110 @@ check('and it is parked as failed rather than retried',
   && tamperedAfter.get('accountMismatch')?.found === 'fine-line-group',
   `state=${tamperedAfter.get('state')}`);
 await stopDialerSession(db, guardSession.sessionId ?? guardSession.id, { now: NOW });
+
+// ---------------------------------------------------------------------------
+console.log('\nAI consent is stamped to the target and fails closed');
+
+const consentCampaign = await createCampaign(db, {
+  accountId: 'bitesites',
+  name: 'AI consent gate',
+  mode: 'ai',
+  provider: 'mock',
+  callerId: '+15551234567',
+  requireResearchApproval: false
+}, { createdBy: 'test@bitesites.org' });
+await setCampaignStatus(db, consentCampaign, 'running', { actor: 'test' });
+
+const consentProspects = await importProspects(db, [
+  {
+    name: 'Documented Consent Co', phone: '2015550666', address: 'Ridgewood, NJ',
+    consentGrantId: 'consent-grant-666',
+    consentBasis: 'written_opt_in', consentSellerAccountId: 'bitesites',
+    consentPhone: '2015550666', consentEvidenceId: 'form-666',
+    consentGrantedAt: '2026-01-01T12:00:00Z'
+  },
+  { name: 'Watcher Cold List Co', phone: '2015550778', address: 'Ridgewood, NJ' },
+  {
+    name: 'Forged Consent Row', phone: '2015550779', address: 'Ridgewood, NJ',
+    consentGrantId: 'made-up-grant-779', consentBasis: 'written_opt_in',
+    consentSellerAccountId: 'bitesites', consentPhone: '2015550779',
+    consentEvidenceId: 'yes', consentRecord: 'yes',
+    consentGrantedAt: '2026-01-01T12:00:00Z'
+  }
+], { source: { system: 'bitesites_leads', provider: 'watcher-migration' } });
+await db.doc('consentGrants/consent-grant-666').set({
+  status: 'active', basis: 'written_opt_in', sellerAccountId: 'bitesites',
+  phoneE164: '+12015550666', evidenceArtifactId: 'artifact-form-666',
+  disclosureVersion: 'ai-voice-v1', grantedAt: Timestamp.fromDate(new Date('2026-01-01T12:00:00Z')),
+  reviewedAt: Timestamp.fromDate(new Date('2026-01-01T13:00:00Z')), reviewedBy: 'compliance-owner',
+  revokedAt: null, expiresAt: null
+});
+await importTargets(db, consentCampaign, { prospectIds: consentProspects.written, now: NOW });
+
+const consentTargets = await db.collection('outboundTargets').where('campaignId', '==', consentCampaign).get();
+const documentedTarget = consentTargets.docs.find(entry => entry.get('phoneE164') === '+12015550666');
+const coldListTarget = consentTargets.docs.find(entry => entry.get('phoneE164') === '+12015550778');
+const forgedTarget = consentTargets.docs.find(entry => entry.get('phoneE164') === '+12015550779');
+check('target admission snapshots seller-specific consent provenance',
+  documentedTarget?.get('consent')?.grantId === 'consent-grant-666'
+  && documentedTarget?.get('consent')?.sellerAccountId === 'bitesites'
+  && documentedTarget?.get('consent')?.phoneE164 === '+12015550666'
+  && documentedTarget?.get('consent')?.evidenceId === 'form-666');
+check('a cold Watcher/Byte-Dialer style record has no invented AI consent',
+  coldListTarget?.get('consent')?.basis === 'not_recorded'
+  && !coldListTarget?.get('consent')?.sellerAccountId);
+check('an imported claim is only an evidence candidate, never a verified grant',
+  forgedTarget?.get('consent')?.grantId === 'made-up-grant-779'
+  && forgedTarget?.get('consent')?.record === 'yes');
+
+await importProspects(db, [
+  { name: 'Documented Consent Co', phone: '2015550666', address: 'Ridgewood, NJ' }
+], { source: { system: 'bitesites_leads', provider: 'watcher-migration' } });
+const consentAfterSparseRefresh = await db.doc(`prospects/${documentedTarget.get('prospectId')}`).get();
+check('a sparse source refresh cannot erase prior consent provenance',
+  consentAfterSparseRefresh.get('consent')?.sellerAccountId === 'bitesites'
+  && consentAfterSparseRefresh.get('consent')?.evidenceId === 'form-666');
+
+await importProspects(db, [{
+  name: 'Documented Consent Co', phone: '2015550666', address: 'Ridgewood, NJ',
+  consentBasis: 'written_opt_in', consentSellerAccountId: 'fine-line-group',
+  consentPhone: '2015550999'
+}], { source: { system: 'bitesites_leads', provider: 'watcher-migration' } });
+const consentAfterReplacement = await db.doc(`prospects/${documentedTarget.get('prospectId')}`).get();
+check('a substantive re-import replaces consent provenance atomically instead of mixing grants',
+  consentAfterReplacement.get('consent')?.sellerAccountId === 'fine-line-group'
+  && consentAfterReplacement.get('consent')?.phoneE164 === '+12015550999'
+  && !consentAfterReplacement.get('consent')?.grantId
+  && !consentAfterReplacement.get('consent')?.evidenceId
+  && !consentAfterReplacement.get('consent')?.grantedAt,
+  JSON.stringify(consentAfterReplacement.get('consent')));
+
+const aiSlice = await runAICampaignSlice(db, consentCampaign, {
+  now: NOW, fetchImpl: async () => ({ ok: false, status: 0, text: async () => '' })
+});
+const coldAfter = await coldListTarget.ref.get();
+const forgedAfter = await forgedTarget.ref.get();
+check('AI calls place only the target with documented target-level consent',
+  aiSlice.started.length === 1 && aiSlice.started[0].targetId === documentedTarget.id,
+  JSON.stringify(aiSlice));
+check('the unconsented target is terminally blocked instead of retried',
+  coldAfter.get('state') === 'completed'
+  && coldAfter.get('complianceReasons')?.includes('ai_consent_not_documented'),
+  JSON.stringify(coldAfter.data()));
+check('arbitrary imported consent text cannot bypass the server-owned grant ledger',
+  forgedAfter.get('state') === 'completed'
+  && forgedAfter.get('complianceReasons')?.includes('ai_consent_not_documented'),
+  JSON.stringify(forgedAfter.data()));
+
+await db.doc('calls/ai-consent-attach-blocked').set({
+  targetId: coldListTarget.id, campaignId: consentCampaign, phoneE164: '+12015550778',
+  control: { controller: 'ai', revision: 1 }
+});
+let rejectedAttach = false;
+try { await attachAIController(db, 'ai-consent-attach-blocked', 'rt-blocked'); } catch (error) {
+  rejectedAttach = /AI voice consent is not valid/.test(String(error?.message));
+}
+check('Hybrid AI attachment cannot bypass target-level consent after a human dial', rejectedAttach);
 
 // ---------------------------------------------------------------------------
 const failed = results.filter(entry => !entry.pass);

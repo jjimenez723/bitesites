@@ -18,7 +18,7 @@ const db = getFirestore();
 
 const {
   detectTech, researchContact, saveResearch, loadResearch, approveResearch,
-  buildCallBrief, contactKey, RESEARCH_TTL_DAYS
+  buildCallBrief, contactKey, validateResearchEvidence, RESEARCH_TTL_DAYS
 } = await import('./lead-enrichment.js');
 const { requiredDisclosures, evaluateCompliance } = await import('./outbound-compliance.js');
 
@@ -92,7 +92,8 @@ const contact = {
   website: 'https://joesplumbing.example.com',
   address: { city: 'Ridgewood', region: 'NJ' },
   business: { category: 'plumbing', rating: 4.4, reviewCount: 61 },
-  location: { timezone: 'America/New_York' }
+  location: { timezone: 'America/New_York' },
+  providerContactId: 'internal-crm-123'
 };
 
 const research = await researchContact(db, {
@@ -107,6 +108,12 @@ check('it found sourced facts', research.verifiedFacts.length > 0, String(resear
 check('every fact names a source that exists',
   research.verifiedFacts.every(fact =>
     research.sources.some(source => source.id === fact.sourceId)));
+check('every fact carries evidence type, observation time, confidence, and spoken-use policy',
+  research.verifiedFacts.every(fact =>
+    fact.evidenceType && fact.observedAt && Number.isFinite(fact.confidence) && typeof fact.speakable === 'boolean'));
+check('the generated evidence bundle passes the approval policy',
+  validateResearchEvidence(research).length === 0,
+  JSON.stringify(validateResearchEvidence(research)));
 check('the website was read and quoted',
   research.verifiedFacts.some(fact => /homepage title/.test(fact.text)));
 check('a verifiable marketing gap became a talking point',
@@ -146,7 +153,18 @@ const noSite = await researchContact(db, {
 check('having no website is a hypothesis, not a fact',
   noSite.hypotheses.some(item => /No website/i.test(item)));
 check('and it becomes the strongest talking point',
-  noSite.talkingPoints.some(point => /no website of their own/i.test(point)));
+  noSite.talkingPoints.some(point => /business website/i.test(point)));
+
+const stoneResearch = await researchContact(db, {
+  contactType: 'prospect',
+  contact: { ...contact, id: 'p-stone', website: '' },
+  campaign: { accountId: 'stone-bellisimo', id: 'stone-campaign' },
+  fetchImpl: async () => { throw new Error('partner research must not run the BiteSites website-gap adapter'); }
+});
+check('partner research uses the seller’s own discovery motion',
+  stoneResearch.talkingPoints.some(point => /preferred stone or material/i.test(point)));
+check('partner research never injects BiteSites website sales language',
+  !/BiteSites|new website/i.test(JSON.stringify(stoneResearch)));
 
 // ---------------------------------------------------------------------------
 console.log('\ncaching and approval');
@@ -191,25 +209,30 @@ console.log('\nwhat the AI agent is actually given');
 const compliance = evaluateCompliance({
   target: { phoneE164: '+12015550142', timezone: 'America/New_York' },
   contact,
-  campaign: { mode: 'ai', callerId: '+15551234567', localStartTime: '00:00', localEndTime: '23:59', allowedDays: ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] },
+  campaign: { accountId: 'bitesites', mode: 'ai', callerId: '+15551234567', localStartTime: '00:00', localEndTime: '23:59', allowedDays: ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] },
   now: new Date('2026-01-05T15:00:00Z')
 });
 const disclosures = requiredDisclosures(compliance);
 
 const brief = buildCallBrief({
   research: approved,
-  campaign: { objective: 'Book a website review', script: 'Be brief.', id: 'camp-1' },
+  campaign: { accountId: 'bitesites', objective: 'Book a website review', script: 'Be brief.', id: 'camp-1' },
   compliance: { ...compliance, disclosures },
   contact
 });
 
 check('the brief carries the objective', brief.objective === 'Book a website review');
 check('it carries the sourced facts', brief.verifiedFacts.length > 0);
+check('operational CRM identifiers never enter the spoken brief',
+  !JSON.stringify(brief).includes('internal-crm-123'));
+check('negative homepage-marker observations stay discovery-only',
+  !brief.verifiedFacts.some(fact => /analytics|pixel|schema/i.test(fact.text)));
 check('every fact it carries still names its source',
   brief.verifiedFacts.every(fact => Boolean(fact.sourceId)));
 check('hypotheses are labelled separately', Array.isArray(brief.unverifiedObservations));
 check('the AI disclosure is present', disclosures.some(line => /AI assistant/i.test(line)));
-check('the recording disclosure is present', disclosures.some(line => /recorded/i.test(line)));
+check('an unrecorded call never claims audio is being recorded', !disclosures.some(line => /recorded/i.test(line)));
+check('the AI identifies the correct legal seller', disclosures.some(line => /BiteSites L\.L\.C\./i.test(line)));
 check('the opt-out instruction is present', disclosures.some(line => /not to be called again/i.test(line)));
 check('the agent is told not to invent facts',
   brief.instructions.some(line => /Never invent/i.test(line)));
@@ -227,6 +250,13 @@ const unapprovedBrief = buildCallBrief({
 check('an UNAPPROVED brief hands the agent no facts at all',
   unapprovedBrief.verifiedFacts.length === 0 && unapprovedBrief.summary === '');
 check('but the disclosures are still mandatory', unapprovedBrief.disclosures.length === disclosures.length);
+
+check('legacy facts without complete provenance cannot be approved',
+  validateResearchEvidence({
+    ...research,
+    evidencePolicyVersion: 0,
+    verifiedFacts: [{ text: 'Unsupported legacy claim', sourceId: research.sources[0].id }]
+  }).length > 0);
 
 // ---------------------------------------------------------------------------
 const failed = results.filter(entry => !entry.pass);

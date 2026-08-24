@@ -26,6 +26,8 @@ import {
   LEGACY_ACCOUNT_ID, readAccountId, checkAccountAlignment, accountMismatchLabel,
   sanitizePartnerOutcomes
 } from './accounts.js';
+import { assertDocumentAccountAccess, assertOutboundAccess, resolveAccountAccess } from './account-access.js';
+import { resolveCampaignOperatingLimits } from './outbound-compliance.js';
 
 /**
  * A persona may only speak to the account its campaign serves.
@@ -74,30 +76,29 @@ const requireId = (value, label) => {
   return result;
 };
 
-async function roleFor(db, auth) {
-  if (auth?.token?.role) return clean(auth.token.role, 80);
-  const snapshot = await db.doc(`roles/${auth.uid}`).get();
-  return snapshot.exists ? clean(snapshot.get('role'), 80) : '';
-}
-
 async function requireDialer(request) {
   if (!request.auth?.uid) throw new HttpsError('unauthenticated', 'Sign in first.');
   const db = getFirestore();
-  const role = await roleFor(db, request.auth);
-  if (!['admin', 'outbound_rep', 'outbound_manager'].includes(role)) {
-    throw new HttpsError('permission-denied', 'This account cannot use the outbound dialer.');
+  try {
+    const access = assertOutboundAccess(await resolveAccountAccess(db, request.auth));
+    return { db, uid: request.auth.uid, email: clean(request.auth.token?.email, 200), role: access.role, access };
+  } catch (error) {
+    throw new HttpsError('permission-denied', clean(error.message, 300));
   }
-  return { db, uid: request.auth.uid, email: clean(request.auth.token?.email, 200), role };
 }
 
-async function requireOwnedSession(db, sessionId, uid) {
+async function requireOwnedSession(db, sessionId, uid, access) {
   const snapshot = await db.doc(`dialerSessions/${sessionId}`).get();
   if (!snapshot.exists) throw new HttpsError('not-found', 'Session not found.');
+  try { assertDocumentAccountAccess(access, snapshot.data() || {}, { resource: 'dialer session' }); }
+  catch (error) { throw new HttpsError('permission-denied', clean(error.message, 300)); }
   if (snapshot.get('userUid') !== uid) throw new HttpsError('permission-denied', 'That session belongs to another rep.');
   return { id: sessionId, ...snapshot.data() };
 }
 
-async function requireCallOperator(db, call, uid) {
+async function requireCallOperator(db, call, uid, access) {
+  try { assertDocumentAccountAccess(access, call, { resource: 'call' }); }
+  catch (error) { throw new HttpsError('permission-denied', clean(error.message, 300)); }
   const snapshot = await db.doc(`dialerSessions/${call.sessionId}`).get();
   if (!snapshot.exists) throw new HttpsError('not-found', 'Session not found.');
   const transfer = call.staffTransfer || {};
@@ -124,15 +125,17 @@ function twilioConfig() {
 
 /** Restore the active server session after a tab switch, navigation or reload. */
 export const getActiveHybridDialerSession = onCall(callOptions, async request => {
-  const { db, uid } = await requireDialer(request);
+  const { db, uid, access } = await requireDialer(request);
   const session = await findActiveDialerSession(db, uid, { hybridOnly: true });
   if (!session) return { session: null };
+  try { assertDocumentAccountAccess(access, session, { resource: 'dialer session' }); }
+  catch (error) { return { session: null }; }
   return {
     session: {
       sessionId: session.id,
       campaignId: clean(session.campaignId, 200),
       status: clean(session.status, 40),
-      concurrency: Math.max(1, Number(session.concurrency) || 3),
+      concurrency: resolveCampaignOperatingLimits(session).concurrency,
       operatingMode: ['human', 'hybrid', 'ai'].includes(session.operatingMode) ? session.operatingMode : 'hybrid',
       autoTakeover: session.takeover?.autoEnabled === true,
       agentProfileId: clean(session.agentProfileId, 200),
@@ -141,14 +144,19 @@ export const getActiveHybridDialerSession = onCall(callOptions, async request =>
   };
 });
 
-/** Start a Hybrid V2 session with one to five simultaneous outbound legs. */
+/** Start a Hybrid V2 session within the server-owned launch ceiling. */
 export const startHybridDialerSession = onCall({ ...callOptions, secrets: HYBRID_SECRETS }, async request => {
-  const { db, uid, role } = await requireDialer(request);
+  const { db, uid, role, access } = await requireDialer(request);
   const campaignId = requireId(request.data?.campaignId, 'campaign id');
   const campaignSnapshot = await db.doc(`outboundCampaigns/${campaignId}`).get();
   if (!campaignSnapshot.exists) throw new HttpsError('not-found', 'Campaign not found.');
   const campaign = { id: campaignId, ...campaignSnapshot.data() };
-  const concurrency = Math.max(1, Math.min(5, Number(request.data?.concurrency) || 3));
+  try { assertDocumentAccountAccess(access, campaign, { resource: 'campaign' }); }
+  catch (error) { throw new HttpsError('permission-denied', clean(error.message, 300)); }
+  const concurrency = resolveCampaignOperatingLimits({
+    ...campaign,
+    concurrency: Math.max(1, Math.min(5, Number(request.data?.concurrency) || 1))
+  }).concurrency;
   const operatingMode = ['human', 'hybrid', 'ai'].includes(request.data?.operatingMode)
     ? request.data.operatingMode : 'hybrid';
 
@@ -220,9 +228,9 @@ export const startHybridDialerSession = onCall({ ...callOptions, secrets: HYBRID
 
 /** Heartbeat is ownership-checked so outbound_rep does not need the admin-only legacy callable. */
 export const heartbeatHybridDialerSession = onCall(callOptions, async request => {
-  const { db, uid } = await requireDialer(request);
+  const { db, uid, access } = await requireDialer(request);
   const sessionId = requireId(request.data?.sessionId, 'session id');
-  const session = await requireOwnedSession(db, sessionId, uid);
+  const session = await requireOwnedSession(db, sessionId, uid, access);
   const beat = await heartbeatSession(db, sessionId);
   // Every 45 seconds for the life of the session, so the sideband stays up for
   // exactly as long as this rep could put a prospect in front of the AI — and
@@ -234,9 +242,9 @@ export const heartbeatHybridDialerSession = onCall(callOptions, async request =>
 
 /** Change who owns future human answers without ending the server-side stream. */
 export const setHybridOperatingMode = onCall({ ...callOptions, secrets: HYBRID_SECRETS }, async request => {
-  const { db, uid } = await requireDialer(request);
+  const { db, uid, access } = await requireDialer(request);
   const sessionId = requireId(request.data?.sessionId, 'session id');
-  const session = await requireOwnedSession(db, sessionId, uid);
+  const session = await requireOwnedSession(db, sessionId, uid, access);
   const operatingMode = ['human', 'hybrid', 'ai'].includes(request.data?.operatingMode)
     ? request.data.operatingMode : '';
   if (!operatingMode) throw new HttpsError('invalid-argument', 'Choose Human, Hybrid, or AI calling.');
@@ -299,15 +307,25 @@ export const setHybridOperatingMode = onCall({ ...callOptions, secrets: HYBRID_S
 
 /** Resize a running session without terminating calls above the new ceiling. */
 export const setHybridConcurrency = onCall({ ...callOptions, secrets: HYBRID_SECRETS }, async request => {
-  const { db, uid } = await requireDialer(request);
+  const { db, uid, access } = await requireDialer(request);
   const sessionId = requireId(request.data?.sessionId, 'session id');
-  const session = await requireOwnedSession(db, sessionId, uid);
+  const session = await requireOwnedSession(db, sessionId, uid, access);
   const concurrency = Number(request.data?.concurrency);
   if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 5) {
     throw new HttpsError('invalid-argument', 'Concurrent lines must be between 1 and 5.');
   }
   const campaignSnapshot = await db.doc(`outboundCampaigns/${session.campaignId}`).get();
   const providerId = clean(campaignSnapshot.get('provider'), 40);
+  const effectiveConcurrency = resolveCampaignOperatingLimits({
+    provider: providerId,
+    concurrency
+  }).concurrency;
+  if (effectiveConcurrency !== concurrency) {
+    throw new HttpsError(
+      'failed-precondition',
+      `Carrier-backed campaigns are currently limited to ${effectiveConcurrency} concurrent line.`
+    );
+  }
   const support = assertSupports(providerId, 'parallel', concurrency, { hybrid: true });
   if (!support.ok) {
     throw new HttpsError('failed-precondition', `The provider cannot run ${concurrency} lines: ${support.missing.join(', ')}.`);
@@ -330,9 +348,9 @@ export const setHybridConcurrency = onCall({ ...callOptions, secrets: HYBRID_SEC
 
 /** Start server-owned auto dialing at the session's configured concurrency. */
 export const dialHybridTargets = onCall({ ...callOptions, timeoutSeconds: 180, secrets: HYBRID_SECRETS }, async request => {
-  const { db, uid } = await requireDialer(request);
+  const { db, uid, access } = await requireDialer(request);
   const sessionId = requireId(request.data?.sessionId, 'session id');
-  const session = await requireOwnedSession(db, sessionId, uid);
+  const session = await requireOwnedSession(db, sessionId, uid, access);
   if (session.hybridV2 !== true) throw new HttpsError('failed-precondition', 'This is not a Hybrid Dialer V2 session.');
   // A session without an explicit mode routes as Hybrid inside `routeDecision`,
   // which silently puts the rep on the first answered call. Sessions started
@@ -409,9 +427,9 @@ export const dialHybridTargets = onCall({ ...callOptions, timeoutSeconds: 180, s
 });
 
 export const stopHybridDialerSession = onCall({ ...callOptions, secrets: HYBRID_SECRETS }, async request => {
-  const { db, uid } = await requireDialer(request);
+  const { db, uid, access } = await requireDialer(request);
   const sessionId = requireId(request.data?.sessionId, 'session id');
-  const session = await requireOwnedSession(db, sessionId, uid);
+  const session = await requireOwnedSession(db, sessionId, uid, access);
   await db.doc(`dialerSessions/${sessionId}`).set({
     autoDial: { ...(session.autoDial || {}), enabled: false, state: 'stopped' },
     updatedAt: FieldValue.serverTimestamp()
@@ -429,12 +447,12 @@ export const stopHybridDialerSession = onCall({ ...callOptions, secrets: HYBRID_
 
 /** End the live phone call only. This never marks DNC. */
 export const endHybridCall = onCall({ ...callOptions, secrets: HYBRID_SECRETS }, async request => {
-  const { db, uid } = await requireDialer(request);
+  const { db, uid, access } = await requireDialer(request);
   const callId = requireId(request.data?.callId, 'call id');
   const callSnapshot = await db.doc(`calls/${callId}`).get();
   if (!callSnapshot.exists) throw new HttpsError('not-found', 'Call not found.');
   const call = { id: callId, ...callSnapshot.data() };
-  await requireCallOperator(db, call, uid);
+  await requireCallOperator(db, call, uid, access);
   if (call.provider !== 'twilio') throw new HttpsError('failed-precondition', 'Hybrid call control currently requires Twilio.');
 
   const provider = getCallingProvider('twilio', twilioConfig());
@@ -482,12 +500,12 @@ export const endHybridCall = onCall({ ...callOptions, secrets: HYBRID_SECRETS },
 
 /** Explicit DNC action. Kept separate from End Call by contract. */
 export const markHybridCallDoNotCall = onCall({ ...callOptions, secrets: HYBRID_SECRETS }, async request => {
-  const { db, uid, email } = await requireDialer(request);
+  const { db, uid, email, access } = await requireDialer(request);
   const callId = requireId(request.data?.callId, 'call id');
   const callSnapshot = await db.doc(`calls/${callId}`).get();
   if (!callSnapshot.exists) throw new HttpsError('not-found', 'Call not found.');
   const call = { id: callId, ...callSnapshot.data() };
-  await requireCallOperator(db, call, uid);
+  await requireCallOperator(db, call, uid, access);
 
   await markDoNotCall(db, call.targetId, { actor: email || uid });
   if (call.provider === 'twilio' && call.providerCallId) {
@@ -507,12 +525,12 @@ export const markHybridCallDoNotCall = onCall({ ...callOptions, secrets: HYBRID_
 
 /** Record a rep disposition against any call in the rep's session. */
 export const submitHybridDisposition = onCall(callOptions, async request => {
-  const { db, uid, email } = await requireDialer(request);
+  const { db, uid, email, access } = await requireDialer(request);
   const callId = requireId(request.data?.callId, 'call id');
   const callSnapshot = await db.doc(`calls/${callId}`).get();
   if (!callSnapshot.exists) throw new HttpsError('not-found', 'Call not found.');
   const call = { id: callId, ...callSnapshot.data() };
-  await requireCallOperator(db, call, uid);
+  await requireCallOperator(db, call, uid, access);
   const campaignSnapshot = await db.doc(`outboundCampaigns/${call.campaignId}`).get();
   const disposition = clean(request.data?.disposition, 40);
   const allowedDispositions = new Set([

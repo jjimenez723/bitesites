@@ -15,6 +15,12 @@ import {
 } from './agent-runtime.js';
 import { IMPLEMENTED_TOOLS } from './agent-tools.js';
 import { TOOL_SCHEMA_NAMES } from '../services/realtime-sideband/tool-schemas.js';
+import { sealCallPlanSnapshot } from './call-plan.js';
+import { ACCOUNTS } from './accounts.js';
+
+const speakableEvidence = Object.freeze({
+  evidenceType: 'observed', observedAt: '2026-01-01T12:00:00.000Z', confidence: 1, speakable: true
+});
 
 const baseProfile = {
   id: 'friendly-sales',
@@ -200,6 +206,191 @@ test('every call shares one byte-identical instruction prefix', () => {
   assert.ok(first.slice(0, shared).includes('BOOKING A MEETING'));
   // And the parts that genuinely vary are past the shared prefix, not inside it.
   assert.ok(!first.slice(0, shared).includes('Example Bakery'));
+});
+
+test('the approved call-plan snapshot, rather than mutable contact research, reaches Realtime instructions', () => {
+  const compiled = compileAgentRuntime({
+    profile: baseProfile,
+    contact: {
+      companyName: 'North Star Plumbing',
+      // This field used to be injected directly. It is neither a versioned
+      // snapshot nor source-backed, so it must not be allowed into the prompt.
+      researchSummary: 'The owner has an urgent $50,000 marketing problem.'
+    },
+    callPlan: sealCallPlanSnapshot({
+      key: 'prospect_north-star', status: 'approved', approved: true, version: 4, evidencePolicyVersion: 1,
+      summary: 'North Star Plumbing serves Bergen County.',
+      suggestedOpening: 'Ask whether their current website brings in the right jobs.',
+      verifiedFacts: [
+        { id: 'fact-1', text: 'Their website lists emergency plumbing service.', sourceId: 'website-home', ...speakableEvidence },
+        // This is deliberately malformed. It must not become a claimed fact.
+        { id: 'fact-2', text: 'They spend $50,000 a month on ads.', sourceId: '' }
+      ],
+      hypotheses: ['Their current agency may be underperforming.'],
+      likelyNeeds: ['More emergency-service leads.'],
+      talkingPoints: ['Their site might not capture after-hours enquiries.'],
+      likelyObjections: ['We already have someone who handles that.']
+    })
+  });
+
+  assert.match(compiled.instructions, /APPROVED CALL-PLAN RESEARCH \(snapshot prospect_north-star v4\)/);
+  assert.match(compiled.instructions, /North Star Plumbing serves Bergen County/);
+  assert.match(compiled.instructions, /Their website lists emergency plumbing service/);
+  assert.doesNotMatch(compiled.instructions, /They spend \$50,000 a month on ads/);
+  assert.doesNotMatch(compiled.instructions, /urgent \$50,000 marketing problem/);
+  assert.match(compiled.instructions, /UNVERIFIED DISCOVERY GUIDANCE/);
+  assert.match(compiled.instructions, /Ask, do not assert: Their current agency may be underperforming/);
+  assert.match(compiled.instructions, /only these, may be stated as facts/i);
+  assert.equal(compiled.callPlanKey, 'prospect_north-star');
+  assert.equal(compiled.callPlanVersion, 4);
+  assert.equal(compiled.callPlanHash.length, 64);
+});
+
+test('seller context keeps partner companies and conversion goals separate', () => {
+  const fineLine = compileAgentRuntime({
+    profile: { ...baseProfile, accountId: 'fine-line-group' },
+    campaign: { accountId: 'fine-line-group', name: 'Fine Line projects' }
+  });
+  const stone = compileAgentRuntime({
+    profile: { ...baseProfile, accountId: 'stone-bellisimo' },
+    campaign: { accountId: 'stone-bellisimo', name: 'Stone showroom' }
+  });
+
+  assert.match(fineLine.instructions, /Legal seller: The Fine Line Group LLC/);
+  assert.match(fineLine.instructions, /AI assistant calling on behalf of The Fine Line Group LLC/);
+  assert.match(fineLine.instructions, /Audio recording is disabled/);
+  assert.match(fineLine.instructions, /Book a project assessment/);
+  assert.match(fineLine.instructions, /damage mitigation/);
+  assert.match(fineLine.instructions, /Qualify the property need and book a project assessment/);
+  assert.doesNotMatch(fineLine.instructions, /Qualify and sell a BiteSites website/);
+  assert.doesNotMatch(fineLine.instructions, /Sometimes the prospect does not want what you called about, but does want something else BiteSites does/);
+  assert.doesNotMatch(fineLine.instructions, /Book a showroom visit/);
+  assert.match(stone.instructions, /Legal seller: Stonebellisimo LLC/);
+  assert.match(stone.instructions, /AI assistant calling on behalf of Stonebellisimo LLC/);
+  assert.match(stone.instructions, /Book a showroom visit/);
+  assert.match(stone.instructions, /stone countertops/);
+  assert.match(stone.instructions, /Qualify the countertop project and book a Stone Bellisimo showroom visit/);
+  assert.doesNotMatch(stone.instructions, /Qualify and sell a BiteSites website/);
+  assert.doesNotMatch(stone.instructions, /property damage mitigation/);
+});
+
+test('BiteSites private address never enters runtime instructions', () => {
+  const compiled = compileAgentRuntime({
+    profile: { ...baseProfile, accountId: 'bitesites' },
+    campaign: { accountId: 'bitesites', name: 'BiteSites' }
+  });
+  assert.match(compiled.instructions, /Legal seller: BiteSites L\.L\.C\./);
+  assert.equal(ACCOUNTS.bitesites.publicIdentity.address, '');
+  assert.equal(ACCOUNTS.bitesites.publicIdentity.addressPublic, false);
+});
+
+test('the server enforces the initial appointment-setting authority ceiling', () => {
+  const compiled = compileAgentRuntime({
+    profile: {
+      ...baseProfile,
+      accountId: 'stone-bellisimo',
+      permissions: {
+        ...baseProfile.permissions,
+        mayQuotePricing: true,
+        mayOfferDiscount: true,
+        maxDiscountPercent: 50,
+        mayCloseSale: true,
+        mayCollectPayment: true
+      }
+    },
+    campaign: { accountId: 'stone-bellisimo' }
+  });
+  assert.equal(compiled.permissions.mayQuotePricing, false);
+  assert.equal(compiled.permissions.mayOfferDiscount, false);
+  assert.equal(compiled.permissions.maxDiscountPercent, 0);
+  assert.equal(compiled.permissions.mayCloseSale, false);
+  assert.equal(compiled.permissions.mayCollectPayment, false);
+  assert.equal(compiled.tools.includes('lookup_approved_pricing'), false);
+
+  const biteSites = compileAgentRuntime({
+    profile: { ...baseProfile, accountId: 'bitesites' },
+    campaign: { accountId: 'bitesites' }
+  });
+  assert.equal(biteSites.permissions.mayQuotePricing, false);
+  assert.equal(biteSites.tools.includes('lookup_approved_pricing'), false);
+});
+
+test('a profile cannot compile for a different seller campaign', () => {
+  assert.throws(() => compileAgentRuntime({
+    profile: { ...baseProfile, accountId: 'bitesites' },
+    campaign: { accountId: 'stone-bellisimo' }
+  }), /different seller accounts/);
+});
+
+test('unapproved or structurally invalid call plans fail closed to neutral discovery', () => {
+  const unapproved = compileAgentRuntime({
+    profile: baseProfile,
+    callPlan: {
+      key: 'prospect_draft', status: 'draft', approved: false, version: 1,
+      summary: 'Do not let this reach the caller.',
+      verifiedFacts: [{ text: 'This must stay private.', sourceId: 'source-1' }]
+    }
+  });
+  const invalid = compileAgentRuntime({
+    profile: baseProfile,
+    callPlan: {
+      key: '', status: 'approved', approved: true, version: 1,
+      summary: 'This plan has no immutable identity.',
+      verifiedFacts: [{ text: 'This must stay private too.', sourceId: 'source-1' }]
+    }
+  });
+
+  for (const compiled of [unapproved, invalid]) {
+    assert.match(compiled.instructions, /No approved research snapshot is available/);
+    assert.doesNotMatch(compiled.instructions, /This must stay private/);
+    assert.equal(compiled.callPlanKey, '');
+    assert.equal(compiled.callPlanVersion, 0);
+    assert.equal(compiled.callPlanHash, '');
+  }
+});
+
+test('call-plan content changes the runtime hash', () => {
+  const common = {
+    key: 'prospect_hash', status: 'approved', approved: true, version: 1, evidencePolicyVersion: 1,
+    verifiedFacts: [{ text: 'The business lists plumbing services.', sourceId: 'site', ...speakableEvidence }]
+  };
+  const first = compileAgentRuntime({ profile: baseProfile, callPlan: sealCallPlanSnapshot(common) });
+  const second = compileAgentRuntime({
+    profile: baseProfile,
+    callPlan: sealCallPlanSnapshot({ ...common, verifiedFacts: [{ text: 'The business lists electrical services.', sourceId: 'site', ...speakableEvidence }] })
+  });
+  assert.notEqual(first.effectiveConfigHash, second.effectiveConfigHash);
+  assert.notEqual(first.callPlanHash, second.callPlanHash);
+});
+
+test('a sealed call plan is rejected when seller, target, contact, or content changes', () => {
+  const plan = sealCallPlanSnapshot({
+    key: 'prospect_bound', status: 'approved', approved: true, version: 2, evidencePolicyVersion: 1,
+    approvedBy: 'owner', sellerAccountId: 'stone-bellisimo',
+    targetId: 'target-stone', contactType: 'prospect', contactId: 'prospect-stone',
+    verifiedFacts: [{ text: 'The prospect asked about quartz.', sourceId: 'intake-form', ...speakableEvidence }]
+  });
+  const base = {
+    profile: { ...baseProfile, accountId: 'stone-bellisimo' },
+    campaign: { accountId: 'stone-bellisimo' },
+    contact: { id: 'prospect-stone' },
+    targetId: 'target-stone'
+  };
+
+  assert.equal(compileAgentRuntime({ ...base, callPlan: plan }).callPlanHash, plan.contentHash);
+  for (const invalid of [
+    { ...base, campaign: { accountId: 'fine-line-group' } },
+    { ...base, targetId: 'another-target' },
+    { ...base, contact: { id: 'another-contact' } },
+    { ...base, callPlan: { ...plan, summary: 'Tampered after approval.' } }
+  ]) {
+    const input = invalid.callPlan ? invalid : { ...invalid, callPlan: plan };
+    if (input.campaign.accountId !== base.profile.accountId) {
+      assert.throws(() => compileAgentRuntime(input), /different seller accounts/);
+    } else {
+      assert.equal(compileAgentRuntime(input).callPlanHash, '');
+    }
+  }
 });
 
 test('voice, cadence, response, noise, and semantic turn settings compile into the live session', () => {

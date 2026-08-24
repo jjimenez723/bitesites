@@ -37,16 +37,22 @@ const staff = [
   ['stranger', 'client', 'Casey Client']
 ];
 for (const [uid, role, displayName] of staff) {
-  await db.doc(`roles/${uid}`).set({ role, email: `${uid}@example.com` });
+  await db.doc(`roles/${uid}`).set({
+    role,
+    accountIds: ['outbound_rep', 'outbound_manager'].includes(role) ? ['bitesites'] : [],
+    email: `${uid}@example.com`
+  });
   await db.doc(`users/${uid}`).set({ displayName, email: `${uid}@example.com`, status: 'approved' });
 }
 
 await db.doc('dialerSessions/session-a').set({
   userUid: 'rep-a', status: 'active', campaignId: 'campaign-a',
+  accountId: 'bitesites', provider: 'mock',
   rep: { state: 'busy', activeCallId: 'call-a', listeningCallId: '' }
 });
 await db.doc('calls/call-a').set({
   direction: 'outbound', status: 'connected', sessionId: 'session-a', campaignId: 'campaign-a',
+  accountId: 'bitesites',
   targetId: 'target-a', control: { controller: 'human', repUid: 'rep-a', revision: 1 }
 });
 
@@ -104,6 +110,7 @@ if (completedCall.get('staffTransfer.state') !== 'completed'
 
 await db.doc('calls/call-coach').set({
   direction: 'outbound', status: 'connected', sessionId: 'session-a', campaignId: 'campaign-a',
+  accountId: 'bitesites',
   targetId: 'target-coach', control: { controller: 'human', repUid: 'rep-a', revision: 1 }
 });
 await call(beginHybridCoachMonitor, { callId: 'call-coach' }, 'manager', 'outbound_manager');

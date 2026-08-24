@@ -207,9 +207,9 @@ export const removeLead = id => deleteDoc(doc(db, 'leads', id));
  * refresh token on the way out — otherwise the ID token already in that
  * person's browser carries the old claim for up to another hour.
  */
-export const setRole = async (uid, role) => {
+export const setRole = async (uid, role, accountIds = []) => {
   const { httpsCallable, getFunctions } = await import('firebase/functions');
   const call = httpsCallable(getFunctions(app, 'us-central1'), 'setUserRole');
-  const { data } = await call({ uid, role });
+  const { data } = await call({ uid, role, accountIds });
   return data;
 };

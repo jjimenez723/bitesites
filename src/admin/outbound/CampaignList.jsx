@@ -17,7 +17,7 @@ export default function CampaignList({ campaigns, loading, error, refresh, provi
   const [editing, setEditing] = useState(null);   // null | 'new' | campaign object
   const action = useAction();
   const selected = campaigns.find(campaign => campaign.id === selectedId) || null;
-  const { rows: calls } = useOutboundCalls(selectedId || 'all');
+  const { rows: calls } = useOutboundCalls(selectedId || 'all', selected?.accountId || '');
 
   const act = (fn, message) => action.run(fn, message).then(result => { if (result) refresh(); return result; });
 

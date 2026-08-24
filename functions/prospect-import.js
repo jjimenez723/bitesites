@@ -13,7 +13,7 @@
 // select them explicitly (§20).
 
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
-import { buildProspect, validateProspect, deterministicId, clean } from './prospect-normalization.js';
+import { buildProspect, normalizeConsent, validateProspect, deterministicId, clean } from './prospect-normalization.js';
 import { findDuplicates, duplicateVerdict, dedupeWithinBatch } from './prospect-deduplication.js';
 import { LEGACY_ACCOUNT_ID, requireAccountId, readAccountId } from './accounts.js';
 import { loadSuppressedNumbers } from './inbound-compliance.js';
@@ -79,6 +79,24 @@ function stripUndefined(value) {
     );
   }
   return value;
+}
+
+// Imports are source refreshes, not permission revocations. A sparse Watcher
+// or Byte-Dialer re-export must not erase the seller, phone, evidence, or grant
+// time captured from a signed form on an earlier import. Actual withdrawal is
+// handled by the DNC/suppression path, which has its own durable audit trail.
+function mergeConsentProvenance(previous = {}, incoming = {}) {
+  const old = normalizeConsent(previous);
+  const next = normalizeConsent({ consent: incoming });
+  const incomingBundlePresent = Boolean(
+    next.grantId || next.basis !== 'not_recorded' || next.sellerAccountId
+    || next.phoneE164 || next.evidenceId || next.record || next.sourceUrl
+    || next.formVersion || next.grantedAt
+  );
+  // Provenance is atomic. Mixing selected fields from two imports can create a
+  // grant that no single source ever supplied. A sparse refresh preserves the
+  // old bundle byte-for-byte; any substantive new bundle replaces it whole.
+  return incomingBundlePresent ? next : old;
 }
 
 /**
@@ -266,6 +284,10 @@ export async function importProspects(db, records, {
       const previous = existing.data();
       const merged = stripUndefined({
         ...prospect,
+        // Preserve consent evidence and provider identity when a source update
+        // contains less provenance than an earlier intake record.
+        consent: mergeConsentProvenance(previous, prospect.consent),
+        providerContactId: prospect.providerContactId || clean(previous.providerContactId, 200),
         createdAt: previous.createdAt || Timestamp.fromDate(now),
         // A re-import refreshes source-derived facts; it must never move a
         // prospect between books. Ids are account-scoped so this should be

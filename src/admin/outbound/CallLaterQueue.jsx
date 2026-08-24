@@ -22,8 +22,9 @@ const REASON_LABELS = {
 };
 
 export default function CallLaterQueue({ campaignId, campaigns = [], onSelectCampaign }) {
+  const campaign = campaigns.find(entry => entry.id === campaignId) || null;
   const { rows, loading, error, capped, refresh } = useTargets(campaignId, {
-    states: ['call_later', 'no_answer', 'voicemail', 'busy']
+    states: ['call_later', 'no_answer', 'voicemail', 'busy'], accountId: campaign?.accountId || ''
   });
   const action = useAction();
 

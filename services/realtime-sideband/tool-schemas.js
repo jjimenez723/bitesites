@@ -159,9 +159,13 @@ export const TOOL_SCHEMAS = {
     'Queue an approved follow-up message. You choose which template goes out, never what it says.',
     {
       channel: { type: 'string', enum: ['email', 'sms'], description: 'How to send it.' },
-      templateId: str('The approved template ID.')
+      templateId: str('The approved template ID.'),
+      prospectConfirmed: {
+        type: 'boolean',
+        description: 'True only after the prospect explicitly confirmed this exact channel during this call. The recipient is resolved server-side; never provide one.'
+      }
     },
-    ['channel', 'templateId']
+    ['channel', 'templateId', 'prospectConfirmed']
   ),
 
   end_call: fn(

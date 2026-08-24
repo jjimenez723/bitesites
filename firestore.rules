@@ -37,8 +37,14 @@ service cloud.firestore {
         : '';
     }
 
+    function hasStoredRole() {
+      return isSignedIn() && exists(/databases/$(database)/documents/roles/$(request.auth.uid));
+    }
+
     function role() {
-      return claimRole() != '' ? claimRole() : storedRole();
+      // Stored role/scope changes take effect before a cached custom claim
+      // refreshes, so a revoke cannot leave a stale elevated token usable.
+      return hasStoredRole() ? storedRole() : claimRole();
     }
 
     function isAdmin() {
@@ -71,6 +77,20 @@ service cloud.firestore {
 
     function isOutboundStaff() {
       return isAdmin() || isOutboundRep() || isOutboundManager();
+    }
+
+    function accountScope() {
+      return hasStoredRole()
+        ? get(/databases/$(database)/documents/roles/$(request.auth.uid)).data.get('accountIds', [])
+        : request.auth.token.get('accountIds', []);
+    }
+
+    function canAccessOutboundAccount(accountId) {
+      return isAdmin()
+        || (isOutboundStaff()
+            && accountId is string
+            && accountScope() is list
+            && accountScope().hasAny([accountId]));
     }
 
     function isOwner(uid) {
@@ -366,7 +386,8 @@ service cloud.firestore {
       allow update: if isAdmin()
                     || validConversationClose(request.resource.data, resource.data);
       allow read:   if isAdmin()
-                    || (isOutboundStaff() && resource.data.direction == 'outbound');
+                    || (resource.data.direction == 'outbound'
+                        && canAccessOutboundAccount(resource.data.accountId));
       allow delete: if isAdmin();
 
       // Turns cover both the state timeline and any transcript the widget
@@ -375,8 +396,8 @@ service cloud.firestore {
       match /turns/{turnId} {
         allow create: if validTurn(request.resource.data);
         allow read:   if isAdmin()
-                      || (isOutboundStaff()
-                          && get(/databases/$(database)/documents/calls/$(callId)).data.direction == 'outbound');
+                      || (get(/databases/$(database)/documents/calls/$(callId)).data.direction == 'outbound'
+                          && canAccessOutboundAccount(get(/databases/$(database)/documents/calls/$(callId)).data.accountId));
         allow update: if false;
         allow delete: if isAdmin();
       }
@@ -386,16 +407,14 @@ service cloud.firestore {
     // The authoritative access-control store. Deliberately unwritable by the
     // account it describes — bootstrap your first admin from the Firebase console.
     //
-    // No client may write this, not even an admin. A role is two things that
-    // have to move together: this document, and the `role` custom claim that
-    // role() below reads *first*. A browser can only ever write one of them, and
-    // a half-applied revoke leaves a claim still saying "admin" — which is
-    // exactly the state that looks revoked in the UI and isn't.
+    // No client may write this, not even an admin. A role is mirrored in this
+    // document and a custom claim, but this document is authoritative whenever
+    // it exists. Revocation keeps a stored tombstone so an already-issued token
+    // can never make its stale "admin" claim authoritative again.
     //
     // So writes go through paths that hold the Admin SDK and set both halves:
     // the `setUserRole` callable (what the Users tab calls) or `npm run role`.
-    // Both bypass these rules, so denying every client write costs nothing and
-    // makes the desync unreachable rather than merely discouraged.
+    // Both bypass these rules, so denying every client write costs nothing.
 
     match /roles/{uid} {
       allow read:  if isOwner(uid) || isAdmin();
@@ -518,7 +537,7 @@ service cloud.firestore {
     // existing role behaviour.
 
     match /prospects/{prospectId} {
-      allow read: if isOutboundStaff();
+      allow read: if canAccessOutboundAccount(resource.data.accountId);
       // Server-only lifecycle. See the note above: creation must go through
       // the import service, and deletion is an archive operation there too.
       allow create, delete: if false;
@@ -534,7 +553,7 @@ service cloud.firestore {
                          ]);
 
       match /activities/{activityId} {
-        allow read:   if isOutboundStaff();
+        allow read:   if canAccessOutboundAccount(get(/databases/$(database)/documents/prospects/$(prospectId)).data.accountId);
         allow create: if isAdmin();
         allow update, delete: if false;
       }
@@ -545,17 +564,17 @@ service cloud.firestore {
       // even here the callables own status and counts — a browser that could
       // set `status: running` would start dialing without the provider
       // capability check that createOutboundCampaign performs.
-      allow read: if isOutboundStaff();
+      allow read: if canAccessOutboundAccount(resource.data.accountId);
       allow create, update, delete: if false;
 
       match /events/{eventId} {
-        allow read: if isOutboundStaff();
+        allow read: if canAccessOutboundAccount(get(/databases/$(database)/documents/outboundCampaigns/$(campaignId)).data.accountId);
         allow write: if false;
       }
     }
 
     match /outboundTargets/{targetId} {
-      allow read: if isOutboundStaff();
+      allow read: if canAccessOutboundAccount(resource.data.accountId);
       allow write: if false;
     }
 
@@ -566,14 +585,14 @@ service cloud.firestore {
       // does not lose data, it resumes calling a person who opted out. The
       // document id is a hash, so a reader could confirm a number they already
       // hold but cannot enumerate the list as a directory of opt-outs.
-      allow read: if isOutboundStaff();
+      allow read: if isAdmin();
       allow write: if false;
     }
 
     match /dialerSessions/{sessionId} {
       // A rep watches their own session live; the transitions are all written
       // server-side inside transactions.
-      allow read: if isOutboundStaff();
+      allow read: if canAccessOutboundAccount(resource.data.accountId);
       allow write: if false;
     }
 
@@ -581,28 +600,47 @@ service cloud.firestore {
       // Read-only in the browser. Approval goes through approveLeadResearch,
       // which is what keeps `verifiedFacts` and `sources` unforgeable — an
       // admin may reword a summary, not invent a sourced fact.
-      allow read: if isOutboundStaff();
+      allow read: if canAccessOutboundAccount(resource.data.accountId);
+      allow write: if false;
+    }
+
+    // AI/artificial-voice consent is a server-owned legal ledger. Evidence
+    // candidates, issued grants and their append-only event records are
+    // readable only by an admin; every write goes through the authenticated
+    // review callables so an imported field can never turn itself into consent.
+    match /consentEvidenceCandidates/{candidateId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    match /consentGrants/{grantId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    match /consentGrantEvents/{grantId}/events/{eventId} {
+      allow read: if isAdmin();
       allow write: if false;
     }
 
     match /scrapeJobs/{jobId} {
-      allow read: if isAdmin() || isOutboundManager();
+      allow read: if isAdmin();
       allow write: if false;
 
       // Raw provider payloads. Admin-only and pruned on a retention schedule
       // by outboundNightlyMaintenance — see §14.
       match /results/{resultId} {
-        allow read: if isAdmin() || isOutboundManager();
+        allow read: if isAdmin();
         allow write: if false;
       }
     }
 
     match /importRuns/{runId} {
-      allow read: if isAdmin() || isOutboundManager();
+      allow read: if isAdmin();
       allow write: if false;
 
       match /errors/{errorId} {
-        allow read: if isAdmin() || isOutboundManager();
+        allow read: if isAdmin();
         allow write: if false;
       }
     }
@@ -616,21 +654,21 @@ service cloud.firestore {
     // confirming, which is exactly the race the hold exists to prevent.
 
     match /appointments/{appointmentId} {
-      allow read: if isOutboundStaff();
+      allow read: if canAccessOutboundAccount(resource.data.accountId);
       allow write: if false;
     }
 
     match /calendarSettings/{documentId} {
       // Working hours and capacity are what the availability engine trusts, so
       // they are normalized by updateCalendarSettings before they land.
-      allow read: if isOutboundStaff();
+      allow read: if canAccessOutboundAccount(resource.data.accountId);
       allow write: if false;
     }
 
     match /pricingBook/{documentId} {
       // The only source a pricing-permitted agent may quote from. Admin-owned
       // because everything in it is spoken aloud on a live call.
-      allow read: if isOutboundStaff();
+      allow read: if canAccessOutboundAccount(documentId);
       allow update, create: if isAdmin();
       allow delete: if false;
     }
@@ -644,7 +682,7 @@ service cloud.firestore {
 
     match /followupQueue/{entryId} {
       // Queued sends, owned by the delivery worker.
-      allow read: if isAdmin() || isOutboundManager();
+      allow read: if isAdmin();
       allow write: if false;
     }
 

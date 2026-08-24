@@ -535,6 +535,52 @@ export function contactabilityFor({ phoneE164, email, doNotCall = false, doNotEm
   };
 }
 
+// ------------------------------------------------------------------ consent
+
+// Consent is deliberately carried as a small, explicit object rather than a
+// campaign-wide label. An AI/artificial-voice call is authorised (or not) by
+// the evidence for this number and this seller; a campaign setting cannot turn
+// a cold list into a consented audience.
+const CONSENT_BASES = new Set(['written_opt_in', 'inbound_request', 'existing_business_relationship', 'not_recorded']);
+
+/**
+ * Normalise the consent evidence that travelled with an imported record.
+ *
+ * This preserves provenance without treating it as valid AI-call permission.
+ * `outbound-compliance.js` performs the stricter, campaign-specific check at
+ * dial/AI-attach time. In particular, legacy Watcher/Byte-Dialer rows without
+ * seller, number, grant time, and evidence remain safely `not_recorded` for
+ * AI calling even when a source happened to include a loose text note.
+ */
+export function normalizeConsent(raw = {}) {
+  const nested = raw?.consent && typeof raw.consent === 'object' ? raw.consent : {};
+  const value = key => nested[key] ?? raw?.[key];
+  const basisInput = clean(value('basis') ?? raw?.consentBasis ?? raw?.consent_basis, 60).toLowerCase();
+  const basis = CONSENT_BASES.has(basisInput) ? basisInput : 'not_recorded';
+  const sellerAccountId = clean(
+    value('sellerAccountId') ?? raw?.consentSellerAccountId ?? raw?.consent_seller_account_id ?? raw?.consentSeller ?? raw?.consent_seller,
+    80
+  ).toLowerCase();
+  const phoneE164 = normalizePhone(
+    value('phoneE164') ?? raw?.consentPhoneE164 ?? raw?.consent_phone_e164 ?? raw?.consentPhone ?? raw?.consent_phone
+  );
+  const grantedAt = toDate(
+    value('grantedAt') ?? raw?.consentGrantedAt ?? raw?.consent_granted_at ?? raw?.consentTimestamp ?? raw?.consent_timestamp
+  );
+
+  return {
+    grantId: clean(value('grantId') ?? raw?.consentGrantId ?? raw?.consent_grant_id, 200),
+    basis,
+    sellerAccountId,
+    phoneE164,
+    evidenceId: clean(value('evidenceId') ?? raw?.consentEvidenceId ?? raw?.consent_evidence_id, 200),
+    record: clean(value('record') ?? raw?.consentRecord ?? raw?.consent_record, 1000),
+    sourceUrl: clean(value('sourceUrl') ?? raw?.consentSourceUrl ?? raw?.consent_source_url, 1000),
+    formVersion: clean(value('formVersion') ?? raw?.consentFormVersion ?? raw?.consent_form_version, 120),
+    grantedAt
+  };
+}
+
 /**
  * Raw provider record -> the `prospects/{id}` document shape (§8 of the spec).
  *
@@ -576,6 +622,11 @@ export function buildProspect(raw = {}, { source = {}, importRunId = '', now = n
     phoneE164,
     email,
     website,
+    // Keep CRM identity and consent provenance through every import path. Both
+    // were previously emitted by the BiteSites-Leads adapter and then dropped
+    // here, leaving a later dialer unable to evaluate target-level permission.
+    providerContactId: clean(raw.providerContactId ?? raw.provider_contact_id ?? raw.ghl_contact_id, 200),
+    consent: normalizeConsent(raw),
 
     address,
     location: {

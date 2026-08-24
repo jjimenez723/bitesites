@@ -1,5 +1,11 @@
 # Outbound calling — setup, providers, and what is not ready
 
+> **2026-08-24 safety update:** Production authority and rollout limits are now
+> governed by [OUTBOUND_PRODUCTION_READINESS.md](./OUTBOUND_PRODUCTION_READINESS.md).
+> Where this older setup guide describes three-to-five live lines, autonomous
+> GoHighLevel AI, recording, or a looser retry policy, the readiness plan and
+> server-enforced one-leg/one-attempt/unrecorded L2 ceiling take precedence.
+
 > **Nothing in this document makes an outbound campaign lawful.** The controls
 > described here are technical: they enforce settings an administrator
 > configured. Consent basis, jurisdictions, calling hours, recording and AI
@@ -15,8 +21,8 @@
 | Provider-neutral architecture | Implemented and tested |
 | Mock dialer | Implemented, fully exercised — this is what the tests run on |
 | Kixie adapter | Implemented for what Kixie documents; **unverified against a live account** |
-| GoHighLevel outbound | Implemented; **unverified against a live sub-account** |
-| Twilio adapter | Implemented against the documented REST contract; **no call has ever been placed from this repository** |
+| GoHighLevel outbound | Autonomous AI disabled; external workflow cannot enforce the signed runtime |
+| Twilio / Hybrid V2 | Controlled adapter, browser voice, AI sideband and fail-safe implemented; **live end-to-end canary still required** |
 | Firestore rules and indexes | Implemented and tested; **not deployed** |
 | Cloud Functions | Implemented; **not deployed** |
 | Provider webhooks | Endpoint implemented; **no provider is configured to call it** |

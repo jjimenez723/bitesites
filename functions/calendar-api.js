@@ -13,6 +13,7 @@ import { FieldValue, getFirestore } from 'firebase-admin/firestore';
 
 import { clean } from './prospect-normalization.js';
 import { ACCOUNT_IDS, LEGACY_ACCOUNT_ID, readAccountId, requireAccountId } from './accounts.js';
+import { assertAccountAccess, assertOutboundAccess, resolveAccountAccess } from './account-access.js';
 import {
   cancelAppointment,
   commitBooking,
@@ -37,25 +38,16 @@ const secretValue = secret => {
   try { return secret.value() || ''; } catch { return ''; }
 };
 
-async function callerRole(db, auth) {
-  const claim = clean(auth?.token?.role, 40);
-  if (claim) return claim;
-  const snapshot = await db.doc(`roles/${auth.uid}`).get();
-  return clean(snapshot.get('role'), 40);
-}
-
 /** Anyone who works the dialer may see and book. Only managers reshape the schedule. */
 async function requireCalendarAccess(request, { manage = false } = {}) {
   if (!request.auth?.uid) throw new HttpsError('unauthenticated', 'Sign in first.');
   const db = getFirestore();
-  const role = await callerRole(db, request.auth);
-  if (!['admin', 'outbound_rep', 'outbound_manager'].includes(role)) {
-    throw new HttpsError('permission-denied', 'This account cannot use the calendar.');
+  try {
+    const access = assertOutboundAccess(await resolveAccountAccess(db, request.auth), { manage });
+    return { db, uid: request.auth.uid, access, role: access.role, email: clean(request.auth.token?.email, 200) };
+  } catch (error) {
+    throw new HttpsError('permission-denied', clean(error.message, 300));
   }
-  if (manage && !['admin', 'outbound_manager'].includes(role)) {
-    throw new HttpsError('permission-denied', 'This account cannot change the schedule.');
-  }
-  return { db, uid: request.auth.uid, role, email: clean(request.auth.token?.email, 200) };
 }
 
 function requestAccountId(request) {
@@ -64,6 +56,12 @@ function requestAccountId(request) {
   } catch (error) {
     throw new HttpsError('invalid-argument', error.message);
   }
+}
+
+function requireCalendarAccount(context, request) {
+  const accountId = requestAccountId(request);
+  try { return assertAccountAccess(context.access, accountId); }
+  catch (error) { throw new HttpsError('permission-denied', clean(error.message, 300)); }
 }
 
 async function calendarClient(db, accountId) {
@@ -80,8 +78,9 @@ async function calendarClient(db, accountId) {
 // ----------------------------------------------------------------- read side
 
 export const getCalendarAvailability = onCall(callOptions, async request => {
-  const { db } = await requireCalendarAccess(request);
-  const accountId = requestAccountId(request);
+  const context = await requireCalendarAccess(request);
+  const { db } = context;
+  const accountId = requireCalendarAccount(context, request);
   const fromMs = Number(request.data?.fromMs) || 0;
   const toMs = Number(request.data?.toMs) || 0;
   const result = await findAvailability(db, {
@@ -100,8 +99,9 @@ export const getCalendarAvailability = onCall(callOptions, async request => {
 });
 
 export const getCalendarSettings = onCall(callOptions, async request => {
-  const { db } = await requireCalendarAccess(request);
-  const accountId = requestAccountId(request);
+  const context = await requireCalendarAccess(request);
+  const { db } = context;
+  const accountId = requireCalendarAccount(context, request);
   const settings = await loadCalendarSettings(db, accountId);
   // A key alone is not a connection: without a calendar to write to there is
   // nothing to sync, and the console should say so rather than imply success.
@@ -120,8 +120,9 @@ export const getCalendarSettings = onCall(callOptions, async request => {
 });
 
 export const updateCalendarSettings = onCall(callOptions, async request => {
-  const { db, uid } = await requireCalendarAccess(request, { manage: true });
-  const accountId = requestAccountId(request);
+  const context = await requireCalendarAccess(request, { manage: true });
+  const { db, uid } = context;
+  const accountId = requireCalendarAccount(context, request);
   // Normalized before it lands: working hours, timezone and capacity are what
   // the availability engine trusts, so an invalid schedule must never persist.
   const settings = normalizeCalendarSettings(request.data?.settings || {}, { accountId });
@@ -138,8 +139,9 @@ export const updateCalendarSettings = onCall(callOptions, async request => {
  * voice agent so a rep and an agent cannot both take the same slot.
  */
 export const bookAppointment = onCall(callOptions, async request => {
-  const { db, uid } = await requireCalendarAccess(request);
-  const accountId = requestAccountId(request);
+  const context = await requireCalendarAccess(request);
+  const { db, uid } = context;
+  const accountId = requireCalendarAccount(context, request);
   const slotId = clean(request.data?.slotId, 200);
   if (!slotId) throw new HttpsError('invalid-argument', 'A slot is required.');
 
@@ -156,6 +158,9 @@ export const bookAppointment = onCall(callOptions, async request => {
       held.error === 'slot_taken' ? 'That time was just taken.' : 'That slot is not bookable.');
   }
 
+  const settings = await loadCalendarSettings(db, accountId);
+  const google = await calendarClient(db, accountId).catch(() => null);
+
   const booked = await commitBooking(db, {
     holdId: held.holdId,
     attendee: {
@@ -165,20 +170,24 @@ export const bookAppointment = onCall(callOptions, async request => {
       company: clean(request.data?.company, 200)
     },
     notes: clean(request.data?.notes, 1000),
-    bookedBy: uid
+    bookedBy: uid,
+    google,
+    settings
   });
   if (!booked.ok) throw new HttpsError('failed-precondition', 'That booking could not be completed.');
 
   await syncAppointmentToGoogle(db, booked.appointmentId, {
-    client: await calendarClient(db, accountId).catch(() => null)
+    client: google,
+    settings
   })
     .catch(() => {});
   return booked;
 });
 
 export const rescheduleAppointmentCall = onCall(callOptions, async request => {
-  const { db, uid } = await requireCalendarAccess(request);
-  const accountId = requestAccountId(request);
+  const context = await requireCalendarAccess(request);
+  const { db, uid } = context;
+  const accountId = requireCalendarAccount(context, request);
   const result = await rescheduleAppointment(db, {
     appointmentId: clean(request.data?.appointmentId, 200),
     slotId: clean(request.data?.slotId, 200),
@@ -197,8 +206,9 @@ export const rescheduleAppointmentCall = onCall(callOptions, async request => {
 });
 
 export const cancelAppointmentCall = onCall(callOptions, async request => {
-  const { db, uid } = await requireCalendarAccess(request);
-  const accountId = requestAccountId(request);
+  const context = await requireCalendarAccess(request);
+  const { db, uid } = context;
+  const accountId = requireCalendarAccount(context, request);
   const appointmentId = clean(request.data?.appointmentId, 200);
   const existing = await db.doc(`appointments/${appointmentId}`).get();
   if (!existing.exists) throw new HttpsError('not-found', 'Appointment not found.');
@@ -221,8 +231,9 @@ export const cancelAppointmentCall = onCall(callOptions, async request => {
 
 /** Mark how a meeting actually went, so booking rate and show rate can diverge. */
 export const setAppointmentOutcome = onCall(callOptions, async request => {
-  const { db, uid } = await requireCalendarAccess(request);
-  const accountId = requestAccountId(request);
+  const context = await requireCalendarAccess(request);
+  const { db, uid } = context;
+  const accountId = requireCalendarAccount(context, request);
   const appointmentId = clean(request.data?.appointmentId, 200);
   const outcome = clean(request.data?.outcome, 20);
   if (!appointmentId) throw new HttpsError('invalid-argument', 'An appointment is required.');

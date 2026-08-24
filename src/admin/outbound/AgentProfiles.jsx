@@ -214,7 +214,9 @@ export default function AgentProfiles() {
   };
 
   const createKb = async () => {
-    const result = await action.run(() => outbound.createKnowledgeBase({ name: kbName }), 'Knowledge base created.');
+    const accountId = readAccountId(draft.accountId);
+    if (!accountId) return;
+    const result = await action.run(() => outbound.createKnowledgeBase({ name: kbName, accountId }), 'Knowledge base created.');
     if (!result) return;
     setKbName('');
     setKbDoc(current => ({ ...current, knowledgeBaseId: result.knowledgeBaseId }));
@@ -522,7 +524,7 @@ export default function AgentProfiles() {
         <div className="card-head"><div><h3>Knowledge Base</h3><p>Add approved facts the live AI is allowed to retrieve.</p></div></div>
         <div className="outbound-form-grid">
           <label><span>New knowledge base name</span><input value={kbName} onChange={event => setKbName(event.target.value)} placeholder="BiteSites Services & Pricing" /></label>
-          <div className="hybrid-field-button"><button className="btn-admin" type="button" disabled={!kbName.trim() || action.busy} onClick={createKb}>Create knowledge base</button></div>
+          <div className="hybrid-field-button"><button className="btn-admin" type="button" disabled={!kbName.trim() || !readAccountId(draft.accountId) || action.busy} onClick={createKb}>Create knowledge base</button></div>
           <label><span>Knowledge base</span>
             <select className="admin-select" value={kbDoc.knowledgeBaseId} onChange={event => setKbDoc(current => ({ ...current, knowledgeBaseId: event.target.value }))}>
               <option value="">Select…</option>

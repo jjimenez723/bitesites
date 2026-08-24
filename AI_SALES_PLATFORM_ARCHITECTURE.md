@@ -1,5 +1,13 @@
 # BiteSites AI Sales Platform — System Architecture v1.0
 
+> **Operational safety addendum (2026-08-24):** The production rollout is
+> governed by [OUTBOUND_PRODUCTION_READINESS.md](./OUTBOUND_PRODUCTION_READINESS.md).
+> The earlier three-call default and “effectively unlimited” AI-capacity design
+> below describe architectural possibility, not current authorization. The
+> server now caps every carrier-backed campaign at one live leg, one attempt,
+> unrecorded L2 appointment-setting authority until explicit promotion gates are
+> satisfied.
+
 Status: implementation contract for Hybrid AI Dialer V2
 
 This document is the source of truth for the outbound sales system. Existing outbound code that conflicts with this document must be migrated toward this architecture rather than preserved for compatibility. Existing lead/prospect separation, compliance gates, DNC propagation, call history, provider credential isolation, and Firestore security boundaries remain authoritative unless explicitly superseded below.

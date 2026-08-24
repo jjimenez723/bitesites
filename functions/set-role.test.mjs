@@ -44,9 +44,14 @@ const codeOf = async promise => {
 };
 
 const claimOf = async uid => (await auth.getUser(uid)).customClaims?.role ?? null;
+const claimAccountsOf = async uid => (await auth.getUser(uid)).customClaims?.accountIds ?? [];
 const roleDocOf = async uid => {
   const snapshot = await db.doc(`roles/${uid}`).get();
   return snapshot.exists ? snapshot.get('role') : null;
+};
+const roleAccountsOf = async uid => {
+  const snapshot = await db.doc(`roles/${uid}`).get();
+  return snapshot.exists ? snapshot.get('accountIds') || [] : [];
 };
 const statusOf = async uid => {
   const snapshot = await db.doc(`users/${uid}`).get();
@@ -65,6 +70,7 @@ await mk('admin_caller', 'admin@example.com');
 await mk('second_admin', 'admin2@example.com');
 await mk('target', 'target@example.com');
 await mk('stale_admin', 'stale@example.com');
+await mk('stale_claim_caller', 'stale-claim@example.com');
 
 // The caller is an admin by document, the way a bootstrapped first admin is.
 await db.doc('roles/admin_caller').set({ role: 'admin', email: 'admin@example.com' });
@@ -83,6 +89,13 @@ check('rejects a signed-in non-admin',
 check('rejects a client trying to promote themselves',
   (await codeOf(call({ uid: 'target', role: 'admin' }, { uid: 'target', token: { role: 'client' } }))) === 'permission-denied');
 
+await db.doc('roles/stale_claim_caller').set({ role: 'outbound_rep', accountIds: ['bitesites'] });
+check('a stored downgrade defeats a stale admin claim',
+  (await codeOf(call(
+    { uid: 'target', role: 'admin' },
+    { uid: 'stale_claim_caller', token: { role: 'admin', accountIds: ['bitesites'] } }
+  ))) === 'permission-denied');
+
 describe('granting sets both halves');
 await call({ uid: 'target', role: 'client' }, ADMIN);
 check('writes the role document', (await roleDocOf('target')) === 'client');
@@ -90,19 +103,24 @@ check('mints the matching auth claim', (await claimOf('target')) === 'client');
 check('marks the profile approved', (await statusOf('target')) === 'approved');
 
 describe('promotion updates the claim, not just the document');
-await call({ uid: 'target', role: 'outbound_rep' }, ADMIN);
+await call({ uid: 'target', role: 'outbound_rep', accountIds: ['bitesites'] }, ADMIN);
 check('can grant focused outbound representative access',
-  (await roleDocOf('target')) === 'outbound_rep' && (await claimOf('target')) === 'outbound_rep');
-await call({ uid: 'target', role: 'outbound_manager' }, ADMIN);
+  (await roleDocOf('target')) === 'outbound_rep'
+  && (await claimOf('target')) === 'outbound_rep'
+  && (await roleAccountsOf('target')).join(',') === 'bitesites'
+  && (await claimAccountsOf('target')).join(',') === 'bitesites');
+await call({ uid: 'target', role: 'outbound_manager', accountIds: ['fine-line-group', 'stone-bellisimo'] }, ADMIN);
 check('can promote a rep to outbound manager',
-  (await roleDocOf('target')) === 'outbound_manager' && (await claimOf('target')) === 'outbound_manager');
+  (await roleDocOf('target')) === 'outbound_manager'
+  && (await claimOf('target')) === 'outbound_manager'
+  && (await claimAccountsOf('target')).join(',') === 'fine-line-group,stone-bellisimo');
 await call({ uid: 'target', role: 'admin' }, ADMIN);
 check('role document says admin', (await roleDocOf('target')) === 'admin');
 check('claim says admin too', (await claimOf('target')) === 'admin');
 
 describe('revoking clears both halves — the bug this function exists for');
 await call({ uid: 'target', role: 'none' }, ADMIN);
-check('deletes the role document', (await roleDocOf('target')) === null);
+check('writes an authoritative revoked tombstone', (await roleDocOf('target')) === 'revoked');
 check('CLEARS THE AUTH CLAIM', (await claimOf('target')) === null,
   'the old UI left this set, so a revoked admin stayed admin');
 check('returns the profile to pending', (await statusOf('target')) === 'pending');
@@ -114,7 +132,13 @@ await auth.setCustomUserClaims('stale_admin', { role: 'admin' });
 await db.doc('roles/stale_admin').set({ role: 'admin', email: 'stale@example.com' });
 await call({ uid: 'stale_admin', role: 'none' }, ADMIN);
 check('claim-granted admin loses the claim', (await claimOf('stale_admin')) === null);
-check('claim-granted admin loses the document', (await roleDocOf('stale_admin')) === null);
+check('claim-granted admin receives a revoked tombstone', (await roleDocOf('stale_admin')) === 'revoked');
+
+check('the stale pre-revocation token cannot administer roles after the tombstone',
+  (await codeOf(call(
+    { uid: 'target', role: 'admin' },
+    { uid: 'stale_admin', token: { role: 'admin' } }
+  ))) === 'permission-denied');
 
 describe('guard rails');
 check('an admin cannot revoke themselves',
@@ -129,6 +153,12 @@ check('an admin can still revoke a different admin',
 
 check('rejects an unknown role',
   (await codeOf(call({ uid: 'target', role: 'superuser' }, ADMIN))) === 'invalid-argument');
+
+check('rejects an outbound role with no seller scope',
+  (await codeOf(call({ uid: 'target', role: 'outbound_rep', accountIds: [] }, ADMIN))) === 'invalid-argument');
+
+check('drops unknown seller ids and still rejects an empty effective scope',
+  (await codeOf(call({ uid: 'target', role: 'outbound_manager', accountIds: ['unknown'] }, ADMIN))) === 'invalid-argument');
 
 check('rejects a missing uid',
   (await codeOf(call({ uid: '', role: 'admin' }, ADMIN))) === 'invalid-argument');

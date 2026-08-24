@@ -34,6 +34,7 @@ import {
 } from './email.js';
 import { aggregateFunnelData } from './aggregate-funnel.js';
 import { describeSlotForSpeech, loadCalendarSettings } from './booking-calendar.js';
+import { normalizeAccountScope } from './account-access.js';
 
 initializeApp();
 setGlobalOptions({ region: 'us-central1', maxInstances: 10 });
@@ -2636,6 +2637,11 @@ export {
   approveLeadResearch,
   prepareTargetForDialing,
 
+  // Server-owned AI-voice consent evidence and grant ledger.
+  createConsentEvidenceCandidateCall,
+  issueConsentGrantCall,
+  revokeConsentGrantCall,
+
   // Dialing.
   startPowerDialerSession,
   startParallelDialerSession,
@@ -2655,29 +2661,29 @@ export {
 // Role management — the only place a role may change from the browser
 // ---------------------------------------------------------------------------
 //
-// A role has two halves that MUST move together:
+// A role is mirrored in two places:
 //
-//   * `roles/{uid}` — the document firestore.rules falls back to.
-//   * a `role` custom claim — the fast path the rules read *first*.
+//   * `roles/{uid}` — the authoritative document.
+//   * a `role` custom claim — bootstrap/cache for claim-aware services.
 //
-// Splitting them is how revocation silently fails. The rules prefer the claim,
-// so deleting only the document leaves a revoked admin holding a claim that
-// still says "admin" — and because a claim lives on the account rather than in
-// the session, signing out and back in just reissues it.
+// Revocation keeps a role-document tombstone. Deleting the document would make
+// an already-issued stale claim the fallback until its token expires.
 //
 // So the browser no longer writes `roles/{uid}` at all (rules deny it outright);
 // it calls this instead, and this is the only client-reachable path that can
-// change a role. It writes both halves, or neither.
+// change a role. The authoritative document is written first so a partial
+// failure always leaves the narrower server-side decision in force.
 
 const ASSIGNABLE_ROLES = ['admin', 'client', 'outbound_rep', 'outbound_manager'];
 
-// The caller's own role, resolved the same way firestore.rules resolves it:
-// claim first, document second.
+// The caller's own role, resolved the same way firestore.rules resolves it.
+// An existing server-owned role document is authoritative so a stale elevated
+// token cannot keep administering users after a downgrade or revoke.
 async function callerRole(db, auth) {
-  if (auth?.token?.role) return auth.token.role;
   if (!auth?.uid) return '';
   const snapshot = await db.doc(`roles/${auth.uid}`).get();
-  return snapshot.exists ? snapshot.get('role') || '' : '';
+  if (snapshot.exists) return snapshot.get('role') || '';
+  return auth?.token?.role || '';
 }
 
 export const setUserRole = onCall(
@@ -2699,6 +2705,10 @@ export const setUserRole = onCall(
     if (role !== 'none' && !ASSIGNABLE_ROLES.includes(role)) {
       throw new HttpsError('invalid-argument', `Role must be one of ${ASSIGNABLE_ROLES.join(', ')} or none.`);
     }
+    const accountIds = normalizeAccountScope(request.data?.accountIds);
+    if (['outbound_rep', 'outbound_manager'].includes(role) && !accountIds.length) {
+      throw new HttpsError('invalid-argument', 'Assign at least one seller account to an outbound role.');
+    }
 
     // Guard rail, not a security control: an admin revoking themselves is
     // almost always a misclick, and the last one to do it locks everybody out
@@ -2715,11 +2725,20 @@ export const setUserRole = onCall(
     if (!target) throw new HttpsError('not-found', 'No account with that uid.');
 
     if (role === 'none') {
-      await auth.setCustomUserClaims(uid, null);
-      // Without this the already-issued ID token keeps the old claim until it
-      // expires — up to an hour of admin access after being revoked.
+      const preservedClaims = { ...(target.customClaims || {}) };
+      delete preservedClaims.role;
+      delete preservedClaims.accountIds;
+      // Keep an authoritative tombstone before touching Auth. Deleting this
+      // document would make the already-issued token's stale role claim the
+      // fallback again until that token expires.
+      await db.doc(`roles/${uid}`).set({
+        role: 'revoked', accountIds: [], email: target.email || '',
+        revokedAt: FieldValue.serverTimestamp(), revokedBy: request.auth.uid
+      });
+      await auth.setCustomUserClaims(uid, Object.keys(preservedClaims).length ? preservedClaims : null);
+      // The stored tombstone is the immediate boundary; token revocation is a
+      // second layer for services that inspect claims outside Firestore.
       await auth.revokeRefreshTokens(uid);
-      await db.doc(`roles/${uid}`).delete();
       await db.doc(`users/${uid}`).set(
         { status: 'pending', updatedAt: FieldValue.serverTimestamp() },
         { merge: true }
@@ -2738,16 +2757,23 @@ export const setUserRole = onCall(
       return { uid, role: '', email: target.email || '' };
     }
 
-    await auth.setCustomUserClaims(uid, { role });
-    // A promotion has to reach the token too. Without this, a client promoted
-    // to admin keeps a stale claim saying "client" until their token expires.
-    await auth.revokeRefreshTokens(uid);
+    const nextClaims = { ...(target.customClaims || {}), role };
+    delete nextClaims.accountIds;
+    if (['outbound_rep', 'outbound_manager'].includes(role)) nextClaims.accountIds = accountIds;
+    // Write the authoritative document first. Promotions remain blocked by the
+    // old document until this succeeds; downgrades take effect before a stale
+    // elevated claim can be observed.
     await db.doc(`roles/${uid}`).set({
       role,
+      accountIds: ['outbound_rep', 'outbound_manager'].includes(role) ? accountIds : [],
       email: target.email || '',
       grantedAt: FieldValue.serverTimestamp(),
       grantedBy: request.auth.uid
     });
+    await auth.setCustomUserClaims(uid, nextClaims);
+    // A promotion has to reach the token too. Without this, a client promoted
+    // to admin keeps a stale claim saying "client" until their token expires.
+    await auth.revokeRefreshTokens(uid);
     await db.doc(`users/${uid}`).set(
       { status: 'approved', updatedAt: FieldValue.serverTimestamp() },
       { merge: true }
@@ -2772,7 +2798,10 @@ export const setUserRole = onCall(
       }));
     }
     console.log(`[roles] ${request.auth.token?.email || request.auth.uid} granted ${role} to ${target.email}`);
-    return { uid, role, email: target.email || '' };
+    return {
+      uid, role, accountIds: ['outbound_rep', 'outbound_manager'].includes(role) ? accountIds : [],
+      email: target.email || ''
+    };
   }
 );
 

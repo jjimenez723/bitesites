@@ -132,7 +132,11 @@ async function executeTool(session, event) {
   try { args = event.arguments ? JSON.parse(event.arguments) : {}; } catch { args = {}; }
 
   const output = await control(session.callId, 'agent_tool', {
-    realtimeCallId: session.realtimeCallId, tool: name, args
+    realtimeCallId: session.realtimeCallId,
+    // OpenAI's immutable function-call id is the server-owned idempotency key.
+    // Never substitute item_id: it identifies a conversation item, not this
+    // invocation, and would allow a retry to replay a booking/write.
+    requestId: clean(event.call_id, 200), tool: name, args
   });
 
   if (output?.endsCall) {
@@ -178,6 +182,7 @@ async function pollControl(session) {
     const handoffState = state?.handoff?.state;
 
     if (controller === 'human' || controller === 'none') {
+      session.intentionalClose = true;
       await hangupRealtimeCall(session.realtimeCallId);
       try { session.ws.close(1000, 'human takeover'); } catch { /* closing */ }
       return;
@@ -212,14 +217,23 @@ function startSidebandSocket({ callId, realtimeCallId, runtime }) {
     callId, realtimeCallId, runtime, ws, sequence: Date.now(),
     toolNames: new Map(), handoffRequested: false, handoffResponseId: '',
     closed: false, polling: false, endAfterTool: false, pollTimer: null,
+    intentionalClose: false, failureReported: false,
     pendingContinuationResponseId: '', continuationAttempts: 0
   };
   sessions.set(callId, session);
 
   ws.on('open', async () => {
-    await control(callId, 'attached', {
-      realtimeCallId, model: runtime.model, voice: runtime.voice
-    }).catch(error => console.warn('[sideband] attach acknowledgement failed', error.message));
+    try {
+      await control(callId, 'attached', {
+        realtimeCallId, model: runtime.model, voice: runtime.voice
+      });
+    } catch (error) {
+      session.failureReported = true;
+      console.warn('[sideband] attach acknowledgement failed', error.message);
+      await hangupRealtimeCall(realtimeCallId);
+      try { ws.close(1011, 'attach acknowledgement failed'); } catch { /* closing */ }
+      return;
+    }
 
     send(ws, {
       type: 'response.create',
@@ -279,6 +293,7 @@ function startSidebandSocket({ callId, realtimeCallId, runtime }) {
         .catch(error => console.warn('[sideband] handoff completion signal failed', error.message));
       session.handoffResponseId = '';
     } else if (event.type === 'output_audio_buffer.stopped' && session.endAfterTool) {
+      session.intentionalClose = true;
       void hangupRealtimeCall(realtimeCallId);
       session.endAfterTool = false;
     } else if (isOutputAudioDrained(event, session.pendingContinuationResponseId)) {
@@ -300,6 +315,12 @@ function startSidebandSocket({ callId, realtimeCallId, runtime }) {
     session.closed = true;
     if (session.pollTimer) clearInterval(session.pollTimer);
     sessions.delete(callId);
+    if (!session.intentionalClose && !session.failureReported) {
+      session.failureReported = true;
+      void control(callId, 'attachment_failed', {
+        realtimeCallId, reason: 'sideband_websocket_closed'
+      }).catch(error => console.warn('[sideband] attachment failure report failed', error.message));
+    }
   };
   ws.on('close', close);
   ws.on('error', error => {
@@ -324,6 +345,9 @@ async function handleIncoming(event) {
     startSidebandSocket({ callId, realtimeCallId, runtime: prepared.runtime });
   } catch (error) {
     console.error('[sideband] could not accept realtime call', callId, error.message);
+    await control(callId, 'attachment_failed', {
+      realtimeCallId, reason: `realtime_accept_failed: ${clean(error.message, 240)}`
+    }).catch(controlError => console.warn('[sideband] attachment failure report failed', controlError.message));
     await fetch(`${OPENAI_BASE}/realtime/calls/${encodeURIComponent(realtimeCallId)}/reject`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, 'Content-Type': 'application/json' },

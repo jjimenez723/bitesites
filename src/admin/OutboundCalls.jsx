@@ -17,6 +17,7 @@ import AgentProfiles from './outbound/AgentProfiles';
 import AppointmentCalendar from './outbound/AppointmentCalendar';
 import TransferInbox from './outbound/TransferInbox';
 import TeamCallCoach from './outbound/TeamCallCoach';
+import ConsentRegistry from './outbound/ConsentRegistry';
 import './outbound/outbound.css';
 import './outbound/hybrid.css';
 import './outbound/agents.css';
@@ -30,6 +31,7 @@ const TABS = [
   ['dialer', 'Live Dialer'],
   ['coaching', 'Team Coaching'],
   ['agents', 'AI Agents'],
+  ['consent', 'AI Consent'],
   ['calendar', 'Calendar'],
   ['later', 'Call Later'],
   ['history', 'History'],
@@ -37,13 +39,19 @@ const TABS = [
 ];
 
 const REP_TAB_KEYS = new Set(['queue', 'dialer', 'calendar', 'later', 'history']);
+const MANAGER_TAB_KEYS = new Set([
+  'campaigns', 'prospects', 'queue', 'dialer', 'coaching', 'agents',
+  'calendar', 'later', 'history', 'settings'
+]);
 
 export default function OutboundCalls({ role = 'admin', currentUid = '' }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const canManage = role !== 'outbound_rep';
   const visibleTabs = useMemo(
-    () => canManage ? TABS : TABS.filter(([key]) => REP_TAB_KEYS.has(key)),
-    [canManage]
+    () => canManage
+      ? TABS.filter(([key]) => role === 'admin' || MANAGER_TAB_KEYS.has(key))
+      : TABS.filter(([key]) => REP_TAB_KEYS.has(key)),
+    [canManage, role]
   );
   const requestedTab = searchParams.get('tab');
   const initialTab = visibleTabs.some(([key]) => key === requestedTab)
@@ -55,7 +63,9 @@ export default function OutboundCalls({ role = 'admin', currentUid = '' }) {
   const [config, setConfig] = useState({ data: null, loading: true, error: null });
   const tabRefs = useRef([]);
 
-  const campaigns = useCampaigns();
+  const accountIds = config.data?.accountIds || [];
+  const allAccounts = config.data?.allAccounts === true || role === 'admin';
+  const campaigns = useCampaigns(accountIds, allAccounts);
 
   const setTab = useCallback(next => {
     if (!visibleTabs.some(([key]) => key === next)) return;
@@ -166,6 +176,8 @@ export default function OutboundCalls({ role = 'admin', currentUid = '' }) {
           {tab === 'prospects' && (
             <ProspectList
               campaigns={campaigns.rows}
+              accountIds={accountIds}
+              allAccounts={allAccounts}
               onOpen={setProspectId}
               onTargetsAdded={id => {
                 setCampaignId(id);
@@ -188,9 +200,10 @@ export default function OutboundCalls({ role = 'admin', currentUid = '' }) {
               role={role}
             />
           )}
-          {tab === 'coaching' && <TeamCallCoach />}
+          {tab === 'coaching' && <TeamCallCoach accountIds={accountIds} allAccounts={allAccounts} />}
           {tab === 'agents' && <AgentProfiles />}
-          {tab === 'calendar' && <AppointmentCalendar canManage={canManage} />}
+          {tab === 'consent' && <ConsentRegistry />}
+          {tab === 'calendar' && <AppointmentCalendar canManage={canManage} accountIds={accountIds} allAccounts={allAccounts} />}
           {tab === 'later' && (
             <CallLaterQueue campaignId={campaignId} campaigns={campaigns.rows} onSelectCampaign={setCampaignId} />
           )}
@@ -206,7 +219,7 @@ export default function OutboundCalls({ role = 'admin', currentUid = '' }) {
       {prospectId && (
         <ProspectDetail prospectId={prospectId} onClose={() => setProspectId(null)} onChanged={campaigns.refresh} />
       )}
-      <TransferInbox currentUid={currentUid} />
+      <TransferInbox currentUid={currentUid} accountIds={accountIds} allAccounts={allAccounts} />
     </>
   );
 }

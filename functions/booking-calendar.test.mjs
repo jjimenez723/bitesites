@@ -15,7 +15,15 @@ import {
   zonedWallClockToUtc,
   calendarDefaultsForAccount,
   normalizeBusyCalendarIds,
-  DEFAULT_CALENDAR_SETTINGS
+  DEFAULT_CALENDAR_SETTINGS,
+  buildGoogleEvent,
+  googleSyncOptions,
+  googleEventIdForAppointment,
+  GOOGLE_ADMISSION_VERSION,
+  HOLD_TTL_MS,
+  preflightGoogleAdmission,
+  commitBooking,
+  syncAppointmentToGoogle
 } from './booking-calendar.js';
 
 const ZONE = 'America/New_York';
@@ -355,4 +363,232 @@ test('confirmation references avoid characters that mishear over a phone', () =>
     assert.match(ref, /^BS-[A-Z2-9]{3}-[A-Z2-9]{3}$/);
     assert.doesNotMatch(ref.slice(3), /[OIL01]/);
   }
+});
+
+// -------------------------------------------------------------- Google sync
+
+const googleAppointment = overrides => ({
+  id: 'appointment-123',
+  accountId: 'bitesites',
+  status: 'booked',
+  startAt: '2026-06-16T14:00:00.000Z',
+  endAt: '2026-06-16T14:20:00.000Z',
+  attendee: { name: 'Dana Example', email: 'dana@example.com' },
+  ...overrides
+});
+
+function bookingDb(record) {
+  const snapshot = () => ({
+    exists: true,
+    data: () => ({ ...record }),
+    get: key => record[key]
+  });
+  const ref = {
+    get: async () => snapshot(),
+    set: async (patch, options = {}) => {
+      if (options.merge) Object.assign(record, patch);
+      else Object.assign(record, patch);
+    }
+  };
+  return {
+    record,
+    db: {
+      doc: path => {
+        assert.equal(path, 'appointments/hold-123');
+        return ref;
+      },
+      runTransaction: async work => work({
+        get: async () => snapshot(),
+        set: (_ref, patch, options = {}) => {
+          if (options.merge) Object.assign(record, patch);
+          else Object.assign(record, patch);
+        }
+      })
+    }
+  };
+}
+
+const heldAppointment = overrides => ({
+  id: 'hold-123',
+  accountId: 'bitesites',
+  status: 'held',
+  startAt: '2026-06-16T14:00:00.000Z',
+  endAt: '2026-06-16T14:20:00.000Z',
+  holdExpiresAt: '2026-06-16T13:55:00.000Z',
+  ...overrides
+});
+
+const committedCalendarSettings = () => settings({
+  googleCalendarId: 'team@example.com', busyCalendarIds: ['owner@example.com']
+});
+
+// ------------------------------------------------------- Google admission
+
+test('Google admission marks a configured calendar unavailable rather than assuming it is free', async () => {
+  const result = await preflightGoogleAdmission({
+    google: null,
+    settings: committedCalendarSettings(),
+    startMs: Date.parse('2026-06-16T14:00:00.000Z'),
+    endMs: Date.parse('2026-06-16T14:20:00.000Z'),
+    nowMs: Date.parse('2026-06-16T12:00:00.000Z')
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.error, 'google_admission_unavailable');
+  assert.equal(result.audit.state, 'unavailable');
+  assert.equal(result.audit.version, GOOGLE_ADMISSION_VERSION);
+});
+
+test('external Google conflict cancels the hold and never commits a booking', async () => {
+  const nowMs = Date.parse('2026-06-16T12:00:00.000Z');
+  const { db, record } = bookingDb(heldAppointment({
+    holdExpiresAt: new Date(nowMs + HOLD_TTL_MS).toISOString()
+  }));
+  const result = await commitBooking(db, {
+    holdId: 'hold-123', attendee: { email: 'dana@example.com' }, nowMs,
+    settings: committedCalendarSettings(),
+    google: { freeBusy: async () => [{
+      startMs: Date.parse('2026-06-16T14:05:00.000Z'),
+      endMs: Date.parse('2026-06-16T14:25:00.000Z')
+    }] }
+  });
+  assert.deepEqual(result, { ok: false, error: 'google_slot_taken' });
+  assert.equal(record.status, 'cancelled');
+  assert.equal(record.cancelReason, 'google_admission_conflict');
+  assert.equal(record.googleAdmission.state, 'conflict');
+  assert.equal(record.googleAdmission.version, GOOGLE_ADMISSION_VERSION);
+});
+
+test('Google outage preserves the hold for retry, then a retry admits and commits exactly once', async () => {
+  const nowMs = Date.parse('2026-06-16T12:00:00.000Z');
+  const { db, record } = bookingDb(heldAppointment({
+    holdExpiresAt: new Date(nowMs + HOLD_TTL_MS).toISOString()
+  }));
+  const request = {
+    holdId: 'hold-123', attendee: { name: 'Dana', email: 'dana@example.com' }, nowMs,
+    settings: committedCalendarSettings()
+  };
+  const unavailable = await commitBooking(db, {
+    ...request,
+    google: { freeBusy: async () => { throw new Error('upstream outage'); } }
+  });
+  assert.equal(unavailable.error, 'google_admission_unavailable');
+  assert.equal(record.status, 'held');
+  assert.equal(record.googleAdmission.state, 'unavailable');
+
+  let checks = 0;
+  const admitted = await commitBooking(db, {
+    ...request,
+    google: { freeBusy: async () => { checks += 1; return []; } }
+  });
+  assert.equal(admitted.ok, true);
+  assert.equal(admitted.idempotent, false);
+  assert.equal(record.status, 'booked');
+  assert.equal(record.googleAdmission.state, 'admitted');
+
+  const retry = await commitBooking(db, {
+    ...request,
+    google: { freeBusy: async () => { checks += 1; return [{ startMs: 0, endMs: 1 }]; } }
+  });
+  assert.equal(retry.ok, true);
+  assert.equal(retry.idempotent, true);
+  assert.equal(checks, 1, 'an already-booked hold must not re-check or rebook');
+});
+
+test('a deliberately disconnected Google calendar retains Firestore-only booking', async () => {
+  const nowMs = Date.parse('2026-06-16T12:00:00.000Z');
+  const { db, record } = bookingDb(heldAppointment({
+    holdExpiresAt: new Date(nowMs + HOLD_TTL_MS).toISOString()
+  }));
+  const result = await commitBooking(db, {
+    holdId: 'hold-123', attendee: { email: 'dana@example.com' }, nowMs,
+    settings: settings({ googleCalendarId: '', googleSyncEnabled: true }), google: null
+  });
+  assert.equal(result.ok, true);
+  assert.equal(record.status, 'booked');
+  assert.equal(record.googleAdmission.state, 'not_configured');
+});
+
+test('a confirmed booking creates a real Google attendee invitation', () => {
+  const event = buildGoogleEvent(googleAppointment(), settings());
+  assert.equal(event.id, googleEventIdForAppointment('appointment-123'));
+  assert.match(event.id, /^bs[0-9a-f]{48}$/);
+  assert.deepEqual(event.attendees, [{ email: 'dana@example.com', displayName: 'Dana Example' }]);
+  assert.deepEqual(googleSyncOptions(googleAppointment()), {
+    sendUpdates: 'all', markInvitationSent: true
+  });
+});
+
+test('holds and cancellations never turn into a new attendee invitation', () => {
+  const held = googleAppointment({ status: 'held' });
+  const cancelled = googleAppointment({ status: 'cancelled' });
+  assert.equal(buildGoogleEvent(held, settings()).attendees, undefined);
+  assert.equal(buildGoogleEvent(cancelled, settings()).attendees, undefined);
+  assert.deepEqual(googleSyncOptions(held), { sendUpdates: 'none', markInvitationSent: false });
+  assert.deepEqual(googleSyncOptions(cancelled), { sendUpdates: 'none', markInvitationSent: false });
+});
+
+test('Google sync retries stay silent after an invitation, while reschedules notify it', () => {
+  const invited = googleAppointment({ googleInviteSentAt: '2026-06-01T12:00:00.000Z' });
+  assert.deepEqual(googleSyncOptions(invited), { sendUpdates: 'none', markInvitationSent: false });
+  assert.deepEqual(googleSyncOptions({ ...invited, googleSyncReason: 'rescheduled' }), {
+    sendUpdates: 'all', markInvitationSent: false
+  });
+  assert.deepEqual(googleSyncOptions({ ...invited, status: 'cancelled', googleSyncReason: 'cancelled' }), {
+    sendUpdates: 'all', markInvitationSent: false
+  });
+});
+
+test('a sync lease admits only one concurrent Google invitation', async () => {
+  const record = googleAppointment({ googleSyncState: 'pending' });
+  let transactionTail = Promise.resolve();
+  const snapshot = () => ({
+    exists: true,
+    data: () => ({ ...record }),
+    get: key => record[key]
+  });
+  const ref = {
+    get: async () => snapshot(),
+    set: async update => Object.assign(record, update)
+  };
+  const db = {
+    doc: path => {
+      assert.equal(path, 'appointments/appointment-123');
+      return ref;
+    },
+    runTransaction: async work => {
+      let release;
+      const predecessor = transactionTail;
+      transactionTail = new Promise(resolve => { release = resolve; });
+      await predecessor;
+      try {
+        return await work({
+          get: async () => snapshot(),
+          set: (_ref, update) => Object.assign(record, update)
+        });
+      } finally {
+        release();
+      }
+    }
+  };
+  let providerWrites = 0;
+  const client = {
+    upsertEvent: async (_existingId, event) => {
+      providerWrites += 1;
+      await new Promise(resolve => setTimeout(resolve, 5));
+      return { id: event.id, htmlLink: 'https://calendar.example/event' };
+    },
+    freeBusy: async () => [{
+      startMs: Date.parse(record.startAt), endMs: Date.parse(record.endAt)
+    }]
+  };
+
+  const [first, second] = await Promise.all([
+    syncAppointmentToGoogle(db, 'appointment-123', { client, settings: settings() }),
+    syncAppointmentToGoogle(db, 'appointment-123', { client, settings: settings() })
+  ]);
+
+  assert.equal(providerWrites, 1);
+  assert.equal([first, second].filter(result => result.ok).length, 1);
+  assert.equal([first, second].find(result => result.skipped)?.reason, 'sync_in_progress');
+  assert.equal(record.googleAdmissionReconciliation.state, 'reconciled');
 });

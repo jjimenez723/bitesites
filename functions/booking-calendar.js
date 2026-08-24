@@ -8,12 +8,12 @@
 //    availability the agent speaks aloud is the availability the dashboard
 //    draws and the tests assert.
 //
-// 2. Firestore is the book of record; Google Calendar is a mirror. A booking
-//    is committed locally before Google is touched, and a Google failure is
-//    recorded on the appointment rather than thrown. A calendar outage must
-//    never break a live phone call or lose a confirmed meeting.
+// 2. Firestore is the book of record and Google Calendar is the mirror. A
+//    configured Google calendar is nevertheless a commit-admission authority:
+//    its free/busy view must be healthy immediately before a local booking is
+//    committed. After that admission, provider event delivery is retryable.
 
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { JWT } from 'google-auth-library';
 
@@ -28,6 +28,13 @@ export const HOLD_TTL_MS = 5 * MINUTE_MS;
 
 /** Overlap lookback. No appointment may be longer than this. */
 const MAX_APPOINTMENT_MS = 4 * 60 * MINUTE_MS;
+// Long enough that a slow or half-open provider request cannot expire the
+// lease and let the retry sweep send a second invitation concurrently.
+const GOOGLE_SYNC_LEASE_MS = 10 * MINUTE_MS;
+// This is intentionally versioned.  An appointment stores the version of the
+// admission check that allowed it through, so an operator can distinguish a
+// historical Google check from a newer policy without reconstructing deploys.
+export const GOOGLE_ADMISSION_VERSION = 'google-freebusy-v1';
 
 export const APPOINTMENT_STATES = Object.freeze([
   'held', 'booked', 'cancelled', 'completed', 'no_show'
@@ -507,6 +514,89 @@ const toMillis = value => {
   return Number.isFinite(date.getTime()) ? date.getTime() : 0;
 };
 
+const googleAdmissionRequired = settings => Boolean(
+  settings?.googleSyncEnabled !== false && clean(settings?.googleCalendarId, 300)
+);
+
+const googleAdmissionFingerprint = settings => createHash('sha256')
+  .update(JSON.stringify({
+    calendarId: clean(settings?.googleCalendarId, 300).toLowerCase(),
+    busyCalendarIds: normalizeBusyCalendarIds(settings?.busyCalendarIds)
+  }))
+  .digest('hex')
+  .slice(0, 24);
+
+const googleAdmissionAudit = ({ state, nowMs, startMs, endMs, settings, busyCount = 0, error = '' }) => ({
+  version: GOOGLE_ADMISSION_VERSION,
+  state,
+  checkedAt: Timestamp.fromMillis(nowMs),
+  windowStartAt: Timestamp.fromMillis(startMs),
+  windowEndAt: Timestamp.fromMillis(endMs),
+  configurationFingerprint: googleAdmissionFingerprint(settings),
+  busyCount: int(busyCount, 0, 1000, 0),
+  ...(clean(error, 300) ? { error: clean(error, 300) } : {})
+});
+
+/**
+ * Final, fail-closed Google admission check.  `findAvailability` deliberately
+ * remains resilient while a caller is browsing; a commit is different: when a
+ * configured calendar cannot be checked, claiming the slot would be unsafe.
+ */
+export async function preflightGoogleAdmission({
+  google = null, settings, startMs, endMs, nowMs = Date.now()
+} = {}) {
+  const config = normalizeCalendarSettings(settings || {});
+  if (!googleAdmissionRequired(config)) {
+    return {
+      ok: true,
+      required: false,
+      audit: googleAdmissionAudit({
+        state: 'not_configured', nowMs, startMs, endMs, settings: config
+      })
+    };
+  }
+  if (!google || typeof google.freeBusy !== 'function') {
+    return {
+      ok: false,
+      error: 'google_admission_unavailable',
+      audit: googleAdmissionAudit({
+        state: 'unavailable', nowMs, startMs, endMs, settings: config,
+        error: 'google_client_unavailable'
+      })
+    };
+  }
+
+  try {
+    const busy = normalizeBusy(await google.freeBusy(startMs, endMs));
+    const conflicts = busy.filter(period => period.startMs < endMs && period.endMs > startMs);
+    if (conflicts.length) {
+      return {
+        ok: false,
+        error: 'google_slot_taken',
+        audit: googleAdmissionAudit({
+          state: 'conflict', nowMs, startMs, endMs, settings: config, busyCount: conflicts.length
+        })
+      };
+    }
+    return {
+      ok: true,
+      required: true,
+      audit: googleAdmissionAudit({
+        state: 'admitted', nowMs, startMs, endMs, settings: config
+      })
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: 'google_admission_unavailable',
+      audit: googleAdmissionAudit({
+        state: 'unavailable', nowMs, startMs, endMs, settings: config,
+        error: error?.message || 'google_freebusy_failed'
+      })
+    };
+  }
+}
+
 /**
  * Appointments that block a window.
  *
@@ -678,7 +768,11 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i;
  * `ok` with a confirmation reference the agent reads back.
  */
 export async function commitBooking(db, {
-  holdId, attendee = {}, notes = '', bookedBy = 'ai', nowMs = Date.now()
+  holdId, attendee = {}, notes = '', bookedBy = 'ai', nowMs = Date.now(),
+  // The caller must supply the already-authenticated Google client whenever
+  // this account has a configured Google calendar.  Passing no client is only
+  // safe for a deliberately disconnected calendar.
+  google = null, settings: suppliedSettings = null
 } = {}) {
   const id = clean(holdId, 200);
   if (!id) return { ok: false, error: 'hold_required' };
@@ -689,6 +783,77 @@ export async function commitBooking(db, {
 
   const ref = db.doc(`appointments/${id}`);
   const confirmation = generateConfirmationRef();
+
+  // Do the network read immediately before the only local commit. Firestore
+  // transactions may be retried by the SDK, so putting a network call inside
+  // one would duplicate requests and still not make Google atomic with it.
+  const held = await ref.get();
+  if (!held.exists) return { ok: false, error: 'hold_not_found' };
+  const heldAppointment = held.data() || {};
+  if (heldAppointment.status === 'booked') {
+    return {
+      ok: true, idempotent: true, appointmentId: id,
+      confirmationRef: clean(heldAppointment.confirmationRef, 40),
+      startMs: toMillis(heldAppointment.startAt),
+      timezone: clean(heldAppointment.timezone, 80),
+      spoken: describeSlotForSpeech(
+        toMillis(heldAppointment.startAt),
+        clean(heldAppointment.timezone, 80) || DEFAULT_CALENDAR_SETTINGS.timezone
+      ),
+      startIso: new Date(toMillis(heldAppointment.startAt)).toISOString()
+    };
+  }
+  if (heldAppointment.status !== 'held') {
+    return { ok: false, error: `hold_${clean(heldAppointment.status, 40) || 'missing'}` };
+  }
+  if (toMillis(heldAppointment.holdExpiresAt) <= nowMs) return { ok: false, error: 'hold_expired' };
+
+  const accountId = readAccountId(heldAppointment.accountId, { fallback: LEGACY_ACCOUNT_ID });
+  const settings = suppliedSettings || await loadCalendarSettings(db, accountId);
+  const admission = await preflightGoogleAdmission({
+    google, settings,
+    startMs: toMillis(heldAppointment.startAt),
+    endMs: toMillis(heldAppointment.endAt),
+    nowMs
+  });
+
+  if (!admission.ok) {
+    // A failed check remains visible on the live hold and expires normally, so
+    // callers may retry a transient Google outage without creating another
+    // hold. A concrete external conflict is different: release it now so it
+    // cannot strand the slot until TTL or be committed by a stale retry.
+    const rejected = await db.runTransaction(async tx => {
+      const fresh = await tx.get(ref);
+      if (!fresh.exists) return { ok: false, error: 'hold_not_found' };
+      const data = fresh.data() || {};
+      if (data.status === 'booked') {
+        return {
+          ok: true, idempotent: true,
+          confirmationRef: clean(data.confirmationRef, 40),
+          startMs: toMillis(data.startAt), timezone: clean(data.timezone, 80)
+        };
+      }
+      if (data.status !== 'held') return { ok: false, error: `hold_${clean(data.status, 40) || 'missing'}` };
+      const patch = {
+        googleAdmission: admission.audit,
+        updatedAt: FieldValue.serverTimestamp()
+      };
+      if (admission.error === 'google_slot_taken') {
+        patch.status = 'cancelled';
+        patch.cancelReason = 'google_admission_conflict';
+        patch.cancelledAt = FieldValue.serverTimestamp();
+        patch.holdExpiresAt = FieldValue.delete();
+      }
+      tx.set(ref, patch, { merge: true });
+      return { ok: false, error: admission.error };
+    });
+    if (!rejected.ok || !rejected.idempotent) return rejected;
+    return {
+      ...rejected, appointmentId: id,
+      spoken: describeSlotForSpeech(rejected.startMs, rejected.timezone || DEFAULT_CALENDAR_SETTINGS.timezone),
+      startIso: new Date(rejected.startMs).toISOString()
+    };
+  }
 
   const result = await db.runTransaction(async tx => {
     const snapshot = await tx.get(ref);
@@ -716,6 +881,11 @@ export async function commitBooking(db, {
       bookedAt: FieldValue.serverTimestamp(),
       holdExpiresAt: FieldValue.delete(),
       googleSyncState: 'pending',
+      googleAdmission: admission.audit,
+      // This is deliberately a reason rather than a boolean.  The Google
+      // synchronizer needs to notify an attendee once for the new booking,
+      // while a retry of the same write must not send a second invitation.
+      googleSyncReason: 'booked',
       updatedAt: FieldValue.serverTimestamp()
     }, { merge: true });
 
@@ -758,6 +928,7 @@ export async function cancelAppointment(db, {
       cancelledBy: clean(actor, 120),
       cancelledAt: FieldValue.serverTimestamp(),
       googleSyncState: 'pending',
+      googleSyncReason: 'cancelled',
       updatedAt: FieldValue.serverTimestamp()
     }, { merge: true });
     return { ok: true, idempotent: false, googleEventId: clean(snapshot.get('googleEventId'), 300) };
@@ -810,6 +981,7 @@ export async function rescheduleAppointment(db, {
       rescheduledBy: clean(actor, 120),
       rescheduledAt: FieldValue.serverTimestamp(),
       googleSyncState: 'pending',
+      googleSyncReason: 'rescheduled',
       updatedAt: FieldValue.serverTimestamp()
     }, { merge: true });
 
@@ -927,10 +1099,10 @@ export function createGoogleCalendarClient({
      * calendar, as one merged list.
      *
      * Google answers per calendar and reports an unreadable one in that
-     * calendar's `errors` rather than failing the request. A calendar nobody
-     * shared with the service account is therefore skipped with a warning: the
-     * remaining conflicts still block, which is strictly better than treating
-     * the whole window as free.
+     * calendar's `errors` rather than failing the request.  This method throws
+     * on any such error: browsing availability may choose to degrade, but the
+     * commit admission gate must fail closed if it cannot inspect every
+     * configured conflict source.
      */
     async freeBusy(fromMs, toMs) {
       const items = [targetCalendar, ...conflictCalendars].map(id => ({ id }));
@@ -948,9 +1120,8 @@ export function createGoogleCalendarClient({
         const entry = result?.calendars?.[id];
         const errors = entry?.errors || [];
         if (errors.length) {
-          console.warn('[calendar] free/busy unavailable for', id,
-            errors.map(error => error?.reason).filter(Boolean).join(', '));
-          continue;
+          throw new Error(`Google free/busy unavailable for ${id}: ${errors
+            .map(error => error?.reason || error?.message).filter(Boolean).join(', ') || 'unknown_error'}`);
         }
         periods.push(...(entry?.busy || []));
       }
@@ -970,19 +1141,28 @@ export function createGoogleCalendarClient({
      * and mint the Meet link; without it Google silently drops the conference
      * block and returns an event with no way to join.
      */
-    async upsertEvent(eventId, event) {
-      const query = { conferenceDataVersion: 1 };
-      return eventId
-        ? request(`/calendars/${encodeURIComponent(targetCalendar)}/events/${encodeURIComponent(eventId)}`,
-            { method: 'PATCH', body: event, query })
-        : request(`/calendars/${encodeURIComponent(targetCalendar)}/events`,
-            { method: 'POST', body: event, query });
+    async upsertEvent(eventId, event, { sendUpdates = 'none' } = {}) {
+      const query = { conferenceDataVersion: 1, sendUpdates };
+      if (eventId) {
+        return request(`/calendars/${encodeURIComponent(targetCalendar)}/events/${encodeURIComponent(eventId)}`,
+          { method: 'PATCH', body: event, query });
+      }
+      try {
+        return await request(`/calendars/${encodeURIComponent(targetCalendar)}/events`,
+          { method: 'POST', body: event, query });
+      } catch (error) {
+        // The deterministic event id turns an unknown POST outcome into a
+        // recoverable read. A retry must never POST/PATCH with notifications
+        // again merely because Firestore missed the first provider response.
+        if (!/\(409\)/.test(String(error?.message)) || !event?.id) throw error;
+        return request(`/calendars/${encodeURIComponent(targetCalendar)}/events/${encodeURIComponent(event.id)}`);
+      }
     },
 
-    async deleteEvent(eventId) {
+    async deleteEvent(eventId, { sendUpdates = 'none' } = {}) {
       if (!eventId) return;
       await request(`/calendars/${encodeURIComponent(targetCalendar)}/events/${encodeURIComponent(eventId)}`,
-        { method: 'DELETE' }).catch(error => {
+        { method: 'DELETE', query: { sendUpdates } }).catch(error => {
           // A already-deleted event is a success from our side.
           if (!/\(410\)|\(404\)/.test(error.message)) throw error;
         });
@@ -991,6 +1171,12 @@ export function createGoogleCalendarClient({
 }
 
 /** Google Calendar event body for an appointment. */
+export function googleEventIdForAppointment(appointmentId) {
+  // Calendar event ids accept base32hex characters; a SHA-256 hex prefix is
+  // valid, deterministic, collision-resistant, and contains no customer data.
+  return `bs${createHash('sha256').update(clean(appointmentId, 200)).digest('hex').slice(0, 48)}`;
+}
+
 export function buildGoogleEvent(appointment, settings, { conference = true } = {}) {
   const attendee = appointment.attendee || {};
   const accountId = readAccountId(appointment.accountId, { fallback: LEGACY_ACCOUNT_ID });
@@ -1008,11 +1194,23 @@ export function buildGoogleEvent(appointment, settings, { conference = true } = 
   ].filter(Boolean);
 
   return {
+    id: googleEventIdForAppointment(appointment.id),
     summary: `${settings.meetingTitle} — ${who}`,
     description: lines.join('\n'),
     start: { dateTime: new Date(toMillis(appointment.startAt)).toISOString(), timeZone: settings.timezone },
     end: { dateTime: new Date(toMillis(appointment.endAt)).toISOString(), timeZone: settings.timezone },
     status: appointment.status === 'cancelled' ? 'cancelled' : 'confirmed',
+    // Adding the attendee to the event is necessary but not sufficient: the
+    // Calendar API only delivers an invite when the request uses
+    // `sendUpdates=all` (selected below by googleSyncOptions).  Cancelled
+    // appointments never get attendees, so a stale sync can never turn into
+    // a fresh invitation.
+    ...(appointment.status === 'booked' && EMAIL_PATTERN.test(clean(attendee.email, 200)) ? {
+      attendees: [{
+        email: clean(attendee.email, 200).toLowerCase(),
+        ...(clean(attendee.name, 160) ? { displayName: clean(attendee.name, 160) } : {})
+      }]
+    } : {}),
     // A consultation is a video call, so the event carries its own Meet link.
     // `requestId` is the appointment id rather than a random value: Google
     // treats a repeat of the same id as the same request, so the retry sweep
@@ -1032,6 +1230,61 @@ export function buildGoogleEvent(appointment, settings, { conference = true } = 
       }
     }
   };
+}
+
+/**
+ * Whether this particular mirror write should notify the prospect.
+ *
+ * Google does not deduplicate notification emails for us.  A sync retry is
+ * therefore explicitly silent after its successful first invitation, while a
+ * reschedule or cancellation still reaches an attendee who was invited.
+ */
+export function googleSyncOptions(appointment = {}) {
+  const email = clean(appointment?.attendee?.email, 200).toLowerCase();
+  const hasAttendee = EMAIL_PATTERN.test(email);
+  const syncReason = clean(appointment.googleSyncReason, 40);
+  const invitationSent = Boolean(appointment.googleInviteSentAt);
+
+  if (appointment.status === 'cancelled') {
+    return { sendUpdates: hasAttendee && invitationSent ? 'all' : 'none', markInvitationSent: false };
+  }
+  if (appointment.status !== 'booked' || !hasAttendee) {
+    return { sendUpdates: 'none', markInvitationSent: false };
+  }
+  if (!invitationSent || syncReason === 'rescheduled') {
+    return { sendUpdates: 'all', markInvitationSent: !invitationSent };
+  }
+  return { sendUpdates: 'none', markInvitationSent: false };
+}
+
+/**
+ * Confirm that the event Google accepted is visible in the same conflict view
+ * used for admission.  Free/busy cannot identify an event, so an overlap that
+ * expands beyond our exact appointment is escalated for human review rather
+ * than pretending Google gave us an atomic multi-calendar lock.
+ */
+async function reconcileGoogleAdmission({ client, settings, appointment, nowMs = Date.now() }) {
+  const startMs = toMillis(appointment.startAt);
+  const endMs = toMillis(appointment.endAt);
+  if (!googleAdmissionRequired(settings) || !client || typeof client.freeBusy !== 'function') {
+    return googleAdmissionAudit({
+      state: 'reconciliation_skipped', nowMs, startMs, endMs, settings
+    });
+  }
+  try {
+    const busy = normalizeBusy(await client.freeBusy(startMs, endMs))
+      .filter(period => period.startMs < endMs && period.endMs > startMs);
+    const expandedConflict = busy.some(period => period.startMs < startMs || period.endMs > endMs);
+    return googleAdmissionAudit({
+      state: expandedConflict ? 'reconciliation_conflict' : 'reconciled',
+      nowMs, startMs, endMs, settings, busyCount: busy.length
+    });
+  } catch (error) {
+    return googleAdmissionAudit({
+      state: 'reconciliation_unavailable', nowMs, startMs, endMs, settings,
+      error: error?.message || 'google_freebusy_failed'
+    });
+  }
 }
 
 /**
@@ -1099,34 +1352,66 @@ export async function syncAppointmentToGoogle(db, appointmentId, { client, setti
     }
     return { ok: false, skipped: true };
   }
-  const appointment = { id, ...snapshot.data() };
+  const leaseToken = randomBytes(16).toString('hex');
+  const leaseNow = Date.now();
+  const appointment = await db.runTransaction(async transaction => {
+    const fresh = await transaction.get(ref);
+    if (!fresh.exists) return null;
+    const data = fresh.data();
+    const leaseExpiresAt = toMillis(data.googleSyncLeaseExpiresAt);
+    if (data.googleSyncLeaseToken && leaseExpiresAt > leaseNow) return null;
+    transaction.set(ref, {
+      googleSyncLeaseToken: leaseToken,
+      googleSyncLeaseExpiresAt: Timestamp.fromMillis(leaseNow + GOOGLE_SYNC_LEASE_MS),
+      updatedAt: FieldValue.serverTimestamp()
+    }, { merge: true });
+    return { id, ...data };
+  });
+  if (!appointment) return { ok: false, skipped: true, reason: 'sync_in_progress' };
   const accountId = readAccountId(appointment.accountId, { fallback: LEGACY_ACCOUNT_ID });
 
-  // A hold is not a commitment. Only booked and cancelled reach the calendar.
-  if (!['booked', 'cancelled'].includes(appointment.status)) return { ok: false, skipped: true };
+  const completeLease = update => db.runTransaction(async transaction => {
+    const fresh = await transaction.get(ref);
+    if (!fresh.exists || fresh.get('googleSyncLeaseToken') !== leaseToken) return false;
+    transaction.set(ref, {
+      ...update,
+      googleSyncLeaseToken: FieldValue.delete(),
+      googleSyncLeaseExpiresAt: FieldValue.delete()
+    }, { merge: true });
+    return true;
+  });
 
-  const config = settings || await loadCalendarSettings(db, accountId);
+  // A hold is not a commitment. Only booked and cancelled reach the calendar.
+  if (!['booked', 'cancelled'].includes(appointment.status)) {
+    await completeLease({});
+    return { ok: false, skipped: true };
+  }
+
   const existingEventId = clean(appointment.googleEventId, 300);
 
   try {
+    const config = settings || await loadCalendarSettings(db, accountId);
     if (appointment.status === 'cancelled') {
-      await client.deleteEvent(existingEventId);
-      await ref.set({
+      const options = googleSyncOptions(appointment);
+      await client.deleteEvent(existingEventId, options);
+      await completeLease({
         googleSyncState: 'synced', googleEventId: FieldValue.delete(),
         googleSyncedAt: FieldValue.serverTimestamp(), googleSyncError: FieldValue.delete(),
+        googleSyncReason: FieldValue.delete(),
         updatedAt: FieldValue.serverTimestamp()
-      }, { merge: true });
+      });
       return { ok: true, removed: true };
     }
 
+    const options = googleSyncOptions(appointment);
     let event;
     try {
-      event = await client.upsertEvent(existingEventId, buildGoogleEvent(appointment, config));
+      event = await client.upsertEvent(existingEventId, buildGoogleEvent(appointment, config), options);
     } catch (error) {
       if (!isConferenceRejection(error)) throw error;
       console.warn('[calendar] Meet link unavailable, syncing without one:', clean(error?.message, 200));
       event = await client.upsertEvent(existingEventId,
-        buildGoogleEvent(appointment, config, { conference: false }));
+        buildGoogleEvent(appointment, config, { conference: false }), options);
     }
     const meetUrl = readMeetUrl(event);
     // Google can answer before the conference exists. Leaving the row 'pending'
@@ -1134,23 +1419,36 @@ export async function syncAppointmentToGoogle(db, appointmentId, { client, setti
     // requestId and collects the link — rather than marking the meeting done
     // with no way to join it.
     const awaitingConference = !meetUrl && conferencePending(event);
-    await ref.set({
+    const admissionReconciliation = await reconcileGoogleAdmission({
+      client, settings: config, appointment
+    });
+    await completeLease({
       googleEventId: clean(event.id, 300),
       googleEventLink: clean(event.htmlLink, 500),
       ...(meetUrl ? { googleMeetUrl: meetUrl } : {}),
       googleSyncState: awaitingConference ? 'pending' : 'synced',
       googleSyncedAt: FieldValue.serverTimestamp(),
       googleSyncError: FieldValue.delete(),
+      googleSyncReason: FieldValue.delete(),
+      googleAdmissionReconciliation: admissionReconciliation,
+      ...(admissionReconciliation.state === 'reconciliation_conflict' ? {
+        bookingConflictState: 'needs_human_review',
+        bookingConflictDetectedAt: FieldValue.serverTimestamp()
+      } : {}),
+      ...(options.markInvitationSent ? { googleInviteSentAt: FieldValue.serverTimestamp() } : {}),
       updatedAt: FieldValue.serverTimestamp()
-    }, { merge: true });
-    return { ok: true, eventId: clean(event.id, 300), meetUrl, awaitingConference };
+    });
+    return {
+      ok: true, eventId: clean(event.id, 300), meetUrl, awaitingConference,
+      admissionReconciliation: admissionReconciliation.state
+    };
   } catch (error) {
     console.warn('[calendar] Google sync failed', id, error?.message);
-    await ref.set({
+    await completeLease({
       googleSyncState: 'failed',
       googleSyncError: clean(error?.message, 300),
       updatedAt: FieldValue.serverTimestamp()
-    }, { merge: true }).catch(() => {});
+    }).catch(() => {});
     return { ok: false, error: clean(error?.message, 300) };
   }
 }

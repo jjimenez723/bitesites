@@ -118,6 +118,7 @@ export class TwilioDialer extends CallingProviderAdapter {
       MachineDetectionTimeout: '15',
       AsyncAmd: 'true',
       Timeout: '25',
+      TimeLimit: '600',
       StatusCallbackEvent: 'initiated ringing answered completed',
       StatusCallbackMethod: 'POST'
     };
@@ -132,10 +133,10 @@ export class TwilioDialer extends CallingProviderAdapter {
       params.StatusCallback = url.toString();
       params.AsyncAmdStatusCallback = url.toString();
     }
-    if (campaign.recordCalls !== false) {
-      params.Record = 'true';
-      params.RecordingStatusCallback = this.statusCallbackUrl || '';
-    }
+    // Recording cannot begin on the outbound create request: consent to the
+    // call and consent to persist audio are separate permissions, and nobody
+    // has answered this call yet. A later consent-gated command owns starting
+    // recording; absent that command this provider deliberately records none.
     return params;
   }
 

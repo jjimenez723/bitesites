@@ -49,7 +49,10 @@ export class GoHighLevelDialer extends CallingProviderAdapter {
 
   static capabilities = {
     programmaticOutboundCall: true,   // indirectly, via workflow enrolment
-    aiAgentCall: true,
+    // Disabled for production admission. A published GHL workflow owns its
+    // prompt, retries, recording, and tool surface, so it cannot yet prove it
+    // is executing the signed BiteSites call manifest.
+    aiAgentCall: false,
     powerDial: false,                 // no browser audio for a human rep
     parallelDial: false,
     maxConcurrency: 1,
@@ -63,6 +66,7 @@ export class GoHighLevelDialer extends CallingProviderAdapter {
   };
 
   static limitations = [
+    'Autonomous AI enrolment is disabled until the workflow can verify a signed immutable call manifest and callback-time consent.',
     'Calls start by enrolling a contact in a published workflow — the workflow, not BiteSites, owns timing, retries and the agent prompt.',
     'No call id is returned at enrolment; outbound calls are matched later by contact id plus campaign/target metadata.',
     'An enrolled contact cannot be pulled back out, so there is no leg cancellation and no parallel dialing.',

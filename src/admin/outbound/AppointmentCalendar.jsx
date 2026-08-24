@@ -755,14 +755,22 @@ function ScheduleSettings({ accountId, settings, google, onSaved, openRef }) {
 
 // -------------------------------------------------------------------- shell
 
-export default function AppointmentCalendar({ canManage = true }) {
-  const [accountId, setAccountId] = useState(LEGACY_ACCOUNT_ID);
+export default function AppointmentCalendar({ canManage = true, accountIds = ACCOUNT_IDS, allAccounts = true }) {
+  const accountScopeKey = accountIds.join('|');
+  const availableAccountIds = useMemo(() => allAccounts
+    ? ACCOUNT_IDS
+    : ACCOUNT_IDS.filter(id => accountIds.includes(id)), [allAccounts, accountScopeKey]);
+  const [accountId, setAccountId] = useState(availableAccountIds[0] || '');
   const [view, setView] = useState('week');
   const [anchor, setAnchor] = useState(() => startOfDay(Date.now()));
   const [meta, setMeta] = useState({ settings: null, google: null, error: '' });
   const [selected, setSelected] = useState(null);
   const [helpOpen, setHelpOpen] = useState(false);
   const action = useAction();
+
+  useEffect(() => {
+    if (!availableAccountIds.includes(accountId)) setAccountId(availableAccountIds[0] || '');
+  }, [accountId, availableAccountIds]);
 
   const openBooking = useRef(null);
   const openSettings = useRef(null);
@@ -795,12 +803,13 @@ export default function AppointmentCalendar({ canManage = true }) {
   // dates in the schedule's timezone; a console open in another zone would
   // otherwise lose the meetings sitting on the first and last day's edges.
   const { rows, loading, error, refresh } = useAppointments({
-    fromMs: fromMs - DAY_MS, toMs: toMs + DAY_MS
+    fromMs: fromMs - DAY_MS, toMs: toMs + DAY_MS, accountId
   });
 
   useEffect(() => {
     let cancelled = false;
     setMeta({ settings: null, google: null, error: '' });
+    if (!accountId) return () => { cancelled = true; };
     calendar.settings(accountId)
       .then(result => { if (!cancelled) setMeta({ settings: result?.settings || null, google: result?.google || null, error: '' }); })
       .catch(caught => { if (!cancelled) setMeta(current => ({ ...current, error: caught?.message || 'Could not load calendar settings.' })); });
@@ -936,7 +945,7 @@ export default function AppointmentCalendar({ canManage = true }) {
     <div className="admin-card cal-card">
       <div className="cal-toolbar">
         <div className="cal-toolbar-title">
-          <h3>{ACCOUNTS[accountId].label} calendar</h3>
+          <h3>{ACCOUNTS[accountId]?.label || 'Calendar'}</h3>
           <span className={`cal-sync${meta.google?.connected ? ' on' : ''}`}
             title={meta.google?.calendarId || ''}>
             <i aria-hidden="true" />
@@ -951,7 +960,7 @@ export default function AppointmentCalendar({ canManage = true }) {
         <div className="cal-toolbar-controls">
           <select className="admin-select" value={accountId} aria-label="Entity"
             onChange={event => setAccountId(event.target.value)}>
-            {ACCOUNT_IDS.map(id => <option key={id} value={id}>{ACCOUNTS[id].label}</option>)}
+            {availableAccountIds.map(id => <option key={id} value={id}>{ACCOUNTS[id].label}</option>)}
           </select>
 
           <div className="cal-viewswitch" role="group" aria-label="Calendar view">

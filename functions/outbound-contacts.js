@@ -45,6 +45,7 @@ export async function loadContactForTarget(db, target) {
       id: snapshot.id,
       type: 'lead',
       ref: snapshot.ref,
+      accountId: lead.accountId || 'bitesites',
       name: lead.name || '',
       firstName: (lead.name || '').split(' ')[0] || '',
       lastName: (lead.name || '').split(' ').slice(1).join(' '),
@@ -62,6 +63,10 @@ export async function loadContactForTarget(db, target) {
         doNotCall: lead.doNotCall === true,
         doNotEmail: lead.doNotEmail === true
       },
+      // Consent grants are stamped by the server-owned ledger.  Preserve the
+      // same target-level admission shape for a lead as for a prospect; before
+      // this, a grant attached to a lead was silently invisible to the dialer.
+      consent: lead.consent && typeof lead.consent === 'object' ? lead.consent : {},
       providerContactId: lead.crm?.contactId || '',
       raw: lead
     };

@@ -13,6 +13,11 @@
 import { execFileSync } from 'node:child_process';
 import { compileAgentRuntime } from '../functions/agent-runtime.js';
 import { sanitizeCampaign } from '../functions/outbound-calls.js';
+import {
+  PARTNER_VOICE_KNOWLEDGE,
+  PARTNER_VOICE_PROFILES,
+  assertSellerVoiceConfig
+} from '../functions/seller-voice-config.js';
 
 const PROJECT = process.env.BITESITES_FIREBASE_PROJECT || 'bitesites-org';
 const APPLY = process.argv.includes('--apply');
@@ -25,7 +30,6 @@ const knowledgeBaseId = 'bitesites-sales-playbook';
 const commonRules = {
   requiredDisclosures: [
     'In the first sentence, clearly say you are an AI assistant calling on behalf of BiteSites.',
-    'Before discussing the offer, say the call may be recorded and transcribed for quality and follow-up.',
     'If the person asks not to be called again, confirm the request, mark do-not-call, and end politely.'
   ],
   prohibitedClaims: [
@@ -76,7 +80,7 @@ const commonPersonality = {
 // `auditionScript` is what the persona says in the admin "Play voice sample"
 // audition. Each one is a real cold open in that character's voice and already
 // carries the required AI disclosure in its first sentence.
-const personas = [
+const bitesitesPersonas = [
   {
     id: 'ava-voice-agent-flagship',
     name: 'Ava — AI Voice Agent (Flagship)',
@@ -328,19 +332,26 @@ const personas = [
     knowledgeBaseIds: [knowledgeBaseId]
   }
 ];
+
+// Every runtime profile is explicitly owned by one seller. Legacy fallback is
+// useful for reading old rows, but a production seed must never depend on it.
+const personas = [
+  ...bitesitesPersonas.map(profile => ({ ...profile, accountId: 'bitesites' })),
+  ...PARTNER_VOICE_PROFILES.map(profile => ({ ...profile }))
+];
 const campaign = sanitizeCampaign({
   name: 'Local Business Website Growth — August 2026',
   mode: 'parallel', provider: 'twilio', concurrency: 3,
   callerId: '+12012989723', agentProfileId: 'website-growth-consultant',
   objective: 'Identify local businesses with a real website or lead-response gap and book a 20-minute strategy call.',
-  script: 'Open with the AI and recording disclosures, ask permission to continue, reference one approved research observation, and diagnose the current website or lead follow-up process. Explain only the BiteSites capability that maps to the stated problem. Ask for a 20-minute strategy call when there is a clear fit; otherwise close politely.',
+  script: 'Open with the AI disclosure, ask permission to continue, reference one approved research observation, and diagnose the current website or lead follow-up process. Explain only the BiteSites capability that maps to the stated problem. Ask for a 20-minute strategy call when there is a clear fit; otherwise close politely.',
   bookingRules: 'Book 20-minute strategy calls during available business hours. Confirm the decision-maker, email, timezone, and agreed time before ending the call.',
   escalationRules: 'Bring in a human only when requested or when the prospect needs custom scope, pricing, legal, security, or contract commitments.',
   allowedDays: ['mon', 'tue', 'wed', 'thu', 'fri'],
   localStartTime: '09:30', localEndTime: '17:30',
-  maxAttempts: 3, retryDelayMinutes: 1440, voicemailPolicy: 'retry',
-  requireResearchApproval: true, recordingDisclosureRequired: true,
-  aiDisclosureRequired: true, consentBasis: 'not_recorded', recordCalls: true,
+  maxAttempts: 1, retryDelayMinutes: 1440, voicemailPolicy: 'none',
+  requireResearchApproval: true, recordingDisclosureRequired: false,
+  aiDisclosureRequired: true, consentBasis: 'not_recorded', recordCalls: false,
   suppressionTags: ['do_not_call', 'customer', 'active_opportunity']
 });
 
@@ -393,12 +404,41 @@ const campaignDocument = {
   startedAt: null, pausedAt: null, completedAt: null
 };
 
-for (const persona of personas) compileAgentRuntime({ profile: persona });
+for (const persona of personas) {
+  if (persona.accountId !== 'bitesites') assertSellerVoiceConfig(persona);
+  compileAgentRuntime({ profile: persona });
+}
+
+const partnerKnowledgeResources = PARTNER_VOICE_KNOWLEDGE.flatMap(base => [
+  {
+    path: `knowledgeBases/${base.id}`,
+    label: base.name,
+    data: {
+      accountId: base.accountId,
+      name: base.name,
+      description: base.description,
+      status: 'active', version: 1,
+      createdBy: 'codex-seed', updatedBy: 'codex-seed', createdAt: now, updatedAt: now
+    }
+  },
+  ...base.documents.map(document => ({
+    path: `knowledgeBases/${base.id}/documents/${document.id}`,
+    label: document.title,
+    data: {
+      accountId: base.accountId,
+      title: document.title,
+      text: document.text,
+      status: 'active', version: 1,
+      updatedBy: 'codex-seed', createdAt: now, updatedAt: now
+    }
+  }))
+]);
 
 const resources = [
   { path: `knowledgeBases/${knowledgeBaseId}`, label: knowledgeBase.name, data: knowledgeBase },
   { path: `knowledgeBases/${knowledgeBaseId}/documents/core-offer-and-conversation-guide`, label: knowledgeDocument.title, data: knowledgeDocument },
   { path: `knowledgeBases/${knowledgeBaseId}/documents/full-service-catalogue`, label: catalogueDocument.title, data: catalogueDocument },
+  ...partnerKnowledgeResources,
   ...personas.map(({ id, ...data }) => ({ path: `aiAgentProfiles/${id}`, label: data.name, agent: true, data: { ...data, createdBy: 'codex-seed', updatedBy: 'codex-seed', createdAt: now, updatedAt: now } })),
   { path: 'outboundCampaigns/local-business-website-growth-aug-2026', label: campaignDocument.name, data: campaignDocument }
 ];

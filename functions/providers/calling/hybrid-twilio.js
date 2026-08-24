@@ -140,6 +140,7 @@ export class HybridTwilioDialer extends CallingProviderAdapter {
         MachineDetectionTimeout: '15',
         AsyncAmd: 'true',
         Timeout: '25',
+        TimeLimit: '600',
         StatusCallbackEvent: 'initiated ringing answered completed',
         StatusCallbackMethod: 'POST'
       };
@@ -148,10 +149,10 @@ export class HybridTwilioDialer extends CallingProviderAdapter {
         params.AsyncAmdStatusCallback = callback;
         params.AsyncAmdStatusCallbackMethod = 'POST';
       }
-      if (campaign.recordCalls !== false) {
-        params.Record = 'true';
-        params.RecordingStatusCallback = callback;
-      }
+      // Never record from call creation. The prospect has not yet heard the
+      // seller/AI disclosure or granted recording consent at this point. A
+      // separate consent-gated recording command will start it after an
+      // affirmative answer; until that exists, calls remain unrecorded.
       return params;
     }
 
@@ -170,15 +171,11 @@ export class HybridTwilioDialer extends CallingProviderAdapter {
       AsyncAmdStatusCallback: statusCallback,
       AsyncAmdStatusCallbackMethod: 'POST',
       Timeout: '25',
+      TimeLimit: '600',
       StatusCallback: statusCallback,
       StatusCallbackEvent: 'initiated ringing answered completed',
       StatusCallbackMethod: 'POST'
     };
-    if (campaign.recordCalls !== false) {
-      params.Record = 'true';
-      params.RecordingStatusCallback = statusCallback;
-      params.RecordingStatusCallbackMethod = 'POST';
-    }
     return params;
   }
 

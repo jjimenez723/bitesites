@@ -26,10 +26,14 @@
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { createHash } from 'node:crypto';
 import { clean, normalizeDomain } from './prospect-normalization.js';
+import { getAccount } from './accounts.js';
 
 export const RESEARCH_TTL_DAYS = 14;
+export const RESEARCH_EVIDENCE_POLICY_VERSION = 1;
 const FETCH_TIMEOUT_MS = 8000;
 const MAX_HTML_BYTES = 600_000;
+const SPEAKABLE_EVIDENCE_TYPES = new Set(['observed', 'provider_asserted', 'prospect_stated']);
+const SOURCE_KINDS = new Set(['first_party_record', 'internal_history', 'crm_record', 'official_website']);
 
 /** Deterministic, validated key so a lead and a prospect can never collide. */
 export function contactKey({ contactType, leadId = '', prospectId = '' }) {
@@ -173,30 +177,53 @@ const META_DESCRIPTION = /<meta[^>]+name=["']description["'][^>]+content=["']([\
  * system inferred rather than read lands in `hypotheses` and is labelled as
  * such in the UI and in the AI prompt.
  */
-export async function researchContact(db, { contactType, contact, campaign = {}, fetchImpl } = {}) {
+export async function researchContact(db, { contactType, contact, campaign = {}, fetchImpl, now = new Date() } = {}) {
+  const accountId = clean(campaign.accountId || contact?.accountId || 'bitesites', 120);
+  const seller = getAccount(accountId);
+  if (!seller) throw new Error('Research requires a known seller account');
+  const isBiteSites = seller?.id === 'bitesites';
   const sources = [];
   const verifiedFacts = [];
   const hypotheses = [];
-  const now = new Date();
 
-  const addSource = (title, url) => {
+  const addSource = (title, url, kind) => {
+    if (!SOURCE_KINDS.has(kind)) throw new Error('Research source kind is not approved');
     const id = factId(url || title, 'source');
-    sources.push({ id, title: clean(title, 160), url: clean(url, 500), fetchedAt: now, factIds: [] });
+    sources.push({
+      id,
+      title: clean(title, 160),
+      url: clean(url, 500),
+      kind,
+      fetchedAt: now,
+      factIds: []
+    });
     return id;
   };
-  const addFact = (text, sourceId, field = '') => {
+  const addFact = (text, sourceId, field = '', {
+    evidenceType = 'provider_asserted', confidence = 0.75, speakable = false
+  } = {}) => {
+    if (!SPEAKABLE_EVIDENCE_TYPES.has(evidenceType)) throw new Error('Research evidence type is not approved');
     const id = factId(text, sourceId);
-    verifiedFacts.push({ id, text: clean(text, 300), sourceId, field });
+    verifiedFacts.push({
+      id,
+      text: clean(text, 300),
+      sourceId,
+      field,
+      evidenceType,
+      observedAt: now.toISOString(),
+      confidence: Math.max(0, Math.min(1, Number(confidence) || 0)),
+      speakable: speakable === true
+    });
     const source = sources.find(entry => entry.id === sourceId);
     if (source) source.factIds.push(id);
     return id;
   };
 
-  // 1. What BiteSites already holds.
-  const ownSource = addSource('BiteSites record', '');
-  if (contact.companyName) addFact(`Business name on file: ${contact.companyName}.`, ownSource, 'companyName');
+  // 1. What the selected seller already holds.
+  const ownSource = addSource(`${seller?.label || 'Seller'} prospect record`, '', 'first_party_record');
+  if (contact.companyName) addFact(`Business name on file: ${contact.companyName}.`, ownSource, 'companyName', { speakable: true });
   if (contact.address?.city) {
-    addFact(`Located in ${[contact.address.city, contact.address.region].filter(Boolean).join(', ')}.`, ownSource, 'address');
+    addFact(`Location on file: ${[contact.address.city, contact.address.region].filter(Boolean).join(', ')}.`, ownSource, 'address', { speakable: true });
   }
   if (contact.business?.category) addFact(`Categorised as ${contact.business.category.replace(/_/g, ' ')}.`, ownSource, 'category');
   if (Number.isFinite(contact.business?.rating) && contact.business?.reviewCount) {
@@ -210,11 +237,11 @@ export async function researchContact(db, { contactType, contact, campaign = {},
     const activities = await db.collection(`${parent}/${contact.id}/activities`)
       .orderBy('at', 'desc').limit(20).get().catch(() => null);
     if (activities && !activities.empty) {
-      const historySource = addSource('BiteSites activity history', '');
+      const historySource = addSource(`${seller.label} activity history`, '', 'internal_history');
       priorAttempts = activities.docs.filter(entry => entry.get('type') === 'call_attempted').length;
-      if (priorAttempts) addFact(`${priorAttempts} previous outbound call attempt(s) recorded.`, historySource, 'history');
+      if (priorAttempts) addFact(`${priorAttempts} previous outbound call attempt(s) recorded.`, historySource, 'history', { evidenceType: 'observed', confidence: 1 });
       const connected = activities.docs.find(entry => entry.get('type') === 'call_connected');
-      if (connected) addFact('A previous outbound call connected with someone at this business.', historySource, 'history');
+      if (connected) addFact('A previous outbound call connected with someone at this business.', historySource, 'history', { evidenceType: 'observed', confidence: 1 });
     }
   }
 
@@ -223,69 +250,74 @@ export async function researchContact(db, { contactType, contact, campaign = {},
   //    per target during a campaign, and an API round-trip per target is a rate
   //    limit waiting to happen.
   if (contact.providerContactId) {
-    const crmSource = addSource('GoHighLevel contact', '');
-    addFact(`Already exists as GoHighLevel contact ${contact.providerContactId}.`, crmSource, 'crm');
+    const crmSource = addSource('GoHighLevel contact', '', 'crm_record');
+    // Operational identifiers help deduplicate and route records, but must
+    // never become prospect-facing dialogue.
+    addFact('A matching CRM contact record exists.', crmSource, 'crm', { confidence: 1 });
   }
 
   // 4. The company's own website.
   let tech = null;
   const domain = normalizeDomain(contact.website);
-  if (domain) {
+  if (domain && isBiteSites) {
     const url = `https://${domain}/`;
     const page = await fetchSite(url, { fetchImpl });
     if (page.ok) {
-      const siteSource = addSource(`${domain} (their website)`, url);
+      const siteSource = addSource(`${domain} (their website)`, url, 'official_website');
       const title = clean(TITLE.exec(page.html)?.[1]?.replace(/<[^>]+>/g, ''), 200);
       const description = clean(META_DESCRIPTION.exec(page.html)?.[1], 300);
-      if (title) addFact(`Their homepage title is "${title}".`, siteSource, 'website');
-      if (description) addFact(`Their site describes them as: "${description}".`, siteSource, 'website');
+      if (title) addFact(`Their homepage title is "${title}".`, siteSource, 'website', { evidenceType: 'observed', confidence: 1, speakable: true });
+      if (description) addFact(`Their site describes them as: "${description}".`, siteSource, 'website', { evidenceType: 'observed', confidence: 1, speakable: true });
 
       tech = detectTech(page.html);
-      if (tech.builder) addFact(`Their site is built on ${tech.builder}.`, siteSource, 'tech');
+      if (tech.builder) addFact(`Their site is built on ${tech.builder}.`, siteSource, 'tech', { evidenceType: 'observed', confidence: 0.95, speakable: true });
       if (tech.diyBuilder === true) {
-        addFact(`${tech.builder} is a DIY site builder — no agency is likely to be managing this site.`, siteSource, 'tech');
+        hypotheses.push(`Their ${tech.builder} site may be self-managed; ask who owns updates before drawing a conclusion.`);
       }
-      if (tech.noAnalytics) addFact('No analytics or tag manager was found on their homepage.', siteSource, 'tech');
-      if (tech.noPixel === true) addFact('No advertising pixel was found on their homepage.', siteSource, 'tech');
+      if (tech.noAnalytics) addFact('No analytics or tag-manager marker was visible in the homepage HTML inspected.', siteSource, 'tech', { evidenceType: 'observed', confidence: 0.9 });
+      if (tech.noPixel === true) addFact('No advertising-pixel marker was visible in the homepage HTML inspected.', siteSource, 'tech', { evidenceType: 'observed', confidence: 0.9 });
       if (tech.noPixel === null && tech.note) hypotheses.push(tech.note);
       if (tech.schemaLocalBusiness === false) {
-        addFact('Their homepage has no schema.org LocalBusiness markup, which hurts local search visibility.', siteSource, 'seo');
+        addFact('No schema.org LocalBusiness markup was visible in the homepage HTML inspected.', siteSource, 'seo', { evidenceType: 'observed', confidence: 0.9 });
       }
       if (tech.chat.length === 0) hypotheses.push('No chat or lead-capture widget was visible on the homepage.');
     } else {
       // A site that would not load is itself worth knowing, and it is a fact we
       // observed rather than one we inferred.
-      const siteSource = addSource(`${domain} (their website)`, url);
+      const siteSource = addSource(`${domain} (their website)`, url, 'official_website');
       addFact(page.status
         ? `Their website returned HTTP ${page.status} when we checked it.`
-        : 'Their website did not respond when we checked it.', siteSource, 'website');
+        : 'Their website did not respond when we checked it.', siteSource, 'website', { evidenceType: 'observed', confidence: 0.9 });
     }
-  } else if (contact.website) {
+  } else if (contact.website && isBiteSites) {
     hypotheses.push('The website on file is a social or directory profile rather than their own domain.');
-  } else {
+  } else if (isBiteSites) {
     hypotheses.push('No website is on file for this business.');
   }
 
   // 5. External enrichment providers — deliberately not integrated. See the
   //    module header and LEAD_DISCOVERY_SETUP.md.
 
-  const talkingPoints = [];
-  if (tech?.diyBuilder === true) talkingPoints.push(`Their ${tech.builder} site suggests nobody is being paid to run it — an opening for a rebuild conversation.`);
-  if (tech?.noAnalytics) talkingPoints.push('They cannot currently see their own website traffic.');
-  if (tech?.noPixel === true) talkingPoints.push('They have no advertising pixel installed, so paid acquisition is unmeasurable for them.');
-  if (tech?.schemaLocalBusiness === false) talkingPoints.push('Missing local-business structured data is a concrete, fixable local-SEO gap.');
-  if (!domain) talkingPoints.push('They appear to have no website of their own — the most direct version of what BiteSites sells.');
+  const talkingPoints = isBiteSites ? [] : (seller?.sales?.researchPriorities || [])
+    .slice(0, 6).map(priority => `Ask about ${priority}; do not assume there is a problem.`);
+  if (isBiteSites && tech?.diyBuilder === true) talkingPoints.push(`Ask who manages the ${tech.builder} site and how updates are handled.`);
+  if (isBiteSites && tech?.noAnalytics) talkingPoints.push('Ask how website traffic and enquiries are measured; the homepage scan alone cannot prove their full analytics setup.');
+  if (isBiteSites && tech?.noPixel === true) talkingPoints.push('Ask whether paid campaigns use another tracking route; the homepage scan alone cannot prove acquisition is unmeasured.');
+  if (isBiteSites && tech?.schemaLocalBusiness === false) talkingPoints.push('Ask who owns local-search implementation before treating missing homepage markup as a business gap.');
+  if (isBiteSites && !domain) talkingPoints.push('Ask whether they currently have a business website; none is present in the approved record.');
 
-  const likelyNeeds = talkingPoints.length
-    ? ['A website that they can measure', 'Local search visibility', 'A way to capture enquiries from the site']
-    : ['Unknown — nothing verifiable was found about their current setup'];
+  const likelyNeeds = isBiteSites
+    ? (talkingPoints.length
+      ? ['A measurable conversion path', 'Local search visibility', 'A reliable way to capture enquiries']
+      : ['Unknown — nothing verifiable was found about their current setup'])
+    : (seller?.sales?.researchPriorities || []).slice(0, 6);
 
   const summary = clean([
     contact.companyName || contact.name,
     contact.business?.category ? `(${contact.business.category.replace(/_/g, ' ')})` : '',
     contact.address?.city ? `in ${contact.address.city}` : '',
-    tech?.builder ? `runs a ${tech.builder} site` : domain ? 'has a website' : 'has no website on file',
-    talkingPoints.length ? `— ${talkingPoints.length} verified marketing gap(s) found` : '— no verified gaps found'
+    isBiteSites ? (tech?.builder ? `runs a ${tech.builder} site` : domain ? 'has a website' : 'has no website on file') : '',
+    verifiedFacts.length ? `— ${verifiedFacts.length} source-backed observation(s)` : '— no source-backed observations found'
   ].filter(Boolean).join(' '), 500);
 
   // Confidence is the share of the brief that is sourced, not a model's
@@ -293,6 +325,8 @@ export async function researchContact(db, { contactType, contact, campaign = {},
   const confidence = Math.min(1, Number((verifiedFacts.length / 8).toFixed(2)));
 
   return {
+    accountId: seller.id,
+    evidencePolicyVersion: RESEARCH_EVIDENCE_POLICY_VERSION,
     contactType,
     leadId: contactType === 'lead' ? contact.id : '',
     prospectId: contactType === 'prospect' ? contact.id : '',
@@ -304,16 +338,12 @@ export async function researchContact(db, { contactType, contact, campaign = {},
     hypotheses: hypotheses.slice(0, 8),
     likelyNeeds,
     talkingPoints: talkingPoints.slice(0, 6),
-    suggestedOpening: clean(
-      `Hi, this is BiteSites — am I through to ${contact.companyName || contact.name || 'the owner'}? `
-      + (talkingPoints[0] ? `I was looking at your site and noticed ${talkingPoints[0].charAt(0).toLowerCase()}${talkingPoints[0].slice(1)}` : 'I had a quick question about your website.'),
-      500
-    ),
-    likelyObjections: [
-      'We already have someone who handles that.',
-      'We are not interested in a new website right now.',
-      'How did you get this number?'
-    ],
+    suggestedOpening: clean(isBiteSites
+      ? `After the mandatory AI/seller disclosure, verify you reached ${contact.companyName || contact.name || 'the business'} and ask one neutral question about their current website or lead-response process.`
+      : `After the mandatory AI/seller disclosure, verify you reached ${contact.companyName || contact.name || 'the intended contact'} and ask one neutral question about ${seller?.sales?.researchPriorities?.[0] || 'their current need'}.`, 500),
+    likelyObjections: isBiteSites
+      ? ['We already have someone who handles that.', 'We are not interested in a new website right now.', 'How did you get this number?']
+      : ['We are not interested.', 'We already have someone who handles that.', 'How did you get this number?'],
     recentSignals: [],
     sources: sources.map(source => ({ ...source, fetchedAt: Timestamp.fromDate(source.fetchedAt) })),
     confidence,
@@ -322,7 +352,7 @@ export async function researchContact(db, { contactType, contact, campaign = {},
     approvedAt: null,
     generatedAt: Timestamp.fromDate(now),
     expiresAt: Timestamp.fromMillis(now.getTime() + RESEARCH_TTL_DAYS * 86400000),
-    model: 'bitesites-deterministic-v1',
+    model: 'deterministic-research-v3',
     campaignId: clean(campaign.id, 160),
     error: ''
   };
@@ -343,15 +373,56 @@ export async function saveResearch(db, key, research) {
   return key;
 }
 
+const timestampDate = value => {
+  if (value?.toDate) return value.toDate();
+  const parsed = value instanceof Date ? value : new Date(value || '');
+  return Number.isFinite(parsed.getTime()) ? parsed : null;
+};
+
+/**
+ * Validate the evidence bundle before a human approval can make it callable.
+ *
+ * Imported prose, stale legacy rows, and operational CRM metadata may still be
+ * useful to a reviewer, but they cannot become spoken facts unless the source
+ * and the observation carry this policy's complete provenance fields.
+ */
+export function validateResearchEvidence(research = {}, { now = new Date() } = {}) {
+  const failures = [];
+  if (research.evidencePolicyVersion !== RESEARCH_EVIDENCE_POLICY_VERSION) {
+    failures.push('evidence_policy_version');
+  }
+  const sources = new Map((Array.isArray(research.sources) ? research.sources : [])
+    .map(source => [clean(source?.id, 80), source]));
+  for (const fact of Array.isArray(research.verifiedFacts) ? research.verifiedFacts : []) {
+    const source = sources.get(clean(fact?.sourceId, 80));
+    if (!source) failures.push('missing_source');
+    else if (!SOURCE_KINDS.has(clean(source.kind, 60))) failures.push('unapproved_source_kind');
+
+    if (!SPEAKABLE_EVIDENCE_TYPES.has(clean(fact?.evidenceType, 40))) {
+      failures.push('unapproved_evidence_type');
+    }
+    const observedAt = timestampDate(fact?.observedAt);
+    if (!observedAt) failures.push('missing_observed_at');
+    else if (observedAt.getTime() > now.getTime() + 5 * 60_000) failures.push('future_observed_at');
+    const confidence = Number(fact?.confidence);
+    if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) failures.push('invalid_confidence');
+  }
+  return [...new Set(failures)];
+}
+
 export async function approveResearch(db, key, { approvedBy, edits = null, now = new Date() }) {
   const ref = db.doc(`leadResearch/${key}`);
   const snapshot = await ref.get();
   if (!snapshot.exists) throw new Error('No research to approve');
+  const failures = validateResearchEvidence(snapshot.data(), { now });
+  if (failures.length) throw new Error(`Research evidence is not approvable: ${failures.join(', ')}`);
 
   const update = {
     approved: true,
     approvedBy: clean(approvedBy, 128),
-    approvedAt: Timestamp.fromDate(now)
+    approvedAt: Timestamp.fromDate(now),
+    evidencePolicyVersion: RESEARCH_EVIDENCE_POLICY_VERSION,
+    version: FieldValue.increment(1)
   };
   if (edits) {
     // An admin may correct the prose. They may not fabricate a sourced fact, so
@@ -361,7 +432,7 @@ export async function approveResearch(db, key, { approvedBy, edits = null, now =
     if (Array.isArray(edits.talkingPoints)) update.talkingPoints = edits.talkingPoints.slice(0, 8).map(point => clean(point, 300));
   }
   await ref.set(update, { merge: true });
-  return { ok: true };
+  return { ok: true, accountId: clean(snapshot.get('accountId'), 120) };
 }
 
 /**
@@ -372,15 +443,19 @@ export async function approveResearch(db, key, { approvedBy, edits = null, now =
  * requires are prepended so a campaign script cannot drop them.
  */
 export function buildCallBrief({ research, campaign, compliance, contact }) {
+  const seller = getAccount(campaign?.accountId);
+  const legalName = seller?.legalName || 'the seller identified by the campaign';
+  const brand = seller?.label || legalName;
+  const conversion = seller?.sales?.conversionLabel || 'Book the approved next step';
   return {
     identity: {
-      agent: 'the BiteSites AI assistant',
-      company: 'BiteSites',
+      agent: `an AI assistant for ${legalName}`,
+      company: brand,
       // Repeated in the instructions below as well; an agent that only sees it
       // in a structured field has been observed to skip it in speech.
       disclosureRequired: Boolean(compliance?.aiDisclosureRequired)
     },
-    reasonForCall: clean(campaign?.objective, 500) || 'To ask whether their current website is working for them.',
+    reasonForCall: clean(campaign?.objective, 500) || seller?.sales?.primaryObjective || 'To ask whether the seller’s services fit the prospect’s stated need.',
     objective: clean(campaign?.objective, 500),
     contact: {
       name: clean(contact?.firstName || '', 80),
@@ -389,7 +464,15 @@ export function buildCallBrief({ research, campaign, compliance, contact }) {
     },
     summary: research?.approved ? clean(research.summary, 1500) : '',
     verifiedFacts: research?.approved
-      ? (research.verifiedFacts || []).map(fact => ({ text: fact.text, sourceId: fact.sourceId }))
+      ? (research.verifiedFacts || [])
+        .filter(fact => fact?.speakable === true && SPEAKABLE_EVIDENCE_TYPES.has(clean(fact?.evidenceType, 40)))
+        .map(fact => ({
+          text: fact.text,
+          sourceId: fact.sourceId,
+          evidenceType: fact.evidenceType,
+          observedAt: fact.observedAt,
+          confidence: fact.confidence
+        }))
       : [],
     unverifiedObservations: research?.approved ? (research.hypotheses || []) : [],
     talkingPoints: research?.approved ? (research.talkingPoints || []) : [],
@@ -403,7 +486,7 @@ export function buildCallBrief({ research, campaign, compliance, contact }) {
       'Never claim to be a human. If asked, say plainly that you are an AI assistant.',
       'If the person asks to be removed from the list, confirm it, end the call, and do not argue.',
       'If the person asks a question you cannot answer from this brief, offer to have a person follow up.',
-      clean(campaign?.bookingRules, 500) || 'If they are interested, offer to book a short call with the BiteSites team.',
+      clean(campaign?.bookingRules, 500) || `If they are interested, use the approved booking tool to: ${conversion}.`,
       clean(campaign?.escalationRules, 500) || 'Escalate to a human if the person is upset, asks about billing, or mentions a legal or compliance concern.'
     ].filter(Boolean)
   };

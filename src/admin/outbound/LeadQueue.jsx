@@ -23,8 +23,10 @@ export default function LeadQueue({ campaignId, campaigns = [], onSelectCampaign
   const [bulk, setBulk] = useState({ action: '', processed: 0, message: '', error: '' });
   const action = useAction();
 
-  const { rows, loading, error, capped, refresh } = useTargets(campaignId, { states: STATE_GROUPS[group] });
   const campaign = campaigns.find(entry => entry.id === campaignId) || null;
+  const { rows, loading, error, capped, refresh } = useTargets(campaignId, {
+    states: STATE_GROUPS[group], accountId: campaign?.accountId || ''
+  });
 
   const filtered = useMemo(() => {
     const needle = search.trim().toLowerCase();

@@ -6,8 +6,8 @@ import LiveCallWorkspace from './LiveCallWorkspace';
 const LIVE_STATES = new Set(['requested', 'accepted', 'completed']);
 const terminal = call => ['completed', 'cancelled', 'failed'].includes(call?.status);
 
-export default function TransferInbox({ currentUid }) {
-  const transfers = useIncomingHybridTransfers(currentUid);
+export default function TransferInbox({ currentUid, accountIds = [], allAccounts = false }) {
+  const transfers = useIncomingHybridTransfers(currentUid, accountIds, allAccounts);
   const action = useAction();
   const [workspaceCallId, setWorkspaceCallId] = useState('');
   const live = useMemo(() => transfers.rows

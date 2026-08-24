@@ -88,9 +88,10 @@ export const WEB_AGENT_IDENTITY = Object.freeze({
 });
 
 /**
- * The same Google mirror the dialer uses. Booking stands on its own in
- * Firestore without it — a missing or broken credential must degrade to
- * "the meeting is booked but not yet mirrored", never to "no booking".
+ * The same Google calendar client the dialer uses. When an account has a
+ * configured calendar, `commitBooking` treats an unavailable client as a
+ * fail-closed admission failure; a deliberately disconnected calendar still
+ * supports Firestore-only bookings.
  */
 export async function webCalendarClient(db, credentialsJson) {
   const settings = await loadCalendarSettings(db).catch(() => null);
@@ -321,6 +322,7 @@ export async function bookMeeting(db, { sessionRef, session, args, google, agent
     return { ok: false, error: 'invalid_email', note: 'That email did not parse. Ask them to spell it out, then try again.' };
   }
 
+  const settings = await loadCalendarSettings(db);
   const result = await commitBooking(db, {
     holdId: text(args?.holdId, 200),
     attendee: {
@@ -331,19 +333,22 @@ export async function bookMeeting(db, { sessionRef, session, args, google, agent
     },
     notes: text(args?.notes, 1000),
     bookedBy: 'ai',
-    nowMs: Date.now()
+    nowMs: Date.now(),
+    google,
+    settings
   });
 
   if (!result.ok) {
     const guidance = {
       hold_expired: 'That hold lapsed. Call check_availability again and re-offer.',
       slot_taken: 'Someone took that time. Apologise once and offer the next one.',
+      google_slot_taken: 'That time was just taken on the live calendar. Apologise once and offer the next one.',
+      google_admission_unavailable: 'The live calendar cannot confirm that time right now. Do not say it is booked; offer to have a person follow up.',
       hold_not_found: 'No hold exists. Start from check_availability.'
     };
     return { ...result, note: guidance[result.error] || 'The booking did not go through. Do not say it did.' };
   }
 
-  const settings = await loadCalendarSettings(db);
   await syncAppointmentToGoogle(db, result.appointmentId, { client: google, settings })
     .catch(error => console.warn(`${agent.logTag} calendar sync deferred`, error?.message));
 

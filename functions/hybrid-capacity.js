@@ -10,6 +10,7 @@ import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { dialNext } from './outbound-calls.js';
 import { recordCallAuditEvent } from './hybrid-call-orchestration.js';
 import { clean } from './prospect-normalization.js';
+import { resolveCampaignOperatingLimits } from './outbound-compliance.js';
 
 export const TERMINAL_HYBRID_STATUSES = new Set(['completed', 'cancelled', 'failed']);
 const LEASE_MS = 120_000;
@@ -23,6 +24,9 @@ export function hybridVacancies(concurrency, calls = [], operatingMode = 'hybrid
   const live = calls.filter(call => call && !TERMINAL_HYBRID_STATUSES.has(call.status));
   return Math.max(0, desired - live.length);
 }
+
+export const effectiveHybridConcurrency = session =>
+  resolveCampaignOperatingLimits(session || {}).concurrency;
 
 async function liveCallsForSession(db, session) {
   const ids = [...new Set((session.activeCallIds || []).filter(Boolean))].slice(-100);
@@ -151,7 +155,7 @@ export async function maintainHybridCapacity(db, sessionId, {
         updatedAt: FieldValue.serverTimestamp()
       }, { merge: true });
       const vacancies = hybridVacancies(
-        session.concurrency,
+        effectiveHybridConcurrency(session),
         liveCalls,
         session.operatingMode,
         Boolean(session?.rep?.activeCallId)

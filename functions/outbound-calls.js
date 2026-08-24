@@ -22,15 +22,22 @@
 
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { getCallingProvider, assertSupports } from './providers/calling/index.js';
-import { evaluateCompliance, requiredDisclosures, nextWindowOpening } from './outbound-compliance.js';
+import {
+  evaluateCompliance, requiredDisclosures, nextWindowOpening, resolveAIVoiceConsent,
+  resolveCampaignOperatingLimits
+} from './outbound-compliance.js';
 import {
   loadContactForTarget, updateContactAfterAttempt, recordContactActivity,
   claimTarget, releaseTarget, eligibleTargets, lockIsStale, TARGET_STATES
 } from './outbound-contacts.js';
 import { promoteProspect } from './prospect-conversion.js';
-import { contactKey, loadResearch, saveResearch, researchContact, buildCallBrief } from './lead-enrichment.js';
-import { clean, normalizePhone, resolveTimezone, deterministicId } from './prospect-normalization.js';
+import {
+  contactKey, loadResearch, saveResearch, researchContact, buildCallBrief,
+  validateResearchEvidence, RESEARCH_EVIDENCE_POLICY_VERSION
+} from './lead-enrichment.js';
+import { clean, normalizeConsent, normalizePhone, resolveTimezone, deterministicId } from './prospect-normalization.js';
 import { normalizeOfferTrackKeys } from './offer-tracks.js';
+import { sealCallPlanSnapshot } from './call-plan.js';
 import { warmSidebandForSession } from './hybrid-sideband-warmup.js';
 import { isSuppressed, suppressNumber } from './inbound-compliance.js';
 import {
@@ -57,7 +64,13 @@ const asDate = value => (value?.toDate ? value.toDate() : value instanceof Date 
 /** Validate and bound everything an administrator can set on a campaign. */
 export function sanitizeCampaign(input = {}, { existing = null } = {}) {
   const mode = CAMPAIGN_MODES.includes(input.mode) ? input.mode : existing?.mode || 'power';
-  const concurrency = Math.max(1, Math.min(5, Number(input.concurrency) || existing?.concurrency || 1));
+  const provider = clean(input.provider, 40) || existing?.provider || 'mock';
+  const operatingLimits = resolveCampaignOperatingLimits({
+    provider,
+    concurrency: input.concurrency ?? existing?.concurrency,
+    maxAttempts: input.maxAttempts ?? existing?.maxAttempts,
+    retryDelayMinutes: input.retryDelayMinutes ?? existing?.retryDelayMinutes
+  });
 
   return {
     name: clean(input.name, 120) || existing?.name || 'Untitled campaign',
@@ -67,10 +80,10 @@ export function sanitizeCampaign(input = {}, { existing = null } = {}) {
     // stops a new campaign from ever being ambiguous.
     accountId: readAccountId(input.accountId ?? existing?.accountId, { fallback: LEGACY_ACCOUNT_ID }),
     mode,
-    provider: clean(input.provider, 40) || existing?.provider || 'mock',
+    provider,
     // Power and AI modes are one call at a time by definition; storing a higher
     // number would make the queue view lie about what will happen.
-    concurrency: mode === 'parallel' ? concurrency : 1,
+    concurrency: mode === 'parallel' ? operatingLimits.concurrency : 1,
     callerId: normalizePhone(input.callerId ?? existing?.callerId),
     // agentProfileId is the Hybrid V2 field. Preserve agentId as a legacy
     // fallback while making the profile selected in Campaign Builder the
@@ -92,17 +105,20 @@ export function sanitizeCampaign(input = {}, { existing = null } = {}) {
       ? input.allowedDays.map(day => String(day).toLowerCase().slice(0, 3)).filter(day => ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'].includes(day))
       : ['mon', 'tue', 'wed', 'thu', 'fri'],
     localStartTime: /^\d{1,2}:\d{2}$/.test(input.localStartTime || '') ? input.localStartTime : '09:00',
-    localEndTime: /^\d{1,2}:\d{2}$/.test(input.localEndTime || '') ? input.localEndTime : '18:00',
-    maxAttempts: Math.max(1, Math.min(10, Number(input.maxAttempts) || 3)),
-    retryDelayMinutes: Math.max(15, Math.min(10080, Number(input.retryDelayMinutes) || 240)),
-    voicemailPolicy: ['none', 'leave_message', 'retry'].includes(input.voicemailPolicy) ? input.voicemailPolicy : 'retry',
+    localEndTime: /^\d{1,2}:\d{2}$/.test(input.localEndTime || '') ? input.localEndTime : '19:00',
+    maxAttempts: operatingLimits.maxAttempts,
+    retryDelayMinutes: operatingLimits.retryDelayMinutes,
+    voicemailPolicy: ['none', 'leave_message', 'retry'].includes(input.voicemailPolicy) ? input.voicemailPolicy : 'none',
     requireResearchApproval: input.requireResearchApproval !== false,
-    recordingDisclosureRequired: input.recordingDisclosureRequired !== false,
-    aiDisclosureRequired: input.aiDisclosureRequired !== false,
+    // These are enforced capabilities, not campaign-level opt-outs. Recording
+    // stays off until the in-call consent command exists; AI disclosure stays
+    // on for every campaign that may attach an artificial voice.
+    recordingDisclosureRequired: false,
+    aiDisclosureRequired: true,
     consentBasis: ['written_opt_in', 'inbound_request', 'existing_business_relationship', 'not_recorded'].includes(input.consentBasis)
       ? input.consentBasis : 'not_recorded',
     suppressionTags: Array.isArray(input.suppressionTags) ? input.suppressionTags.slice(0, 20).map(tag => clean(tag, 40)) : [],
-    recordCalls: input.recordCalls !== false
+    recordCalls: false
   };
 }
 
@@ -366,6 +382,7 @@ export async function importTargets(db, campaignId, { prospectIds = [], leadIds 
   if (!campaignSnapshot.exists) throw new Error('Campaign not found');
   const campaign = campaignSnapshot.data();
   const campaignAccountId = readAccountId(campaign.accountId, { fallback: LEGACY_ACCOUNT_ID });
+  const operatingLimits = resolveCampaignOperatingLimits(campaign);
 
   const added = [];
   const skipped = [];
@@ -433,12 +450,16 @@ export async function importTargets(db, campaignId, { prospectIds = [], leadIds 
       complianceStatus: 'pending',
       complianceReasons: [],
       attemptCount: 0,
-      maxAttempts: campaign.maxAttempts || 3,
+      maxAttempts: operatingLimits.maxAttempts,
       nextAttemptAt: Timestamp.fromDate(now),
       lastAttemptAt: null,
       lastCallId: '',
       lastDisposition: '',
       providerContactId: clean(contact.providerContactId, 200),
+      // A campaign label never authorises an individual phone number. Stamp
+      // the imported consent evidence to the target so an AI call can be
+      // verified against the exact seller and number admitted to this queue.
+      consent: normalizeConsent(contact),
       lockedBySessionId: '',
       lockedAt: null,
       createdAt: Timestamp.fromDate(now),
@@ -474,9 +495,13 @@ export async function ensureResearch(db, target, campaign, { fetchImpl, now = ne
 
   const key = contactKey({ contactType: target.contactType, leadId: target.leadId, prospectId: target.prospectId });
   let research = await loadResearch(db, key, { now });
+  if (research && (research.accountId !== campaign.accountId
+    || research.evidencePolicyVersion !== RESEARCH_EVIDENCE_POLICY_VERSION)) {
+    research = null;
+  }
 
   if (!research) {
-    research = await researchContact(db, { contactType: target.contactType, contact, campaign, fetchImpl });
+    research = await researchContact(db, { contactType: target.contactType, contact, campaign, fetchImpl, now });
     await saveResearch(db, key, research);
     await recordContactActivity(db, contact, { type: 'research_completed', confidence: research.confidence, at: Timestamp.fromDate(now) });
   }
@@ -504,14 +529,21 @@ export async function ensureResearch(db, target, campaign, { fetchImpl, now = ne
 }
 
 /** Release every queued target backed by a newly approved research brief. */
-export async function releaseTargetsForApprovedResearch(db, key) {
+export async function releaseTargetsForApprovedResearch(db, key, accountId) {
   const match = /^(lead|prospect)_([A-Za-z0-9_-]+)$/.exec(clean(key, 200));
   if (!match) throw new Error('A valid research key is required');
+  let resolvedAccountId = clean(accountId, 120);
+  if (!resolvedAccountId) {
+    const researchSnapshot = await db.doc(`leadResearch/${key}`).get();
+    resolvedAccountId = researchSnapshot.exists ? clean(researchSnapshot.get('accountId'), 120) : '';
+  }
+  if (!resolvedAccountId) return 0;
   const [, contactType, contactId] = match;
   const field = contactType === 'lead' ? 'leadId' : 'prospectId';
   const snapshot = await db.collection('outboundTargets').where(field, '==', contactId).limit(500).get();
   const waiting = snapshot.docs.filter(entry =>
-    ['pending', 'researching', 'awaiting_approval'].includes(entry.get('state')));
+    entry.get('accountId') === resolvedAccountId
+    && ['pending', 'researching', 'awaiting_approval'].includes(entry.get('state')));
   if (!waiting.length) return 0;
 
   const batch = db.batch();
@@ -592,13 +624,14 @@ export async function approveCampaignResearchBatch(db, campaignId, {
 } = {}) {
   const campaignSnapshot = await db.doc(`outboundCampaigns/${campaignId}`).get();
   if (!campaignSnapshot.exists) throw new Error('Campaign not found');
+  const campaign = { id: campaignId, ...campaignSnapshot.data() };
   const boundedLimit = Math.max(1, Math.min(200, Number(limit) || 200));
   const snapshot = await db.collection('outboundTargets')
     .where('campaignId', '==', campaignId)
     .where('state', '==', 'awaiting_approval')
     .limit(boundedLimit)
     .get();
-  if (snapshot.empty) return { processed: 0, approved: 0, missingResearch: 0, hasMore: false };
+  if (snapshot.empty) return { processed: 0, approved: 0, missingResearch: 0, invalidResearch: 0, hasMore: false };
 
   const entries = snapshot.docs.map(entry => ({
     target: entry,
@@ -613,6 +646,7 @@ export async function approveCampaignResearchBatch(db, campaignId, {
   const batch = db.batch();
   let approved = 0;
   let missingResearch = 0;
+  let invalidResearch = 0;
   const stamp = Timestamp.fromDate(now);
 
   entries.forEach((entry, index) => {
@@ -624,9 +658,23 @@ export async function approveCampaignResearchBatch(db, campaignId, {
       }, { merge: true });
       return;
     }
+    const research = researchSnapshots[index].data();
+    const evidenceFailures = validateResearchEvidence(research, { now });
+    if (research.accountId !== campaign.accountId) evidenceFailures.push('seller_account_mismatch');
+    if (evidenceFailures.length) {
+      invalidResearch += 1;
+      batch.set(entry.target.ref, {
+        state: 'pending', researchStatus: 'invalid_evidence', researchApproved: false,
+        researchError: `Evidence review required: ${evidenceFailures.join(', ')}`,
+        updatedAt: FieldValue.serverTimestamp()
+      }, { merge: true });
+      return;
+    }
     approved += 1;
     batch.set(researchRefs[index], {
-      approved: true, approvedBy: clean(approvedBy, 128), approvedAt: stamp
+      approved: true, approvedBy: clean(approvedBy, 128), approvedAt: stamp,
+      evidencePolicyVersion: RESEARCH_EVIDENCE_POLICY_VERSION,
+      version: FieldValue.increment(1)
     }, { merge: true });
     batch.set(entry.target.ref, {
       state: 'ready', researchStatus: 'ready', researchApproved: true,
@@ -639,6 +687,7 @@ export async function approveCampaignResearchBatch(db, campaignId, {
     processed: entries.length,
     approved,
     missingResearch,
+    invalidResearch,
     hasMore: entries.length === boundedLimit
   };
 }
@@ -672,6 +721,7 @@ async function createCallDoc(db, {
 
     // §34 outbound fields.
     direction: 'outbound',
+    accountId: campaign.accountId,
     operator,
     dialerMode,
     campaignId: campaign.id,
@@ -709,30 +759,37 @@ async function createCallDoc(db, {
       country: clean(address.country, 80),
       timezone: clean(contact.location?.timezone || target.timezone, 100)
     },
-    callPlan: safeResearch ? {
+    callPlan: safeResearch ? sealCallPlanSnapshot({
       key: clean(safeResearch.id || `${target.contactType}_${target.leadId || target.prospectId}`, 200),
       status: safeResearch.approved ? 'approved' : 'draft',
       approved: safeResearch.approved === true,
       approvedBy: clean(safeResearch.approvedBy, 160),
+      sellerAccountId: campaign.accountId,
+      targetId: target.id,
+      contactType: target.contactType,
+      contactId: target.leadId || target.prospectId,
       version: Math.max(1, Number(safeResearch.version) || 1),
+      evidencePolicyVersion: Math.max(0, Number(safeResearch.evidencePolicyVersion) || 0),
       summary: clean(safeResearch.summary, 3000),
       suggestedOpening: clean(safeResearch.suggestedOpening, 2000),
       verifiedFacts: (safeResearch.verifiedFacts || []).slice(0, 20).map(fact => ({
-        id: clean(fact.id, 80), text: clean(fact.text, 700), sourceId: clean(fact.sourceId, 80)
+        id: clean(fact.id, 80), text: clean(fact.text, 700), sourceId: clean(fact.sourceId, 80),
+        evidenceType: clean(fact.evidenceType, 40), observedAt: clean(fact.observedAt, 50),
+        confidence: Math.max(0, Math.min(1, Number(fact.confidence) || 0)),
+        speakable: fact.speakable === true
       })),
       hypotheses: (safeResearch.hypotheses || []).slice(0, 20).map(value => clean(value, 500)).filter(Boolean),
       likelyNeeds: (safeResearch.likelyNeeds || []).slice(0, 20).map(value => clean(value, 500)).filter(Boolean),
       talkingPoints: (safeResearch.talkingPoints || []).slice(0, 20).map(value => clean(value, 700)).filter(Boolean),
       likelyObjections: (safeResearch.likelyObjections || []).slice(0, 20).map(value => clean(value, 700)).filter(Boolean),
       confidence: Math.max(0, Math.min(1, Number(safeResearch.confidence) || 0)),
-      generatedAt: safeResearch.generatedAt || null,
-      approvedAt: safeResearch.approvedAt || null
-    } : {
-      key: '', status: 'missing', approved: false, approvedBy: '', version: 0,
+    }) : sealCallPlanSnapshot({
+      key: '', status: 'missing', approved: false, approvedBy: '', version: 0, evidencePolicyVersion: 0,
+      sellerAccountId: campaign.accountId, targetId: target.id,
+      contactType: target.contactType, contactId: target.leadId || target.prospectId,
       summary: '', suggestedOpening: '', verifiedFacts: [], hypotheses: [],
-      likelyNeeds: [], talkingPoints: [], likelyObjections: [], confidence: 0,
-      generatedAt: null, approvedAt: null
-    }
+      likelyNeeds: [], talkingPoints: [], likelyObjections: []
+    })
   }, { merge: true });
   return callId;
 }
@@ -760,7 +817,8 @@ export async function startDialerSession(db, { campaignId, userUid, mode, concur
     throw new Error(`Campaign is ${campaign.status}`);
   }
 
-  const requested = mode === 'parallel' ? Math.max(1, Math.min(5, Number(concurrency) || 1)) : 1;
+  const operatingLimits = resolveCampaignOperatingLimits({ ...campaign, concurrency });
+  const requested = mode === 'parallel' ? operatingLimits.concurrency : 1;
   const support = assertSupports(campaign.provider, mode, requested);
   if (!support.ok) {
     throw new Error(`Provider "${campaign.provider}" cannot run a ${mode} session: missing ${support.missing.join(', ')}`);
@@ -783,6 +841,7 @@ export async function startDialerSession(db, { campaignId, userUid, mode, concur
   const ref = db.collection('dialerSessions').doc();
   await ref.set({
     campaignId,
+    accountId: campaign.accountId,
     userUid: clean(userUid, 128),
     provider: campaign.provider,
     mode,
@@ -829,7 +888,9 @@ export async function dialNext(db, sessionId, {
   }
   const campaignAccountId = readAccountId(campaign.accountId, { fallback: LEGACY_ACCOUNT_ID });
 
-  const configured = session.mode === 'parallel' ? Math.max(1, Math.min(5, Number(session.concurrency) || 1)) : 1;
+  const configured = session.mode === 'parallel'
+    ? resolveCampaignOperatingLimits({ ...campaign, concurrency: session.concurrency }).concurrency
+    : 1;
   const wanted = maxNewCalls === null
     ? configured
     : Math.max(0, Math.min(configured, Number(maxNewCalls) || 0));
@@ -883,15 +944,21 @@ export async function dialNext(db, sessionId, {
     // suppression list is the record of someone having asked us to stop, and it
     // is worth a document read to be sure we are reading it for the number we
     // are about to ring rather than one resolved earlier in the slice.
+    const automatedVoice = ['ai', 'hybrid'].includes(session.operatingMode);
+    const consent = automatedVoice
+      ? await resolveAIVoiceConsent(db, { target, campaign, phoneE164: contact.phoneE164 || target.phoneE164, now })
+      : target.consent;
     const compliance = evaluateCompliance({
-      target, contact, campaign, now,
+      target: { ...target, consent }, contact, campaign, now,
       internalDoNotCall: contact.contactability?.doNotCall === true || contact.doNotCall === true,
-      suppressed: await isSuppressed(db, contact.phoneE164 || target.phoneE164)
+      suppressed: await isSuppressed(db, contact.phoneE164 || target.phoneE164),
+      automatedVoice
     });
 
     if (!compliance.eligible) {
       const terminal = compliance.reasons.some(reason =>
-        ['do_not_call', 'do_not_contact', 'suppressed', 'max_attempts_reached', 'no_valid_phone', 'invalid_number'].includes(reason));
+        ['do_not_call', 'do_not_contact', 'suppressed', 'max_attempts_reached', 'no_valid_phone', 'invalid_number',
+          'ai_consent_not_documented', 'ai_consent_seller_mismatch', 'ai_consent_phone_mismatch'].includes(reason));
       const requeueAt = terminal ? null : nextWindowOpening(now, compliance.timezone, campaign) || new Date(now.getTime() + 3600_000);
       await releaseTarget(db, target.id, {
         state: terminal
@@ -1045,7 +1112,7 @@ export async function runAICampaignSlice(db, campaignId, {
   // set of stale-lock rules.
   const sessionId = `ai_${campaignId}`;
   await db.doc(`dialerSessions/${sessionId}`).set({
-    campaignId, userUid: 'system:ai', provider: campaign.provider, mode: 'ai',
+    campaignId, accountId: campaign.accountId, userUid: 'system:ai', provider: campaign.provider, mode: 'ai',
     concurrency: 1, status: 'active', activeCallIds: [], connectedCallId: '',
     connectedTargetId: '', startedAt: Timestamp.fromDate(now), connectedAt: null,
     endedAt: null, lastHeartbeatAt: Timestamp.fromDate(now)
@@ -1067,14 +1134,19 @@ export async function runAICampaignSlice(db, campaignId, {
       continue;
     }
 
+    const consent = await resolveAIVoiceConsent(db, {
+      target, campaign, phoneE164: contact.phoneE164 || target.phoneE164, now
+    });
     const compliance = evaluateCompliance({
-      target, contact, campaign, now,
+      target: { ...target, consent }, contact, campaign, now,
       internalDoNotCall: contact.contactability?.doNotCall === true || contact.doNotCall === true,
-      suppressed: await isSuppressed(db, contact.phoneE164 || target.phoneE164)
+      suppressed: await isSuppressed(db, contact.phoneE164 || target.phoneE164),
+      automatedVoice: true
     });
     if (!compliance.eligible) {
       const terminal = compliance.reasons.some(reason =>
-        ['do_not_call', 'do_not_contact', 'suppressed', 'max_attempts_reached', 'no_valid_phone', 'invalid_number'].includes(reason));
+        ['do_not_call', 'do_not_contact', 'suppressed', 'max_attempts_reached', 'no_valid_phone', 'invalid_number',
+          'ai_consent_not_documented', 'ai_consent_seller_mismatch', 'ai_consent_phone_mismatch'].includes(reason));
       const optedOut = ['do_not_call', 'do_not_contact', 'suppressed']
         .some(reason => compliance.reasons.includes(reason));
       await releaseTarget(db, target.id, {
@@ -1226,10 +1298,14 @@ export async function cancelLosingLegs(db, sessionId, { winningCallId, campaign,
     if (!targetSnapshot.exists) continue;
     const target = targetSnapshot.data();
 
+    const operatingLimits = resolveCampaignOperatingLimits(campaign);
     const terminal =
       target.state === 'do_not_call'
       || target.state === 'invalid_number'
-      || Number(target.attemptCount || 0) >= Number(target.maxAttempts ?? campaign?.maxAttempts ?? 3);
+      || Number(target.attemptCount || 0) >= Math.min(
+        Number(target.maxAttempts ?? operatingLimits.maxAttempts),
+        operatingLimits.maxAttempts
+      );
 
     if (terminal) {
       await releaseTarget(db, call.targetId, { state: target.state === 'dialing' ? 'completed' : target.state });
@@ -1240,10 +1316,10 @@ export async function cancelLosingLegs(db, sessionId, { winningCallId, campaign,
     // nobody spoke to them. Rolling the attempt back is what keeps a five-line
     // session from burning five attempts to make one conversation.
     const retryAt = nextWindowOpening(
-      new Date(now.getTime() + Number(campaign?.retryDelayMinutes ?? 60) * 60000),
+      new Date(now.getTime() + operatingLimits.retryDelayMinutes * 60000),
       target.timezone,
       campaign
-    ) || new Date(now.getTime() + Number(campaign?.retryDelayMinutes ?? 60) * 60000);
+    ) || new Date(now.getTime() + operatingLimits.retryDelayMinutes * 60000);
 
     await releaseTarget(db, call.targetId, {
       state: 'call_later',
@@ -1440,7 +1516,11 @@ export async function applyDisposition(db, {
 
   const state = STATE_FOR_DISPOSITION[disposition] || 'completed';
   const attemptCount = Number(target.attemptCount || 0);
-  const maxAttempts = Number(target.maxAttempts ?? campaign?.maxAttempts ?? 3);
+  const operatingLimits = resolveCampaignOperatingLimits(campaign);
+  const maxAttempts = Math.min(
+    Number(target.maxAttempts ?? operatingLimits.maxAttempts),
+    operatingLimits.maxAttempts
+  );
   const exhausted = attemptCount >= maxAttempts;
   const safePartnerOutcomes = sanitizePartnerOutcomes(partnerOutcomes);
 
@@ -1455,7 +1535,7 @@ export async function applyDisposition(db, {
       // precedence over the campaign's generic retry window.
       nextAttemptAt = requested;
     } else {
-      const earliest = new Date(now.getTime() + Number(campaign?.retryDelayMinutes ?? 240) * 60000);
+      const earliest = new Date(now.getTime() + operatingLimits.retryDelayMinutes * 60000);
       nextAttemptAt = nextWindowOpening(earliest, target.timezone, campaign) || earliest;
     }
   }
@@ -1605,9 +1685,24 @@ export async function releaseDueTargets(db, { now = new Date(), limit = 300 } = 
     .limit(limit).get();
 
   let released = 0;
+  const campaignLimits = new Map();
   for (const entry of due.docs) {
     const target = entry.data();
-    if (Number(target.attemptCount || 0) >= Number(target.maxAttempts || 3)) {
+    let operatingLimits = campaignLimits.get(target.campaignId);
+    if (!operatingLimits) {
+      const campaignSnapshot = target.campaignId
+        ? await db.doc(`outboundCampaigns/${target.campaignId}`).get()
+        : null;
+      // Missing/legacy campaign provenance takes the same conservative path as
+      // an unknown live provider: one attempt and no automatic retry.
+      operatingLimits = resolveCampaignOperatingLimits(campaignSnapshot?.exists ? campaignSnapshot.data() : {});
+      if (target.campaignId) campaignLimits.set(target.campaignId, operatingLimits);
+    }
+    const effectiveMaxAttempts = Math.min(
+      Number(target.maxAttempts || operatingLimits.maxAttempts),
+      operatingLimits.maxAttempts
+    );
+    if (Number(target.attemptCount || 0) >= effectiveMaxAttempts) {
       await releaseTarget(db, entry.id, { state: 'completed' });
       continue;
     }

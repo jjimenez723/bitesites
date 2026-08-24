@@ -22,9 +22,15 @@ import { sanitizeRealtimeSessionConfig } from './agent-runtime.js';
 import { executeAgentTool, TERMINAL_TOOLS } from './agent-tools.js';
 import { createGoogleCalendarClient, loadCalendarSettings } from './booking-calendar.js';
 import { LEGACY_ACCOUNT_ID, readAccountId } from './accounts.js';
+import { failClosedAIMediaAttachment } from './hybrid-media-failsafe.js';
+import { getCallingProvider } from './providers/calling/index.js';
 
 const AI_MEDIA_WEBHOOK_SECRET = defineSecret('AI_MEDIA_WEBHOOK_SECRET');
 const GOOGLE_CALENDAR_CREDENTIALS = defineSecret('GOOGLE_CALENDAR_CREDENTIALS');
+const TWILIO_ACCOUNT_SID = defineSecret('TWILIO_ACCOUNT_SID');
+const TWILIO_AUTH_TOKEN = defineSecret('TWILIO_AUTH_TOKEN');
+const TWILIO_TWIML_APP_SID = defineSecret('TWILIO_TWIML_APP_SID');
+const OPENAI_API_KEY = defineSecret('OPENAI_API_KEY');
 
 const secretValue = secret => {
   try { return secret.value() || ''; } catch { return ''; }
@@ -35,6 +41,49 @@ function authorized(req) {
   const provided = clean(req.get('x-ai-media-secret'), 300);
   return expected.length >= 24 && provided.length === expected.length
     && timingSafeEqual(Buffer.from(expected), Buffer.from(provided));
+}
+
+async function endFailedAIMediaPstn(db, callId, { reason, source, realtimeCallId = '' } = {}) {
+  const result = await failClosedAIMediaAttachment(db, callId, { reason, source, realtimeCallId });
+  if (!result.ok) return result;
+  if (result.shouldTerminateRealtime && result.realtimeCallId) {
+    const apiKey = secretValue(OPENAI_API_KEY);
+    if (apiKey) {
+      try {
+        const response = await fetch(`https://api.openai.com/v1/realtime/calls/${encodeURIComponent(result.realtimeCallId)}/hangup`, {
+          method: 'POST', headers: { Authorization: `Bearer ${apiKey}` }, signal: AbortSignal.timeout(5000)
+        });
+        await db.doc(`calls/${callId}`).set({
+          'media.realtimeHangupAttemptedAt': FieldValue.serverTimestamp(),
+          'media.realtimeHangupFailed': !response.ok,
+          ...(response.ok ? { 'media.realtimeHangupConfirmedAt': FieldValue.serverTimestamp() } : {}),
+          updatedAt: FieldValue.serverTimestamp()
+        }, { merge: true });
+      } catch {
+        await db.doc(`calls/${callId}`).set({
+          'media.realtimeHangupAttemptedAt': FieldValue.serverTimestamp(),
+          'media.realtimeHangupFailed': true, updatedAt: FieldValue.serverTimestamp()
+        }, { merge: true }).catch(() => {});
+      }
+    }
+  }
+  if (!result.shouldTerminatePstn) return result;
+  try {
+    await getCallingProvider('twilio', {
+      accountSid: secretValue(TWILIO_ACCOUNT_SID), authToken: secretValue(TWILIO_AUTH_TOKEN),
+      twimlAppSid: secretValue(TWILIO_TWIML_APP_SID), statusCallbackUrl: '', hybridV2: true
+    }).endCall(result.providerCallId);
+    await db.doc(`calls/${callId}`).set({
+      'media.pstnEndRequestedAt': FieldValue.serverTimestamp(),
+      'media.pstnEndReason': 'ai_media_setup_failed', updatedAt: FieldValue.serverTimestamp()
+    }, { merge: true });
+  } catch (error) {
+    await db.doc(`calls/${callId}`).set({
+      'media.pstnEndError': clean(error?.message, 300),
+      'media.pstnEndLastAttemptAt': FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp()
+    }, { merge: true }).catch(() => {});
+  }
+  return result;
 }
 
 const validCallId = value => {
@@ -117,7 +166,7 @@ export async function pollControlPayload(db, { callId, call }) {
 
 export const hybridSidebandControl = onRequest(
   {
-    secrets: [AI_MEDIA_WEBHOOK_SECRET, GOOGLE_CALENDAR_CREDENTIALS],
+    secrets: [AI_MEDIA_WEBHOOK_SECRET, GOOGLE_CALENDAR_CREDENTIALS, TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_TWIML_APP_SID, OPENAI_API_KEY],
     maxInstances: 50,
     timeoutSeconds: 60
   },
@@ -174,12 +223,37 @@ export const hybridSidebandControl = onRequest(
         profileVersion: call?.agent?.profileVersion,
         effectiveConfigHash: call?.agent?.effectiveConfigHash
       }).catch(error => ({ ok: false, reason: clean(error?.message, 300) }));
-      if (!result.ok) { res.status(409).json(result); return; }
+      if (!result.ok) {
+        await endFailedAIMediaPstn(db, callId, {
+          reason: `sideband_attach_failed: ${clean(result.reason, 220) || 'unknown'}`,
+          source: 'sideband_attached', realtimeCallId
+        });
+        res.status(409).json({ ...result, safelyEnded: true }); return;
+      }
       await db.doc(`aiMediaJobs/${callId}`).set({
         status: 'active', realtimeCallId, aiSessionId: realtimeCallId,
         updatedAt: FieldValue.serverTimestamp()
       }, { merge: true });
+      await callRef.set({
+        'media.attachState': 'active', 'media.attachedAt': FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp()
+      }, { merge: true });
       res.json({ ok: true }); return;
+    }
+
+    if (action === 'attachment_failed') {
+      if (call.endedAt || ['completed', 'failed', 'cancelled'].includes(clean(call.status, 40))) {
+        await db.doc(`aiMediaJobs/${callId}`).set({
+          status: 'ended', updatedAt: FieldValue.serverTimestamp()
+        }, { merge: true }).catch(() => {});
+        res.json({ ok: true, alreadyEnded: true }); return;
+      }
+      const result = await endFailedAIMediaPstn(db, callId, {
+        reason: clean(req.body?.reason, 300) || 'sideband_connection_failed',
+        source: 'sideband_runtime',
+        realtimeCallId: clean(req.body?.realtimeCallId, 240)
+      });
+      res.status(result.ok ? 200 : 409).json(result); return;
     }
 
     if (action === 'poll_control') {
@@ -263,12 +337,17 @@ export const hybridSidebandControl = onRequest(
       if (!jobSnapshot.exists) { res.status(404).json({ error: 'media-job-not-found' }); return; }
       const tool = clean(req.body?.tool, 80);
       if (!tool) { res.status(400).json({ error: 'tool-required' }); return; }
+      const requestId = typeof req.body?.requestId === 'string' ? req.body.requestId.trim() : '';
+      if (!/^[A-Za-z0-9_-]{1,200}$/.test(requestId)) {
+        res.status(400).json({ error: 'requestId-required' }); return;
+      }
 
       const result = await executeAgentTool(db, {
         call,
         job: jobSnapshot.data() || {},
         tool,
         args: req.body?.args,
+        requestId,
         actorId: clean(req.body?.realtimeCallId, 160) || 'ai',
         google: await calendarClient(db, call.accountId).catch(() => null)
       }).catch(error => {

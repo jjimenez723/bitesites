@@ -1,7 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { hybridVacancies } from './hybrid-capacity.js';
+import { effectiveHybridConcurrency, hybridVacancies } from './hybrid-capacity.js';
+
+test('carrier-backed sessions remain at one live leg even with stale stored concurrency', () => {
+  assert.equal(effectiveHybridConcurrency({ provider: 'hybrid-twilio', concurrency: 5 }), 1);
+  assert.equal(effectiveHybridConcurrency({ provider: 'twilio', concurrency: 3 }), 1);
+  assert.equal(effectiveHybridConcurrency({ provider: 'mock', concurrency: 3 }), 3);
+});
 
 test('hybrid capacity fills only missing live slots', () => {
   assert.equal(hybridVacancies(3, []), 3);

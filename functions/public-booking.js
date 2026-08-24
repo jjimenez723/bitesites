@@ -247,24 +247,27 @@ export const bookPublicAppointment = onCall(options, async request => {
         : 'That time is no longer bookable. Pick another.');
   }
 
+  const settings = await loadCalendarSettings(db, PUBLIC_ACCOUNT_ID);
+  const google = await calendarClient(db, settings).catch(() => null);
+
   const booked = await commitBooking(db, {
     holdId: held.holdId,
     attendee: { name, email, phone, company },
     notes,
     bookedBy: 'public_booking_page',
-    nowMs
+    nowMs,
+    google,
+    settings
   });
   if (!booked.ok) throw new HttpsError('failed-precondition', 'That booking could not be completed.');
 
-  const settings = await loadCalendarSettings(db, PUBLIC_ACCOUNT_ID).catch(() => null);
-
-  // Neither of these is allowed to fail the booking: the meeting is already
-  // committed in Firestore, and the maintenance sweep re-pushes Google.
+  // The configured Google calendar already admitted this slot before the
+  // Firestore commit. Event delivery itself remains retryable.
   // The return value carries the Meet link so the confirmation screen can show
   // it immediately. A failure here still leaves the booking standing — the
   // maintenance sweep re-pushes, and the confirmation email carries the link.
   const synced = await syncAppointmentToGoogle(db, booked.appointmentId, {
-    client: await calendarClient(db, settings).catch(() => null),
+    client: google,
     settings
   }).catch(() => null);
 

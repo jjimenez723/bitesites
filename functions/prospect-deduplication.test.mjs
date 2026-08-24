@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import { classifyMatch, dedupeWithinBatch, duplicateVerdict } from './prospect-deduplication.js';
 import { buildProspect } from './prospect-normalization.js';
 import {
-  evaluateCompliance, withinCallingWindow, localClock, nextWindowOpening, requiredDisclosures
+  evaluateAIVoiceConsent, evaluateCompliance, withinCallingWindow, localClock, nextWindowOpening, requiredDisclosures
 } from './outbound-compliance.js';
 import {
   isAirbnbRecord, isInternalTestRecord, classifyWatcherRecord
@@ -107,6 +107,7 @@ test('duplicateVerdict reports the strongest match', () => {
 
 const CAMPAIGN = {
   mode: 'power',
+  provider: 'mock',
   callerId: '+15551234567',
   allowedDays: ['mon', 'tue', 'wed', 'thu', 'fri'],
   localStartTime: '09:00',
@@ -184,6 +185,60 @@ test('compliance blocks DNC, attempt exhaustion, retry delay and a bad caller ID
   assert.ok(evaluateCompliance({
     ...base, target: { ...base.target, phoneE164: '' }
   }).reasons.includes('no_valid_phone'));
+});
+
+test('AI voice consent is target-level, seller-specific, and fail-closed', () => {
+  const target = {
+    phoneE164: '+12015550142', timezone: 'America/New_York', attemptCount: 0,
+    consent: {
+      grantId: 'consent-grant-42', verificationState: 'verified', status: 'active',
+      basis: 'written_opt_in', sellerAccountId: 'bitesites', phoneE164: '+12015550142',
+      evidenceArtifactId: 'artifact-42', disclosureVersion: 'ai-voice-v1',
+      reviewedBy: 'compliance-owner', reviewedAt: new Date('2026-01-01T13:00:00Z'),
+      grantedAt: new Date('2026-01-01T12:00:00Z'), checkedAt: MONDAY_10AM_NY
+    }
+  };
+  const campaign = { ...CAMPAIGN, mode: 'ai', accountId: 'bitesites' };
+
+  assert.equal(evaluateAIVoiceConsent({ target, campaign }).eligible, true);
+  assert.equal(evaluateCompliance({ target, campaign, now: MONDAY_10AM_NY }).eligible, true);
+
+  const noSnapshot = evaluateCompliance({
+    target: { phoneE164: target.phoneE164, timezone: target.timezone }, campaign, now: MONDAY_10AM_NY
+  });
+  assert.equal(noSnapshot.eligible, false);
+  assert.ok(noSnapshot.reasons.includes('ai_consent_not_documented'));
+  assert.ok(noSnapshot.reasons.includes('ai_consent_seller_mismatch'));
+
+  const wrongSeller = evaluateAIVoiceConsent({
+    target: { ...target, consent: { ...target.consent, sellerAccountId: 'fine-line-group' } }, campaign
+  });
+  assert.equal(wrongSeller.eligible, false);
+  assert.ok(wrongSeller.reasons.includes('ai_consent_seller_mismatch'));
+
+  const wrongNumber = evaluateAIVoiceConsent({
+    target: { ...target, consent: { ...target.consent, phoneE164: '+12015550999' } }, campaign
+  });
+  assert.equal(wrongNumber.eligible, false);
+  assert.ok(wrongNumber.reasons.includes('ai_consent_phone_mismatch'));
+
+  const importedTextIsNotProof = evaluateAIVoiceConsent({
+    target: {
+      ...target,
+      consent: {
+        basis: 'written_opt_in', sellerAccountId: 'bitesites', phoneE164: target.phoneE164,
+        record: 'yes', evidenceId: 'anything', grantedAt: new Date('2026-01-01T12:00:00Z')
+      }
+    },
+    campaign
+  });
+  assert.equal(importedTextIsNotProof.eligible, false);
+  assert.ok(importedTextIsNotProof.reasons.includes('ai_consent_not_documented'));
+
+  // The same consent fields do not change the established human call gate.
+  assert.equal(evaluateCompliance({
+    target: { phoneE164: target.phoneE164, timezone: target.timezone }, campaign: { ...campaign, mode: 'power' }, now: MONDAY_10AM_NY
+  }).eligible, true);
 });
 
 test('the next window opening is inside the window, and never today when today is over', () => {

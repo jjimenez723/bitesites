@@ -37,6 +37,30 @@ test('Stone Bellisimo is a first-class account', () => {
   assert.equal(requireAccountId('stone-bellisimo'), 'stone-bellisimo');
   assert.equal(accountForCrmTag('client:stone-bellisimo'), 'stone-bellisimo');
   assert.equal(policyForAccount('stone-bellisimo').canQuotePricing, false);
+  assert.equal(policyForAccount('stone-bellisimo').commissionRate, 10);
+  assert.equal(ACCOUNTS['stone-bellisimo'].sales.primaryConversion, 'showroom_visit');
+});
+
+test('each seller has a distinct legal identity and sales motion', () => {
+  assert.equal(ACCOUNTS.bitesites.legalName, 'BiteSites L.L.C.');
+  assert.equal(ACCOUNTS.bitesites.sales.category, 'digital_services');
+  assert.equal(ACCOUNTS['fine-line-group'].legalName, 'The Fine Line Group LLC');
+  assert.equal(ACCOUNTS['fine-line-group'].sales.category, 'construction_restoration');
+  assert.equal(ACCOUNTS['fine-line-group'].sales.primaryConversion, 'project_assessment');
+  assert.equal(ACCOUNTS['stone-bellisimo'].legalName, 'Stonebellisimo LLC');
+  assert.equal(ACCOUNTS['stone-bellisimo'].sales.category, 'stone_countertops');
+});
+
+test('BiteSites private address is never present in the client-importable registry', () => {
+  assert.equal(ACCOUNTS.bitesites.publicIdentity.addressPublic, false);
+  assert.equal(ACCOUNTS.bitesites.publicIdentity.address, '');
+});
+
+test('the confirmed public contact fields do not invent Fine Line website or address details', () => {
+  assert.equal(ACCOUNTS['fine-line-group'].publicIdentity.phone, '+15517552278');
+  assert.equal(ACCOUNTS['fine-line-group'].publicIdentity.website, '');
+  assert.equal(ACCOUNTS['fine-line-group'].publicIdentity.address, '');
+  assert.equal(ACCOUNTS['stone-bellisimo'].publicIdentity.addressPublic, true);
 });
 
 test('partner outcomes accept only known partner entities and bounded outcomes', () => {

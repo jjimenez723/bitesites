@@ -11,6 +11,7 @@
 // a bare success for an action that did not happen — that is what makes
 // "never claim an action without confirmation" checkable rather than hopeful.
 
+import { createHash } from 'node:crypto';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 
 import { clean } from './prospect-normalization.js';
@@ -52,6 +53,180 @@ const state = name => {
 const text = (value, max = 500) => clean(value, max);
 const enumOf = (value, allowed, fallback = '') =>
   allowed.includes(String(value || '').trim()) ? String(value).trim() : fallback;
+
+// OpenAI assigns the function-call id.  It is the only id accepted for a tool
+// execution, and becomes the immutable idempotency key in Firestore.
+const TOOL_REQUEST_ID = /^[A-Za-z0-9_-]{1,200}$/;
+const TOOL_LEDGER_ROOT = callId => `calls/${callId}/toolExecutionState/ledger`;
+const TOOL_EXECUTION_ROOT = (callId, requestId) => `calls/${callId}/toolExecutions/${requestId}`;
+
+export const TOOL_QUOTAS = Object.freeze({
+  total: 20,
+  lookup_knowledge: 4,
+  check_availability: 2,
+  active_hold: 1,
+  book_meeting: 1,
+  followup: 1
+});
+
+const quotaKeyForTool = tool => ({
+  lookup_knowledge: 'lookup_knowledge',
+  check_availability: 'check_availability',
+  hold_slot: 'active_hold',
+  book_meeting: 'book_meeting',
+  // A scheduled callback and an approved message are both follow-up actions.
+  // Treating them as one budget prevents an agent from queueing both.
+  schedule_callback: 'followup',
+  send_approved_followup: 'followup'
+}[tool] || '');
+
+const isPlainObject = value => value !== null && typeof value === 'object'
+  && !Array.isArray(value) && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
+
+function canonicalToolArgs(value, depth = 0) {
+  if (depth > 8) throw new Error('arguments_too_deep');
+  if (value === null || typeof value === 'boolean' || typeof value === 'string') return value;
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) throw new Error('arguments_not_finite');
+    return value;
+  }
+  if (Array.isArray(value)) {
+    if (value.length > 100) throw new Error('arguments_too_large');
+    return value.map(item => canonicalToolArgs(item, depth + 1));
+  }
+  if (!isPlainObject(value)) throw new Error('arguments_malformed');
+  const keys = Object.keys(value).sort();
+  if (keys.length > 100) throw new Error('arguments_too_large');
+  return Object.fromEntries(keys.map(key => [key, canonicalToolArgs(value[key], depth + 1)]));
+}
+
+export function toolArgumentsHash(args) {
+  return createHash('sha256').update(JSON.stringify(canonicalToolArgs(args))).digest('hex');
+}
+
+function safeToolResult(value, depth = 0) {
+  if (depth > 8) return '[truncated]';
+  if (value === null || typeof value === 'boolean' || typeof value === 'number') return value;
+  if (typeof value === 'string') return value.slice(0, 5000);
+  if (Array.isArray(value)) return value.slice(0, 100).map(item => safeToolResult(item, depth + 1));
+  if (!isPlainObject(value)) return '';
+  return Object.fromEntries(Object.entries(value).slice(0, 100)
+    .map(([key, item]) => [text(key, 100), safeToolResult(item, depth + 1)]).filter(([key]) => key));
+}
+
+function validToolRequestId(value) {
+  const id = typeof value === 'string' ? value.trim() : '';
+  return TOOL_REQUEST_ID.test(id) ? id : '';
+}
+
+/**
+ * Atomically bind an OpenAI function-call id to its tool and exact arguments.
+ * The summary document makes quotas transactionally enforceable without
+ * querying an unbounded execution collection under a live call.
+ */
+export async function claimToolExecution(db, { callId, requestId, tool, argsHash, now = new Date() } = {}) {
+  const safeCallId = text(callId, 200);
+  const safeRequestId = validToolRequestId(requestId);
+  const safeTool = text(tool, 80);
+  const safeHash = text(argsHash, 128);
+  if (!safeCallId || !safeRequestId || !safeTool || !/^[a-f0-9]{64}$/.test(safeHash)) {
+    return { state: 'rejected', result: { ok: false, error: 'invalid_tool_request' } };
+  }
+  const executionRef = db.doc(TOOL_EXECUTION_ROOT(safeCallId, safeRequestId));
+  const ledgerRef = db.doc(TOOL_LEDGER_ROOT(safeCallId));
+  return db.runTransaction(async tx => {
+    const [executionSnapshot, ledgerSnapshot] = await Promise.all([tx.get(executionRef), tx.get(ledgerRef)]);
+    if (executionSnapshot.exists) {
+      const prior = executionSnapshot.data() || {};
+      if (prior.tool !== safeTool || prior.argsHash !== safeHash) {
+        return { state: 'rejected', result: { ok: false, error: 'tool_request_binding_mismatch' } };
+      }
+      if (prior.status === 'completed' && isPlainObject(prior.result)) {
+        return { state: 'completed', result: prior.result, duplicate: true };
+      }
+      // Never replay a provider write after a process crash. A worker that
+      // died between the provider side effect and this ledger completion is
+      // intentionally indistinguishable from one still executing.
+      return { state: 'unknown', result: { ok: false, error: 'tool_execution_unknown' }, duplicate: true };
+    }
+
+    const storedCounts = ledgerSnapshot.exists ? ledgerSnapshot.get('counts') : null;
+    if (ledgerSnapshot.exists && !isPlainObject(storedCounts)) {
+      return { state: 'rejected', result: { ok: false, error: 'tool_ledger_invalid' } };
+    }
+    const counts = storedCounts || {};
+    const countKeys = ['total', ...Object.keys(TOOL_QUOTAS).filter(key => key !== 'total')];
+    if (countKeys.some(key => counts[key] !== undefined
+      && (!Number.isSafeInteger(Number(counts[key])) || Number(counts[key]) < 0))) {
+      return { state: 'rejected', result: { ok: false, error: 'tool_ledger_invalid' } };
+    }
+    const total = Math.max(0, Number(counts.total) || 0);
+    const quotaKey = quotaKeyForTool(safeTool);
+    const quota = quotaKey ? TOOL_QUOTAS[quotaKey] : null;
+    const used = quotaKey ? Math.max(0, Number(counts[quotaKey]) || 0) : 0;
+    let rejection = '';
+    if (total >= TOOL_QUOTAS.total) rejection = 'tool_quota_total_exceeded';
+    else if (quota !== null && used >= quota) rejection = `tool_quota_${quotaKey}_exceeded`;
+    if (rejection) {
+      const result = { ok: false, error: rejection };
+      tx.set(executionRef, {
+        requestId: safeRequestId, tool: safeTool, argsHash: safeHash,
+        status: 'completed', result, startedAt: Timestamp.fromDate(now), completedAt: Timestamp.fromDate(now),
+        rejection: true
+      });
+      return { state: 'completed', result, rejected: true };
+    }
+
+    const nextCounts = {
+      ...counts, total: total + 1,
+      ...(quotaKey ? { [quotaKey]: used + 1 } : {})
+    };
+    tx.set(executionRef, {
+      requestId: safeRequestId, tool: safeTool, argsHash: safeHash,
+      status: 'executing', startedAt: Timestamp.fromDate(now)
+    });
+    tx.set(ledgerRef, {
+      counts: nextCounts, updatedAt: FieldValue.serverTimestamp()
+    }, { merge: true });
+    return { state: 'claimed', executionRef };
+  });
+}
+
+export async function completeToolExecution(db, { callId, requestId, tool, argsHash, result, now = new Date() } = {}) {
+  const safeCallId = text(callId, 200);
+  const safeRequestId = validToolRequestId(requestId);
+  if (!safeCallId || !safeRequestId) return { ok: false, error: 'invalid_tool_request' };
+  const ref = db.doc(TOOL_EXECUTION_ROOT(safeCallId, safeRequestId));
+  const storedResult = safeToolResult(result);
+  return db.runTransaction(async tx => {
+    const snapshot = await tx.get(ref);
+    if (!snapshot.exists || snapshot.get('tool') !== tool || snapshot.get('argsHash') !== argsHash) {
+      return { ok: false, error: 'tool_request_binding_mismatch' };
+    }
+    if (snapshot.get('status') === 'completed') return { ok: true, result: snapshot.get('result'), duplicate: true };
+    if (snapshot.get('status') !== 'executing') return { ok: false, error: 'tool_execution_unknown' };
+    tx.set(ref, { status: 'completed', result: storedResult, completedAt: Timestamp.fromDate(now) }, { merge: true });
+    return { ok: true, result: storedResult };
+  });
+}
+
+export async function failToolExecution(db, { callId, requestId, tool, argsHash, error = 'server_action_failed', now = new Date() } = {}) {
+  const safeCallId = text(callId, 200);
+  const safeRequestId = validToolRequestId(requestId);
+  if (!safeCallId || !safeRequestId) return { ok: false, error: 'invalid_tool_request' };
+  const ref = db.doc(TOOL_EXECUTION_ROOT(safeCallId, safeRequestId));
+  const result = { ok: false, error: text(error, 100) || 'server_action_failed' };
+  return db.runTransaction(async tx => {
+    const snapshot = await tx.get(ref);
+    if (!snapshot.exists || snapshot.get('tool') !== tool || snapshot.get('argsHash') !== argsHash) {
+      return { ok: false, error: 'tool_request_binding_mismatch' };
+    }
+    if (snapshot.get('status') === 'completed') return { ok: true, result: snapshot.get('result'), duplicate: true };
+    if (snapshot.get('status') !== 'executing') return { ok: false, error: 'tool_execution_unknown' };
+    tx.set(ref, { status: 'failed', result, failedAt: Timestamp.fromDate(now) }, { merge: true });
+    return { ok: true, result };
+  });
+}
 
 /**
  * Authorize a tool call against the compiled runtime stored on the media job.
@@ -216,6 +391,7 @@ async function bookMeetingTool(db, { call, args, google, nowMs }) {
     };
   }
 
+  const settings = await loadCalendarSettings(db, calendarAccountForCall(call));
   const result = await commitBooking(db, {
     holdId: text(args.holdId, 200),
     attendee: {
@@ -226,22 +402,24 @@ async function bookMeetingTool(db, { call, args, google, nowMs }) {
     },
     notes: text(args.notes, 1000),
     bookedBy: 'ai',
-    nowMs
+    nowMs,
+    google,
+    settings
   });
 
   if (!result.ok) {
     const guidance = {
       hold_expired: 'That hold lapsed. Call check_availability again and re-offer.',
       slot_taken: 'Someone took that time. Apologise once and offer the next one.',
+      google_slot_taken: 'That time was just taken on the live calendar. Apologise once and offer the next one.',
+      google_admission_unavailable: 'The live calendar cannot confirm that time right now. Do not say it is booked; offer a human follow-up.',
       hold_not_found: 'No hold exists. Start from check_availability.'
     };
     return { ...result, note: guidance[result.error] || 'The booking did not go through. Do not say it did.' };
   }
 
-  // Google is a mirror, and the meeting already stands locally. A failure here
-  // is recorded on the appointment for the retry sweep, never surfaced to a
-  // prospect who has just been told they are booked.
-  const settings = await loadCalendarSettings(db, calendarAccountForCall(call));
+  // Google event delivery happens after the successful, fail-closed admission
+  // check. A provider write can still be retried without changing the booking.
   await syncAppointmentToGoogle(db, result.appointmentId, { client: google, settings })
     .catch(error => console.warn('[agent-tools] calendar sync deferred', error?.message));
 
@@ -434,6 +612,12 @@ async function sendApprovedFollowup(db, { call, job, args }) {
   const templateId = text(args.templateId, 120);
   if (!channel) return { ok: false, error: 'channel_required' };
   if (!templateId) return { ok: false, error: 'template_required' };
+  if (args.prospectConfirmed !== true) {
+    return {
+      ok: false, error: 'channel_confirmation_required',
+      note: 'Ask the prospect to confirm this channel before requesting a follow-up.'
+    };
+  }
 
   const permissions = job?.runtime?.permissions || {};
   if (channel === 'email' && permissions.maySendEmail !== true) return { ok: false, error: 'email_not_permitted' };
@@ -445,6 +629,22 @@ async function sendApprovedFollowup(db, { call, job, args }) {
   }
   if (templateSnapshot.get('channel') !== channel) return { ok: false, error: 'channel_mismatch' };
 
+  if (!call.targetId) return { ok: false, error: 'no_target' };
+  const targetSnapshot = await db.doc(`outboundTargets/${call.targetId}`).get();
+  if (!targetSnapshot.exists) return { ok: false, error: 'no_target' };
+  const contact = await loadContactForTarget(db, { id: targetSnapshot.id, ...targetSnapshot.data() });
+  if (!contact) return { ok: false, error: 'no_contact' };
+  const destination = channel === 'email'
+    ? text(contact.email, 200).toLowerCase()
+    : text(contact.phoneE164 || contact.phone, 40);
+  if (!destination) return { ok: false, error: 'confirmed_channel_unavailable' };
+  if (channel === 'email' && (!EMAIL_PATTERN.test(destination) || contact.contactability?.doNotEmail === true)) {
+    return { ok: false, error: 'confirmed_email_unavailable' };
+  }
+  if (channel === 'sms' && (!/^\+[1-9]\d{7,14}$/.test(destination) || contact.contactability?.doNotSms === true)) {
+    return { ok: false, error: 'confirmed_sms_unavailable' };
+  }
+
   // Queued, not sent inline: delivery belongs to the send worker that already
   // owns suppression lists, unsubscribe links and retries.
   const ref = db.collection('followupQueue').doc();
@@ -452,8 +652,16 @@ async function sendApprovedFollowup(db, { call, job, args }) {
     channel, templateId,
     callId: call.id, campaignId: call.campaignId,
     targetId: text(call.targetId, 200),
-    contactId: text(call.prospectId || call.leadId, 200),
-    contactType: call.prospectId ? 'prospect' : call.leadId ? 'lead' : '',
+    contactId: text(contact.id, 200),
+    contactType: text(contact.type, 40),
+    destination: {
+      channel, value: destination, contactId: text(contact.id, 200), contactType: text(contact.type, 40),
+      resolvedFrom: 'current_contact_record'
+    },
+    confirmation: {
+      prospectConfirmed: true, channel, destination,
+      source: 'live_call_tool_argument', confirmedAt: FieldValue.serverTimestamp()
+    },
     status: 'queued',
     requestedBy: 'ai',
     createdAt: FieldValue.serverTimestamp()
@@ -461,7 +669,7 @@ async function sendApprovedFollowup(db, { call, job, args }) {
 
   return {
     ok: true, queued: true, reference: ref.id,
-    note: `Queued. Tell them the ${channel === 'sms' ? 'text' : 'email'} is on its way — do not describe its contents.`
+    note: `Queued for delivery to the confirmed ${channel === 'sms' ? 'text' : 'email'} channel. Do not say it was sent or received.`
   };
 }
 
@@ -570,16 +778,48 @@ export const IMPLEMENTED_TOOLS = Object.freeze(
  * for four minutes. They are validated exactly as browser input would be.
  */
 export async function executeAgentTool(db, {
-  call, job, tool, args = {}, actorId = '', google = null, nowMs = Date.now()
+  call, job, tool, args = {}, requestId = '', actorId = '', google = null, nowMs = Date.now()
 } = {}) {
   const authorized = authorizeTool(job, tool);
   if (!authorized.ok) return authorized;
 
+  const callId = text(call?.id, 200);
+  const safeRequestId = validToolRequestId(requestId);
+  // The media job is the server-side authority that compiled this tool set.
+  // Refuse an attempt to combine a valid job from one call with another call.
+  if (!callId || !safeRequestId || text(job?.callId, 200) !== callId) {
+    return { ok: false, error: 'invalid_tool_request' };
+  }
+
   const handler = HANDLERS[authorized.name] || ORCHESTRATION_HANDLERS[authorized.name];
   if (!handler) return { ok: false, error: 'tool_not_implemented' };
 
-  const safeArgs = args && typeof args === 'object' && !Array.isArray(args) ? args : {};
-  const result = await handler(db, { call, job, args: safeArgs, actorId, google, nowMs });
+  if (!isPlainObject(args)) return { ok: false, error: 'invalid_tool_arguments' };
+  let argsHash;
+  try { argsHash = toolArgumentsHash(args); }
+  catch { return { ok: false, error: 'invalid_tool_arguments' }; }
+  const now = new Date(nowMs);
+  const claim = await claimToolExecution(db, {
+    callId, requestId: safeRequestId, tool: authorized.name, argsHash, now
+  });
+  if (claim.state !== 'claimed') return claim.result;
+
+  let result;
+  try {
+    result = await handler(db, { call, job, args, actorId, google, nowMs });
+  } catch (error) {
+    const failed = await failToolExecution(db, {
+      callId, requestId: safeRequestId, tool: authorized.name, argsHash,
+      error: 'server_action_failed', now: new Date(nowMs)
+    }).catch(() => null);
+    return failed?.result || { ok: false, error: 'tool_execution_unknown' };
+  }
+
+  const completed = await completeToolExecution(db, {
+    callId, requestId: safeRequestId, tool: authorized.name, argsHash, result, now: new Date(nowMs)
+  }).catch(() => null);
+  if (!completed?.ok) return { ok: false, error: 'tool_execution_unknown' };
+  result = completed.result;
 
   await recordCallAuditEvent(db, 'ai_tool_call', {
     callId: call.id, sessionId: call.sessionId, campaignId: call.campaignId,

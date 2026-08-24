@@ -57,6 +57,9 @@ const HYBRID_FUNCTIONS = [
   'prepareTargetForDialing',
   'prepareCampaignResearch',
   'approveCampaignResearch',
+  'createConsentEvidenceCandidateCall',
+  'issueConsentGrantCall',
+  'revokeConsentGrantCall',
   'startPowerDialerSession',
   'startParallelDialerSession',
   'dialNextTargets',
@@ -104,6 +107,7 @@ const HYBRID_FUNCTIONS = [
   'markHybridCallDoNotCall',
   'submitHybridDisposition',
   'dispatchHybridAIToSip',
+  'reconcileHybridAIMediaAttachments',
   'twilioHybridAIParticipantTwiML',
   'twilioHybridAISipEvent',
   'hybridSidebandControl',
@@ -118,6 +122,7 @@ const HYBRID_FUNCTIONS = [
   'cancelAppointmentCall',
   'setAppointmentOutcome',
   'calendarMaintenance',
+  'outboundNightlyMaintenance',
 ];
 const FIREBASE_TARGETS = [
   ...HYBRID_FUNCTIONS.map(name => `functions:${name}`),

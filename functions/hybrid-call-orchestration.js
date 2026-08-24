@@ -7,6 +7,7 @@
 
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { clean } from './prospect-normalization.js';
+import { evaluateAIVoiceConsent, resolveAIVoiceConsent } from './outbound-compliance.js';
 
 export const CALL_CONTROLLERS = ['unassigned', 'human', 'ai', 'transitioning', 'none'];
 export const REP_STATES = ['available', 'busy', 'listening', 'transitioning', 'offline'];
@@ -177,6 +178,37 @@ export async function attachAIController(db, callId, aiSessionId, {
   const call = snapshot.data();
   const current = control(call);
   if (current.controller !== 'ai') throw new Error(`Call is controlled by ${current.controller}, not ai`);
+
+  // A Hybrid session can begin human-only and later route an answered leg to
+  // AI. Requiring consent only when the leg was dialled would leave that path
+  // as an escape hatch, so re-check the target snapshot immediately before
+  // media is attached. Do not fall back to mutable contact/campaign metadata.
+  const targetId = clean(call.targetId, 200);
+  const campaignId = clean(call.campaignId, 200);
+  if (!targetId || !campaignId) throw new Error('AI voice consent cannot be verified for this call');
+  const [targetSnapshot, campaignSnapshot] = await Promise.all([
+    db.doc(`outboundTargets/${targetId}`).get(),
+    db.doc(`outboundCampaigns/${campaignId}`).get()
+  ]);
+  if (!targetSnapshot.exists || !campaignSnapshot.exists) {
+    throw new Error('AI voice consent cannot be verified for this call');
+  }
+  const target = targetSnapshot.data();
+  const campaign = campaignSnapshot.data();
+  const resolvedConsent = await resolveAIVoiceConsent(db, {
+    target,
+    campaign,
+    phoneE164: call.phoneE164 || targetSnapshot.get('phoneE164'),
+    now
+  });
+  const consent = evaluateAIVoiceConsent({
+    target: { ...target, consent: resolvedConsent },
+    campaign,
+    phoneE164: call.phoneE164 || targetSnapshot.get('phoneE164')
+  });
+  if (!consent.eligible) {
+    throw new Error(`AI voice consent is not valid: ${consent.reasons.join(', ')}`);
+  }
 
   await ref.set({
     operator: 'ai',

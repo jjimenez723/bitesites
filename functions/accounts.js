@@ -36,6 +36,32 @@ export const ACCOUNTS = Object.freeze({
   bitesites: Object.freeze({
     id: 'bitesites',
     label: 'BiteSites',
+    legalName: 'BiteSites L.L.C.',
+    publicIdentity: Object.freeze({
+      website: 'https://bitesites.org',
+      phone: '',
+      // The owner supplied a legal address for private compliance use but
+      // explicitly prohibited publishing it. Deliberately store no address in
+      // this client-importable registry; a future notice address belongs in a
+      // server-only secret or a public registered-agent/PO-box configuration.
+      address: '',
+      addressPublic: false
+    }),
+    sales: Object.freeze({
+      category: 'digital_services',
+      businessPurposeOnly: true,
+      primaryConversion: 'strategy_call',
+      conversionLabel: 'Book a strategy call',
+      primaryObjective: 'Qualify the prospect for BiteSites digital services and book a strategy call with the owner.',
+      serviceLines: Object.freeze([
+        'websites', 'lead generation and follow-up', 'local search',
+        'AI voice agents', 'business automation', 'custom operating systems'
+      ]),
+      researchPriorities: Object.freeze([
+        'current website and conversion path', 'lead intake and response process',
+        'local-search presence', 'missed-call and scheduling workflow'
+      ])
+    }),
     // The house account. Its own prospecting, its own site leads, its own
     // voice agent.
     crmTag: 'client:bitesites',
@@ -55,6 +81,34 @@ export const ACCOUNTS = Object.freeze({
   'fine-line-group': Object.freeze({
     id: 'fine-line-group',
     label: 'The Fine Line Group',
+    legalName: 'The Fine Line Group LLC',
+    publicIdentity: Object.freeze({
+      website: '',
+      phone: '+15517552278',
+      address: '',
+      addressPublic: false
+    }),
+    sales: Object.freeze({
+      category: 'construction_restoration',
+      businessPurposeOnly: false,
+      primaryConversion: 'project_assessment',
+      conversionLabel: 'Book a project assessment',
+      primaryObjective: 'Qualify the property need and book a project assessment for The Fine Line Group.',
+      serviceLines: Object.freeze([
+        'kitchens, bathrooms, basements and additions',
+        'flooring, painting and outdoor living',
+        'water, fire, smoke and storm damage mitigation',
+        'mold remediation, restoration and full reconstruction',
+        'insurance claim support',
+        'framing, remodeling and renovations',
+        'commercial and residential property improvements'
+      ]),
+      researchPriorities: Object.freeze([
+        'property type and location', 'requested trade or damage type',
+        'urgency and occupancy', 'insurance-claim status',
+        'decision maker and site-access availability'
+      ])
+    }),
     crmTag: 'client:fineline',
     // Partnership-acquisition line provisioned in the shared Twilio account.
     callerIds: Object.freeze(['+12015524949']),
@@ -79,6 +133,29 @@ export const ACCOUNTS = Object.freeze({
   'stone-bellisimo': Object.freeze({
     id: 'stone-bellisimo',
     label: 'Stone Bellisimo',
+    legalName: 'Stonebellisimo LLC',
+    publicIdentity: Object.freeze({
+      website: 'https://stonebellisimollc.com',
+      phone: '',
+      address: '618 23rd St, Union City, NJ 07087',
+      addressPublic: true
+    }),
+    sales: Object.freeze({
+      category: 'stone_countertops',
+      businessPurposeOnly: false,
+      primaryConversion: 'showroom_visit',
+      conversionLabel: 'Book a showroom visit',
+      primaryObjective: 'Qualify the countertop project and book a Stone Bellisimo showroom visit.',
+      serviceLines: Object.freeze([
+        'stone countertops', 'showroom material selection',
+        'measurement and estimate', 'fabrication and installation'
+      ]),
+      researchPriorities: Object.freeze([
+        'project type and property location', 'preferred stone or material',
+        'approximate dimensions or measurement status', 'project timeline',
+        'showroom availability and decision makers'
+      ])
+    }),
     crmTag: 'client:stone-bellisimo',
     callerIds: Object.freeze(['+12015524949']),
     workflowIds: Object.freeze([]),
@@ -87,7 +164,7 @@ export const ACCOUNTS = Object.freeze({
       // through this console. Representatives introduce and qualify only.
       canQuotePricing: false,
       allowResidentialOutbound: false,
-      commissionRate: 0,
+      commissionRate: 10,
       leadProtectionDays: 0,
       rebuttalBusinessDays: 0
     })

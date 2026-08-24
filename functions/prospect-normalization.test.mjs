@@ -10,7 +10,7 @@ import {
   clean, normalizePhone, normalizeEmail, normalizeDomain, normalizeWebsite,
   normalizeCompanyKey, normalizeCompanyName, normalizeFirstName, splitPersonName,
   normalizeRegion, normalizePostalCode, parseAddressLine, resolveTimezone,
-  normalizeCategories, normalizeList, toDate, dedupeKeys, buildProspect,
+  normalizeCategories, normalizeList, normalizeConsent, toDate, dedupeKeys, buildProspect,
   validateProspect, deterministicId, isFreeEmailDomain, isDirectoryHost, hashKey
 } from './prospect-normalization.js';
 
@@ -201,6 +201,29 @@ test('a prospect with no phone is flagged rather than silently stored as callabl
   assert.equal(prospect.contactability.validPhone, false);
   assert.equal(prospect.contactability.complianceStatus, 'blocked');
   assert.ok(prospect.contactability.complianceReasons.includes('no_valid_phone'));
+});
+
+test('normalisation preserves seller-specific consent provenance without inventing it', () => {
+  const prospect = buildProspect({
+    name: 'Opted In Plumbing', phone: '(201) 555-0142', providerContactId: 'ghl-42',
+    consentBasis: 'written_opt_in', consentSellerAccountId: 'BiteSites',
+    consentPhone: '2015550142', consentEvidenceId: 'form-submission-42',
+    consentRecord: 'signed web form', consentFormVersion: 'v3',
+    consentGrantedAt: '2026-01-02T18:00:00Z'
+  }, { source: { system: 'bitesites_leads' } });
+
+  assert.equal(prospect.providerContactId, 'ghl-42');
+  assert.deepEqual(prospect.consent, {
+    grantId: '',
+    basis: 'written_opt_in', sellerAccountId: 'bitesites', phoneE164: '+12015550142',
+    evidenceId: 'form-submission-42', record: 'signed web form', sourceUrl: '',
+    formVersion: 'v3', grantedAt: new Date('2026-01-02T18:00:00Z')
+  });
+
+  const missing = normalizeConsent({ consentBasis: 'written_opt_in', consentRecord: 'old note' });
+  assert.equal(missing.sellerAccountId, '');
+  assert.equal(missing.phoneE164, '');
+  assert.equal(missing.grantedAt, null);
 });
 
 test('validation rejects records that cannot be deduplicated or worked', () => {

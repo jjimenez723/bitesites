@@ -74,6 +74,7 @@ await testEnv.withSecurityRulesDisabled(async context => {
   await setDoc(doc(db, 'roles', 'client_other'), { role: 'client' });
   await setDoc(doc(db, 'roles', 'outbound_rep'), { role: 'outbound_rep' });
   await setDoc(doc(db, 'roles', 'outbound_manager'), { role: 'outbound_manager' });
+  await setDoc(doc(db, 'roles', 'stale_claim_rep'), { role: 'outbound_rep', accountIds: ['bitesites'] });
   await setDoc(doc(db, 'users', 'someone_else'), {
     email: 'someone@example.com',
     status: 'pending'
@@ -115,6 +116,9 @@ const clientOk = testEnv.authenticatedContext('client_ok', { email: 'c1@example.
 const clientOther = testEnv.authenticatedContext('client_other', { email: 'c2@example.com' }).firestore();
 const outboundRep = testEnv.authenticatedContext('outbound_rep', { email: 'rep@bitesites.org' }).firestore();
 const outboundManager = testEnv.authenticatedContext('outbound_manager', { email: 'manager@bitesites.org' }).firestore();
+const staleClaimRep = testEnv.authenticatedContext('stale_claim_rep', {
+  email: 'stale@bitesites.org', role: 'admin', accountIds: ['stone-bellisimo']
+}).firestore();
 
 describe('leads — public submission');
 await it('anonymous visitor can submit a valid lead', () =>
@@ -637,21 +641,27 @@ await testEnv.withSecurityRulesDisabled(async context => {
     contactability: { doNotCall: false },
     dedupe: { canonicalKey: 'phone:+12015550142' },
     duplicate: { status: 'unique' },
-    importRunId: 'run-1',
+    importRunId: 'run-1', accountId: 'bitesites',
     createdAt: new Date()
   });
+  await setDoc(doc(db, 'prospects', 'p_stone'), {
+    accountId: 'stone-bellisimo', name: 'Stone Contact', lifecycle: { status: 'ready' }
+  });
   await setDoc(doc(db, 'prospects', 'p1', 'activities', 'a1'), { type: 'discovered', at: new Date() });
-  await setDoc(doc(db, 'outboundCampaigns', 'camp1'), { name: 'Test', status: 'draft', mode: 'power' });
-  await setDoc(doc(db, 'outboundTargets', 'tgt1'), { campaignId: 'camp1', state: 'ready' });
-  await setDoc(doc(db, 'dialerSessions', 'sess1'), { campaignId: 'camp1', userUid: 'admin_doc', status: 'active' });
-  await setDoc(doc(db, 'leadResearch', 'prospect_p1'), { approved: false, verifiedFacts: [] });
+  await setDoc(doc(db, 'outboundCampaigns', 'camp1'), { accountId: 'bitesites', name: 'Test', status: 'draft', mode: 'power' });
+  await setDoc(doc(db, 'outboundTargets', 'tgt1'), { accountId: 'bitesites', campaignId: 'camp1', state: 'ready' });
+  await setDoc(doc(db, 'dialerSessions', 'sess1'), { accountId: 'bitesites', campaignId: 'camp1', userUid: 'admin_doc', status: 'active' });
+  await setDoc(doc(db, 'leadResearch', 'prospect_p1'), { accountId: 'bitesites', approved: false, verifiedFacts: [] });
+  await setDoc(doc(db, 'consentEvidenceCandidates', 'candidate_1'), { status: 'pending_review', phoneE164: '+12015550142' });
+  await setDoc(doc(db, 'consentGrants', 'grant_1'), { status: 'active', phoneE164: '+12015550142' });
+  await setDoc(doc(db, 'consentGrantEvents', 'grant_1', 'events', 'issued'), { type: 'issued', at: new Date() });
   await setDoc(doc(db, 'scrapeJobs', 'job1'), { provider: 'mock', status: 'queued' });
   await setDoc(doc(db, 'scrapeJobs', 'job1', 'results', 'r1'), { raw: { name: 'x' } });
   await setDoc(doc(db, 'importRuns', 'run1'), { sourceSystem: 'watcher_leads', status: 'completed' });
   await setDoc(doc(db, 'importRuns', 'run1', 'errors', 'e1'), { reason: 'invalid_record' });
   await setDoc(doc(db, 'outboundCallEvents', 'evt1'), { type: 'completed' });
   await setDoc(doc(db, 'calls', 'outbound_call'), {
-    direction: 'outbound', status: 'connected', sessionId: 'sess1', startedAt: new Date()
+    accountId: 'bitesites', direction: 'outbound', status: 'connected', sessionId: 'sess1', startedAt: new Date()
   });
   await setDoc(doc(db, 'calls', 'outbound_call', 'turns', 't1'), {
     role: 'contact', text: 'Hello', at: new Date(), sequence: 1
@@ -672,9 +682,17 @@ await it('a client cannot read prospects', () =>
 await it('admin can read prospects', () =>
   assertSucceeds(getDocs(collection(adminByDoc, 'prospects'))));
 
-await it('outbound staff can read the prospect context required for a live call', async () => {
-  await assertSucceeds(getDocs(collection(outboundRep, 'prospects')));
-  await assertSucceeds(getDocs(collection(outboundManager, 'prospects')));
+await it('unscoped outbound roles cannot read another seller’s prospect corpus', async () => {
+  await assertFails(getDocs(collection(outboundRep, 'prospects')));
+  await assertFails(getDocs(collection(outboundManager, 'prospects')));
+});
+
+await it('a stored outbound scope defeats a stale elevated claim', async () => {
+  await assertSucceeds(getDoc(doc(staleClaimRep, 'prospects', 'p1')));
+  await assertFails(getDoc(doc(staleClaimRep, 'prospects', 'p_stone')));
+  await assertFails(getDocs(query(
+    collection(staleClaimRep, 'prospects'), where('accountId', '==', 'stone-bellisimo')
+  )));
 });
 
 await it('anonymous visitor cannot create a prospect', () =>
@@ -734,17 +752,17 @@ await it('anonymous visitor cannot read campaigns', () =>
 await it('admin can read campaigns', () =>
   assertSucceeds(getDocs(collection(adminByDoc, 'outboundCampaigns'))));
 
-await it('outbound staff can read campaigns, targets, sessions, and approved research', async () => {
-  await assertSucceeds(getDocs(collection(outboundRep, 'outboundCampaigns')));
-  await assertSucceeds(getDocs(collection(outboundRep, 'outboundTargets')));
-  await assertSucceeds(getDoc(doc(outboundRep, 'dialerSessions', 'sess1')));
-  await assertSucceeds(getDoc(doc(outboundRep, 'leadResearch', 'prospect_p1')));
+await it('unscoped outbound roles cannot read multi-seller dialing data', async () => {
+  await assertFails(getDocs(collection(outboundRep, 'outboundCampaigns')));
+  await assertFails(getDocs(collection(outboundRep, 'outboundTargets')));
+  await assertFails(getDoc(doc(outboundRep, 'dialerSessions', 'sess1')));
+  await assertFails(getDoc(doc(outboundRep, 'leadResearch', 'prospect_p1')));
 });
 
-await it('outbound staff can read outbound calls and transcripts but not inbound calls', async () => {
-  await assertSucceeds(getDoc(doc(outboundRep, 'calls', 'outbound_call')));
-  await assertSucceeds(getDocs(collection(outboundRep, 'calls', 'outbound_call', 'turns')));
-  await assertSucceeds(getDocs(query(
+await it('unscoped outbound roles cannot read calls or transcripts from any seller', async () => {
+  await assertFails(getDoc(doc(outboundRep, 'calls', 'outbound_call')));
+  await assertFails(getDocs(collection(outboundRep, 'calls', 'outbound_call', 'turns')));
+  await assertFails(getDocs(query(
     collection(outboundManager, 'calls'),
     where('direction', '==', 'outbound'),
     where('status', '==', 'connected')
@@ -798,6 +816,21 @@ await it('admin can read lead research', () =>
 // and sources unforgeable — an admin may reword a summary, not invent a fact.
 await it('admin cannot approve research by writing the document', () =>
   assertFails(updateDoc(doc(adminByDoc, 'leadResearch', 'prospect_p1'), { approved: true })));
+
+describe('AI voice consent ledger — admin-read, server-write');
+
+await it('only an admin can read consent evidence and grants', async () => {
+  await assertSucceeds(getDoc(doc(adminByDoc, 'consentEvidenceCandidates', 'candidate_1')));
+  await assertSucceeds(getDoc(doc(adminByDoc, 'consentGrants', 'grant_1')));
+  await assertFails(getDoc(doc(outboundRep, 'consentGrants', 'grant_1')));
+  await assertFails(getDoc(doc(anon, 'consentEvidenceCandidates', 'candidate_1')));
+});
+
+await it('no browser can forge, approve, revoke, or rewrite a consent grant', async () => {
+  await assertFails(setDoc(doc(adminByDoc, 'consentEvidenceCandidates', 'candidate_forged'), { status: 'pending_review' }));
+  await assertFails(updateDoc(doc(adminByDoc, 'consentGrants', 'grant_1'), { status: 'revoked' }));
+  await assertFails(setDoc(doc(adminByDoc, 'consentGrantEvents', 'grant_1', 'events', 'revoked'), { type: 'revoked' }));
+});
 
 await it('anonymous visitor cannot read scrape jobs', () =>
   assertFails(getDocs(collection(anon, 'scrapeJobs'))));

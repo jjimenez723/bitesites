@@ -60,5 +60,5 @@ The public service is acceptable because `/openai/webhook` requires a valid Open
 
 - Duplicate Firestore delivery cannot create two SIP AI legs because the media job is transactionally claimed.
 - If OpenAI configuration cannot be loaded, the incoming SIP leg is rejected instead of connecting a prospect to silence.
-- If the sideband WebSocket fails, the carrier call remains visible in the Live Dialer and the failure is logged; a rep can still end the call or take other manual action.
+- If runtime compilation, SIP setup, Realtime acceptance, attachment acknowledgement, or the sideband WebSocket fails, Firebase immediately marks AI control terminal, hangs up the Realtime leg, and ends the prospect carrier leg. A durable one-minute reconciler retries incomplete teardown; a live prospect is never left waiting on a failed AI controller.
 - Agent tools that are not implemented server-side are not exposed to the Realtime model, even if a future profile field asks for them.

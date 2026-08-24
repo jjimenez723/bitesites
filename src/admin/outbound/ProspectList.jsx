@@ -58,7 +58,7 @@ const importNotice = (result, campaignName) => {
   };
 };
 
-export default function ProspectList({ campaigns = [], onOpen, onTargetsAdded }) {
+export default function ProspectList({ campaigns = [], accountIds = [], allAccounts = false, onOpen, onTargetsAdded }) {
   const [status, setStatus] = useState('ready');
   const [system, setSystem] = useState('all');
   const [search, setSearch] = useState('');
@@ -67,7 +67,7 @@ export default function ProspectList({ campaigns = [], onOpen, onTargetsAdded })
   const [notice, setNotice] = useState(null);
   const action = useAction();
 
-  const { rows, loading, error, capped, refresh } = useProspects({ status, system });
+  const { rows, loading, error, capped, refresh } = useProspects({ status, system, accountIds, allAccounts });
 
   // Client-side search over an already-capped page. A Firestore prefix query
   // would need an index per searchable field and still would not match on a

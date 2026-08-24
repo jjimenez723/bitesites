@@ -28,6 +28,10 @@ import {
 } from './lead-discovery.js';
 import { importProspects, createImportRun, finishImportRun, resolveDuplicate } from './prospect-import.js';
 import { requireAccountId, sanitizePartnerOutcomes } from './accounts.js';
+import {
+  assertAccountAccess, assertDocumentAccountAccess, assertOutboundAccess,
+  resolveAccountAccess
+} from './account-access.js';
 import { csvToRecords } from './providers/lead-sources/csv-source.js';
 import { promoteProspect } from './prospect-conversion.js';
 import {
@@ -38,10 +42,16 @@ import {
   ensureResearch, releaseTargetsForApprovedResearch,
   prepareCampaignResearchBatch, approveCampaignResearchBatch
 } from './outbound-calls.js';
-import { contactKey, approveResearch, loadResearch, researchContact, saveResearch } from './lead-enrichment.js';
+import {
+  contactKey, approveResearch, loadResearch, researchContact, saveResearch,
+  RESEARCH_EVIDENCE_POLICY_VERSION
+} from './lead-enrichment.js';
 import { loadContactForTarget } from './outbound-contacts.js';
 import { clean } from './prospect-normalization.js';
 import { hybridOutboundEventsUrl } from './hybrid-urls.js';
+import {
+  createConsentEvidenceCandidate, issueConsentGrant, revokeConsentGrant, expireDueConsentGrants
+} from './consent-grants.js';
 
 // ------------------------------------------------------------------- secrets
 
@@ -118,31 +128,55 @@ function providerConfigFor(providerId, { requestUrl = '' } = {}) {
 
 // --------------------------------------------------------------------- guards
 
-async function callerRole(db, auth) {
-  if (auth?.token?.role) return auth.token.role;
-  const snapshot = await db.doc(`roles/${auth.uid}`).get();
-  return snapshot.exists ? snapshot.get('role') || '' : '';
-}
-
 /** Every callable in this file starts here. */
 async function requireAdmin(request) {
   if (!request.auth?.uid) throw new HttpsError('unauthenticated', 'Sign in first.');
   const db = getFirestore();
-  const role = await callerRole(db, request.auth);
-  if (!['admin', 'outbound_manager'].includes(role)) {
-    throw new HttpsError('permission-denied', 'Only an admin or outbound manager can manage outbound calling.');
+  try {
+    const access = assertOutboundAccess(await resolveAccountAccess(db, request.auth), { manage: true });
+    return { db, uid: request.auth.uid, email: request.auth.token?.email || '', role: access.role, access };
+  } catch (error) {
+    throw new HttpsError('permission-denied', clean(error.message, 300));
   }
-  return { db, uid: request.auth.uid, email: request.auth.token?.email || '', role };
 }
 
 async function requireOutboundStaff(request) {
   if (!request.auth?.uid) throw new HttpsError('unauthenticated', 'Sign in first.');
   const db = getFirestore();
-  const role = await callerRole(db, request.auth);
-  if (!['admin', 'outbound_rep', 'outbound_manager'].includes(role)) {
-    throw new HttpsError('permission-denied', 'This account cannot use outbound calling.');
+  try {
+    const access = assertOutboundAccess(await resolveAccountAccess(db, request.auth));
+    return { db, uid: request.auth.uid, email: request.auth.token?.email || '', role: access.role, access };
+  } catch (error) {
+    throw new HttpsError('permission-denied', clean(error.message, 300));
   }
-  return { db, uid: request.auth.uid, email: request.auth.token?.email || '', role };
+}
+
+const scopeError = error => new HttpsError('permission-denied', clean(error?.message, 300));
+const requireScopedAccount = (access, accountId) => {
+  try { return assertAccountAccess(access, accountId); } catch (error) { throw scopeError(error); }
+};
+const requireScopedDocument = async (db, access, path, resource) => {
+  const snapshot = await db.doc(path).get();
+  if (!snapshot.exists) throw new HttpsError('not-found', `${resource} not found.`);
+  const data = { id: snapshot.id, ...snapshot.data() };
+  try { assertDocumentAccountAccess(access, data, { resource: resource.toLowerCase() }); }
+  catch (error) { throw scopeError(error); }
+  return data;
+};
+const requireScopedCampaign = (db, access, campaignId) =>
+  requireScopedDocument(db, access, `outboundCampaigns/${campaignId}`, 'Campaign');
+const requireScopedTarget = (db, access, targetId) =>
+  requireScopedDocument(db, access, `outboundTargets/${targetId}`, 'Target');
+
+// Approving or revoking artificial-voice permission is deliberately narrower
+// than operating a dialer. Outbound managers can supervise campaigns, but only
+// an owner/admin may attest to legal evidence and mutate the consent ledger.
+async function requireConsentReviewer(request) {
+  const context = await requireAdmin(request);
+  if (context.role !== 'admin') {
+    throw new HttpsError('permission-denied', 'Only an owner or admin can review AI voice consent evidence.');
+  }
+  return context;
 }
 
 const str = (value, maxLen = 200) => clean(value, maxLen);
@@ -165,7 +199,7 @@ const callOptions = { enforceAppCheck: false, maxInstances: 10 };
 
 /** What the dashboard can offer. Capability flags and secret NAMES only. */
 export const getOutboundConfig = onCall({ ...callOptions, secrets: OUTBOUND_CONFIG_SECRETS }, async request => {
-  await requireOutboundStaff(request);
+  const { access } = await requireOutboundStaff(request);
 
   const providers = await Promise.all(describeCallingProviders().map(async provider => {
     let health = { ok: false, missing: provider.requiredSecrets };
@@ -184,6 +218,8 @@ export const getOutboundConfig = onCall({ ...callOptions, secrets: OUTBOUND_CONF
   }));
 
   return {
+    accountIds: access.accountIds,
+    allAccounts: access.allAccounts === true,
     leadSources: describeLeadSources(),
     callingProviders: providers,
     // A standing reminder rather than a one-off banner: the controls in this
@@ -195,7 +231,8 @@ export const getOutboundConfig = onCall({ ...callOptions, secrets: OUTBOUND_CONF
 // -------------------------------------------------------------- discovery
 
 export const createLeadDiscoveryJob = onCall({ ...callOptions, secrets: [LEAD_SOURCE_API_KEY] }, async request => {
-  const { db, email } = await requireAdmin(request);
+  const { db, email, access } = await requireAdmin(request);
+  requireScopedAccount(access, request.data?.accountId);
   const jobId = await createDiscoveryJob(db, {
     provider: str(request.data?.provider, 40),
     criteria: request.data?.criteria || {},
@@ -207,8 +244,9 @@ export const createLeadDiscoveryJob = onCall({ ...callOptions, secrets: [LEAD_SO
 });
 
 export const runLeadDiscoveryJob = onCall({ ...callOptions, timeoutSeconds: 540, secrets: [LEAD_SOURCE_API_KEY] }, async request => {
-  const { db } = await requireAdmin(request);
+  const { db, access } = await requireAdmin(request);
   const jobId = requireId(request.data?.jobId, 'job id');
+  await requireScopedDocument(db, access, `scrapeJobs/${jobId}`, 'Discovery job');
   const result = await runDiscoverySlice(db, jobId, {
     budgetMs: 420_000,
     sourceOptions: { apiKey: secretValue(LEAD_SOURCE_API_KEY) }
@@ -217,15 +255,17 @@ export const runLeadDiscoveryJob = onCall({ ...callOptions, timeoutSeconds: 540,
 });
 
 export const pauseLeadDiscoveryJob = onCall(callOptions, async request => {
-  const { db } = await requireAdmin(request);
+  const { db, access } = await requireAdmin(request);
   const jobId = requireId(request.data?.jobId, 'job id');
+  await requireScopedDocument(db, access, `scrapeJobs/${jobId}`, 'Discovery job');
   await db.doc(`scrapeJobs/${jobId}`).set({ status: 'paused' }, { merge: true });
   return { ok: true };
 });
 
 export const cancelLeadDiscoveryJob = onCall(callOptions, async request => {
-  const { db } = await requireAdmin(request);
+  const { db, access } = await requireAdmin(request);
   const jobId = requireId(request.data?.jobId, 'job id');
+  await requireScopedDocument(db, access, `scrapeJobs/${jobId}`, 'Discovery job');
   await db.doc(`scrapeJobs/${jobId}`).set({
     status: 'cancelled', completedAt: FieldValue.serverTimestamp()
   }, { merge: true });
@@ -301,7 +341,7 @@ export const discoveryWorker = onRequest({ secrets: [DISCOVERY_WORKER_SECRET], m
 // ---------------------------------------------------------------- prospects
 
 export const importProspectCsv = onCall({ ...callOptions, timeoutSeconds: 300 }, async request => {
-  const { db, email } = await requireAdmin(request);
+  const { db, email, access } = await requireAdmin(request);
   const csvText = String(request.data?.csvText || '');
   // 5MB of CSV is roughly 40k rows — past that it belongs in the migration
   // script, which can stream, rather than in a callable's request body.
@@ -317,6 +357,7 @@ export const importProspectCsv = onCall({ ...callOptions, timeoutSeconds: 300 },
   } catch (error) {
     throw new HttpsError('invalid-argument', error.message);
   }
+  requireScopedAccount(access, accountId);
 
   const { records, unmapped } = csvToRecords(csvText);
   if (!records.length) throw new HttpsError('invalid-argument', 'No data rows were found in that file.');
@@ -341,16 +382,18 @@ export const importProspectCsv = onCall({ ...callOptions, timeoutSeconds: 300 },
 });
 
 export const resolveProspectDuplicate = onCall(callOptions, async request => {
-  const { db, email } = await requireAdmin(request);
+  const { db, email, access } = await requireAdmin(request);
   const prospectId = requireId(request.data?.prospectId, 'prospect id');
+  await requireScopedDocument(db, access, `prospects/${prospectId}`, 'Prospect');
   const action = str(request.data?.action, 20);
   if (!['keep', 'merge'].includes(action)) throw new HttpsError('invalid-argument', 'Action must be keep or merge.');
   return resolveDuplicate(db, prospectId, { action, reviewedBy: email });
 });
 
 export const promoteProspectToLead = onCall(callOptions, async request => {
-  const { db, email } = await requireAdmin(request);
+  const { db, email, access } = await requireAdmin(request);
   const prospectId = requireId(request.data?.prospectId, 'prospect id');
+  await requireScopedDocument(db, access, `prospects/${prospectId}`, 'Prospect');
   const trigger = str(request.data?.trigger, 40) || 'manual_qualification';
   const manualReason = str(request.data?.manualReason, 120);
   const contactStatus = str(request.data?.contactStatus, 40);
@@ -375,22 +418,28 @@ export const promoteProspectToLead = onCall(callOptions, async request => {
 // ---------------------------------------------------------------- campaigns
 
 export const createOutboundCampaign = onCall(callOptions, async request => {
-  const { db, email } = await requireAdmin(request);
+  const { db, email, access } = await requireAdmin(request);
+  requireScopedAccount(access, request.data?.accountId);
   const campaignId = await createCampaign(db, request.data || {}, { createdBy: email })
     .catch(error => { throw new HttpsError('invalid-argument', clean(error?.message, 300)); });
   return { campaignId };
 });
 
 export const updateOutboundCampaign = onCall(callOptions, async request => {
-  const { db } = await requireAdmin(request);
+  const { db, access } = await requireAdmin(request);
   const campaignId = requireId(request.data?.campaignId, 'campaign id');
+  const campaign = await requireScopedCampaign(db, access, campaignId);
+  if (request.data?.campaign?.accountId && request.data.campaign.accountId !== campaign.accountId) {
+    requireScopedAccount(access, request.data.campaign.accountId);
+  }
   return updateCampaign(db, campaignId, request.data?.campaign || {})
     .catch(error => { throw new HttpsError('invalid-argument', clean(error?.message, 300)); });
 });
 
 const statusCallable = status => onCall(callOptions, async request => {
-  const { db, email } = await requireAdmin(request);
+  const { db, email, access } = await requireAdmin(request);
   const campaignId = requireId(request.data?.campaignId, 'campaign id');
+  await requireScopedCampaign(db, access, campaignId);
   return setCampaignStatus(db, campaignId, status, { actor: email })
     .catch(error => { throw new HttpsError('failed-precondition', clean(error?.message, 300)); });
 });
@@ -401,8 +450,9 @@ export const resumeOutboundCampaign = statusCallable('running');
 export const cancelOutboundCampaign = statusCallable('cancelled');
 
 export const importOutboundTargets = onCall({ ...callOptions, timeoutSeconds: 300 }, async request => {
-  const { db } = await requireAdmin(request);
+  const { db, access } = await requireAdmin(request);
   const campaignId = requireId(request.data?.campaignId, 'campaign id');
+  await requireScopedCampaign(db, access, campaignId);
   return importTargets(db, campaignId, {
     prospectIds: idList(request.data?.prospectIds),
     leadIds: idList(request.data?.leadIds),
@@ -413,7 +463,7 @@ export const importOutboundTargets = onCall({ ...callOptions, timeoutSeconds: 30
 // ----------------------------------------------------------------- research
 
 export const researchOutboundContact = onCall({ ...callOptions, timeoutSeconds: 120 }, async request => {
-  const { db } = await requireAdmin(request);
+  const { db, access } = await requireAdmin(request);
   const contactType = str(request.data?.contactType, 20);
   if (!['lead', 'prospect'].includes(contactType)) throw new HttpsError('invalid-argument', 'contactType must be lead or prospect.');
   const contactId = requireId(request.data?.contactId, 'contact id');
@@ -424,30 +474,43 @@ export const researchOutboundContact = onCall({ ...callOptions, timeoutSeconds: 
     prospectId: contactType === 'prospect' ? contactId : ''
   });
 
-  if (request.data?.refresh !== true) {
-    const cached = await loadResearch(db, key);
-    if (cached) return { key, research: cached, cached: true };
-  }
-
   const contact = await loadContactForTarget(db, {
     contactType,
     leadId: contactType === 'lead' ? contactId : '',
     prospectId: contactType === 'prospect' ? contactId : ''
   });
   if (!contact) throw new HttpsError('not-found', 'That contact no longer exists.');
+  const accountId = contact.accountId;
+  try { assertDocumentAccountAccess(access, contact, { resource: 'contact' }); }
+  catch (error) { throw scopeError(error); }
+  const requestedAccountId = str(request.data?.accountId, 120);
+  if (requestedAccountId && requestedAccountId !== accountId) {
+    throw new HttpsError('permission-denied', 'The requested seller does not own this contact.');
+  }
 
-  const research = await researchContact(db, { contactType, contact });
+  if (request.data?.refresh !== true) {
+    const cached = await loadResearch(db, key);
+    if (cached?.accountId === accountId
+      && cached.evidencePolicyVersion === RESEARCH_EVIDENCE_POLICY_VERSION) {
+      return { key, research: cached, cached: true };
+    }
+  }
+
+  const research = await researchContact(db, { contactType, contact, campaign: { accountId } });
   await saveResearch(db, key, research);
   return { key, research, cached: false };
 });
 
 export const approveLeadResearch = onCall(callOptions, async request => {
-  const { db, email } = await requireAdmin(request);
+  const { db, email, access } = await requireAdmin(request);
   const key = str(request.data?.key, 200);
   if (!/^(?:lead|prospect)_[A-Za-z0-9_-]+$/.test(key)) throw new HttpsError('invalid-argument', 'A valid research key is required.');
   try {
-    await approveResearch(db, key, { approvedBy: email, edits: request.data?.edits || null });
-    const releasedTargets = await releaseTargetsForApprovedResearch(db, key);
+    const existing = await loadResearch(db, key);
+    if (!existing) throw new Error('Research not found.');
+    assertDocumentAccountAccess(access, existing, { resource: 'research record' });
+    const approval = await approveResearch(db, key, { approvedBy: email, edits: request.data?.edits || null });
+    const releasedTargets = await releaseTargetsForApprovedResearch(db, key, approval.accountId);
     return { ok: true, releasedTargets };
   } catch (error) {
     throw new HttpsError('not-found', clean(error?.message, 300));
@@ -455,11 +518,9 @@ export const approveLeadResearch = onCall(callOptions, async request => {
 });
 
 export const prepareTargetForDialing = onCall({ ...callOptions, timeoutSeconds: 120 }, async request => {
-  const { db } = await requireAdmin(request);
+  const { db, access } = await requireAdmin(request);
   const targetId = requireId(request.data?.targetId, 'target id');
-  const snapshot = await db.doc(`outboundTargets/${targetId}`).get();
-  if (!snapshot.exists) throw new HttpsError('not-found', 'Target not found.');
-  const target = { id: targetId, ...snapshot.data() };
+  const target = await requireScopedTarget(db, access, targetId);
   const campaignSnapshot = await db.doc(`outboundCampaigns/${target.campaignId}`).get();
   const campaign = { id: target.campaignId, ...(campaignSnapshot.data() || {}) };
   const result = await ensureResearch(db, target, campaign);
@@ -468,32 +529,78 @@ export const prepareTargetForDialing = onCall({ ...callOptions, timeoutSeconds: 
 });
 
 export const prepareCampaignResearch = onCall({ ...callOptions, timeoutSeconds: 540 }, async request => {
-  const { db } = await requireAdmin(request);
+  const { db, access } = await requireAdmin(request);
   const campaignId = requireId(request.data?.campaignId, 'campaign id');
+  await requireScopedCampaign(db, access, campaignId);
   return prepareCampaignResearchBatch(db, campaignId, { limit: 12, concurrency: 4 })
     .catch(error => { throw new HttpsError('internal', clean(error?.message, 300)); });
 });
 
 export const approveCampaignResearch = onCall({ ...callOptions, timeoutSeconds: 120 }, async request => {
-  const { db, email } = await requireAdmin(request);
+  const { db, email, access } = await requireAdmin(request);
   const campaignId = requireId(request.data?.campaignId, 'campaign id');
+  await requireScopedCampaign(db, access, campaignId);
   return approveCampaignResearchBatch(db, campaignId, { approvedBy: email, limit: 200 })
     .catch(error => { throw new HttpsError('internal', clean(error?.message, 300)); });
+});
+
+// ---------------------------------------------------------- consent ledger
+//
+// Imported consent fields are candidates only.  These callables are the sole
+// browser-reachable route into the server-owned grant ledger, and both require
+// an admin (not merely a dialer rep) because approving one changes who may be
+// contacted by artificial voice.
+
+export const createConsentEvidenceCandidateCall = onCall(callOptions, async request => {
+  const { db, uid, email } = await requireConsentReviewer(request);
+  try {
+    return await createConsentEvidenceCandidate(db, request.data || {}, {
+      actorUid: uid, actorEmail: email
+    });
+  } catch (error) {
+    throw new HttpsError('invalid-argument', clean(error?.message, 300));
+  }
+});
+
+export const issueConsentGrantCall = onCall(callOptions, async request => {
+  const { db, uid, email } = await requireConsentReviewer(request);
+  try {
+    return await issueConsentGrant(db, requireId(request.data?.candidateId, 'candidate id'), {
+      reviewerUid: uid, reviewerEmail: email
+    });
+  } catch (error) {
+    const code = /not found/i.test(String(error?.message)) ? 'not-found' : 'failed-precondition';
+    throw new HttpsError(code, clean(error?.message, 300));
+  }
+});
+
+export const revokeConsentGrantCall = onCall(callOptions, async request => {
+  const { db, uid, email } = await requireConsentReviewer(request);
+  try {
+    return await revokeConsentGrant(db, requireId(request.data?.grantId, 'grant id'), {
+      reason: str(request.data?.reason, 1000), reviewerUid: uid, actorUid: uid, actorEmail: email
+    });
+  } catch (error) {
+    const code = /not found/i.test(String(error?.message)) ? 'not-found' : 'failed-precondition';
+    throw new HttpsError(code, clean(error?.message, 300));
+  }
 });
 
 // ------------------------------------------------------------------ dialing
 
 export const startPowerDialerSession = onCall({ ...callOptions, secrets: OUTBOUND_SECRETS }, async request => {
-  const { db, uid } = await requireAdmin(request);
+  const { db, uid, access } = await requireAdmin(request);
   const campaignId = requireId(request.data?.campaignId, 'campaign id');
+  await requireScopedCampaign(db, access, campaignId);
   const { sessionId } = await startDialerSession(db, { campaignId, userUid: uid, mode: 'power' })
     .catch(error => { throw new HttpsError('failed-precondition', clean(error?.message, 300)); });
   return { sessionId };
 });
 
 export const startParallelDialerSession = onCall({ ...callOptions, secrets: OUTBOUND_SECRETS }, async request => {
-  const { db, uid } = await requireAdmin(request);
+  const { db, uid, access } = await requireAdmin(request);
   const campaignId = requireId(request.data?.campaignId, 'campaign id');
+  await requireScopedCampaign(db, access, campaignId);
   const concurrency = Math.max(1, Math.min(5, Number(request.data?.concurrency) || 1));
   const { sessionId } = await startDialerSession(db, { campaignId, userUid: uid, mode: 'parallel', concurrency })
     .catch(error => { throw new HttpsError('failed-precondition', clean(error?.message, 300)); });
@@ -501,11 +608,13 @@ export const startParallelDialerSession = onCall({ ...callOptions, secrets: OUTB
 });
 
 export const dialNextTargets = onCall({ ...callOptions, timeoutSeconds: 180, secrets: OUTBOUND_SECRETS }, async request => {
-  const { db, uid } = await requireAdmin(request);
+  const { db, uid, access } = await requireAdmin(request);
   const sessionId = requireId(request.data?.sessionId, 'session id');
 
   const snapshot = await db.doc(`dialerSessions/${sessionId}`).get();
   if (!snapshot.exists) throw new HttpsError('not-found', 'Session not found.');
+  try { assertDocumentAccountAccess(access, snapshot.data() || {}, { resource: 'dialer session' }); }
+  catch (error) { throw scopeError(error); }
   // A session belongs to the person who started it. Anything else lets one
   // admin drive another admin's softphone.
   if (snapshot.get('userUid') !== uid) throw new HttpsError('permission-denied', 'That session belongs to another user.');
@@ -518,32 +627,33 @@ export const dialNextTargets = onCall({ ...callOptions, timeoutSeconds: 180, sec
 });
 
 export const heartbeatDialerSession = onCall(callOptions, async request => {
-  const { db } = await requireAdmin(request);
-  return heartbeatSession(db, requireId(request.data?.sessionId, 'session id'));
+  const { db, access } = await requireAdmin(request);
+  const sessionId = requireId(request.data?.sessionId, 'session id');
+  await requireScopedDocument(db, access, `dialerSessions/${sessionId}`, 'Dialer session');
+  return heartbeatSession(db, sessionId);
 });
 
 export const stopDialerSessionCall = onCall({ ...callOptions, secrets: OUTBOUND_SECRETS }, async request => {
-  const { db } = await requireAdmin(request);
+  const { db, access } = await requireAdmin(request);
   const sessionId = requireId(request.data?.sessionId, 'session id');
-  const snapshot = await db.doc(`dialerSessions/${sessionId}`).get();
-  const providerId = snapshot.get('provider') || 'mock';
+  const session = await requireScopedDocument(db, access, `dialerSessions/${sessionId}`, 'Dialer session');
+  const providerId = session.provider || 'mock';
   return stopDialerSession(db, sessionId, { reason: str(request.data?.reason, 60) || 'ended', providerConfig: providerConfigFor(providerId) });
 });
 
 export const submitCallDisposition = onCall({ ...callOptions, secrets: OUTBOUND_SECRETS }, async request => {
-  const { db, email } = await requireAdmin(request);
+  const { db, email, access } = await requireAdmin(request);
   const targetId = requireId(request.data?.targetId, 'target id');
   const disposition = str(request.data?.disposition, 40);
   const partnerOutcomes = sanitizePartnerOutcomes(request.data?.partnerOutcomes);
 
-  const targetSnapshot = await db.doc(`outboundTargets/${targetId}`).get();
-  if (!targetSnapshot.exists) throw new HttpsError('not-found', 'Target not found.');
-  const campaignSnapshot = await db.doc(`outboundCampaigns/${targetSnapshot.get('campaignId')}`).get();
+  const target = await requireScopedTarget(db, access, targetId);
+  const campaignSnapshot = await db.doc(`outboundCampaigns/${target.campaignId}`).get();
   const campaign = campaignSnapshot.exists ? { id: campaignSnapshot.id, ...campaignSnapshot.data() } : null;
 
   const result = await applyDisposition(db, {
     targetId,
-    callId: str(request.data?.callId, 200) || targetSnapshot.get('lastCallId') || '',
+    callId: str(request.data?.callId, 200) || target.lastCallId || '',
     disposition,
     notes: str(request.data?.notes, 2000),
     partnerOutcomes,
@@ -553,7 +663,8 @@ export const submitCallDisposition = onCall({ ...callOptions, secrets: OUTBOUND_
 
   // The call document gets the human's verdict too, so History shows what the
   // rep decided rather than only what the carrier reported.
-  const callId = str(request.data?.callId, 200) || targetSnapshot.get('lastCallId') || '';
+  const callId = str(request.data?.callId, 200) || target.lastCallId || '';
+  if (callId) await requireScopedDocument(db, access, `calls/${callId}`, 'Call');
   if (callId) {
     await db.doc(`calls/${callId}`).set({
       disposition,
@@ -567,11 +678,10 @@ export const submitCallDisposition = onCall({ ...callOptions, secrets: OUTBOUND_
 });
 
 export const moveTargetToCallLater = onCall(callOptions, async request => {
-  const { db } = await requireOutboundStaff(request);
+  const { db, access } = await requireOutboundStaff(request);
   const targetId = requireId(request.data?.targetId, 'target id');
-  const snapshot = await db.doc(`outboundTargets/${targetId}`).get();
-  if (!snapshot.exists) throw new HttpsError('not-found', 'Target not found.');
-  const campaignSnapshot = await db.doc(`outboundCampaigns/${snapshot.get('campaignId')}`).get();
+  const target = await requireScopedTarget(db, access, targetId);
+  const campaignSnapshot = await db.doc(`outboundCampaigns/${target.campaignId}`).get();
   return moveToCallLater(db, targetId, {
     minutes: Number(request.data?.minutes) || 1440,
     reason: str(request.data?.reason, 60) || 'requested',
@@ -580,8 +690,10 @@ export const moveTargetToCallLater = onCall(callOptions, async request => {
 });
 
 export const markTargetDoNotCall = onCall(callOptions, async request => {
-  const { db, email } = await requireOutboundStaff(request);
-  return markDoNotCall(db, requireId(request.data?.targetId, 'target id'), { actor: email });
+  const { db, email, access } = await requireOutboundStaff(request);
+  const targetId = requireId(request.data?.targetId, 'target id');
+  await requireScopedTarget(db, access, targetId);
+  return markDoNotCall(db, targetId, { actor: email });
 });
 
 // ----------------------------------------------------------------- webhooks
@@ -702,7 +814,7 @@ export const runAICampaigns = onSchedule(
   }
 );
 
-/** Nightly: prune expired raw scrape payloads and refresh campaign counters. */
+/** Nightly: prune raw payloads, reconcile expiring grants, and refresh counters. */
 export const outboundNightlyMaintenance = onSchedule(
   { schedule: '0 3 * * *', timeZone: 'America/New_York', timeoutSeconds: 540 },
   async () => {
@@ -720,6 +832,8 @@ export const outboundNightlyMaintenance = onSchedule(
       .where('status', 'in', ['running', 'paused', 'ready']).limit(50).get();
     for (const entry of campaigns.docs) await refreshCampaignCounts(db, entry.id);
 
-    console.log(`[outbound] nightly: pruned ${pruned} raw results, recounted ${campaigns.size} campaigns`);
+    const expiredGrants = await expireDueConsentGrants(db, { limit: 500 });
+
+    console.log(`[outbound] nightly: pruned ${pruned} raw results, expired ${expiredGrants.expired} grants, recounted ${campaigns.size} campaigns`);
   }
 );

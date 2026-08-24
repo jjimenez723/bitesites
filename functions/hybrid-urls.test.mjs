@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import { hybridOutboundEventsUrl } from './hybrid-urls.js';
 import { HybridTwilioDialer } from './providers/calling/hybrid-twilio.js';
+import { TwilioDialer } from './providers/calling/twilio.js';
 
 test('builds the production Hybrid Twilio callback by default', () => {
   assert.equal(
@@ -55,4 +56,51 @@ test('Hybrid Twilio URLs use Firebase Hosting canonical query order', async () =
   assert.equal(params.Url, `https://staging.example.com/api/twilio-prospect-twiml?${expectedQuery}`);
   assert.equal(params.StatusCallback, `https://staging.example.com/api/hybrid-outbound-events?${expectedQuery}`);
   assert.equal(params.AsyncAmdStatusCallback, params.StatusCallback);
+});
+
+test('Hybrid Twilio never records before the answered party grants consent', async () => {
+  let params = {};
+  const provider = new HybridTwilioDialer({
+    accountSid: 'AC-test', authToken: 'test-token', twimlAppSid: 'AP-test',
+    statusCallbackUrl: hybridOutboundEventsUrl('https://staging.example.com'),
+    hybridV2: true,
+    fetchImpl: async (_url, init) => {
+      params = Object.fromEntries(new URLSearchParams(init.body));
+      return { ok: true, text: async () => JSON.stringify({ sid: 'CA-test' }) };
+    }
+  });
+
+  await provider.startPowerDialSession({
+    targets: [{ id: 'target-a', campaignId: 'campaign-a', phoneE164: '+15555550100' }],
+    // Even a stale or operator-enabled campaign flag cannot start recording
+    // before the in-call consent gate exists.
+    campaign: { id: 'campaign-a', callerId: '+15555550101', recordCalls: true },
+    sessionId: 'session-a'
+  });
+
+  assert.equal(params.Record, undefined);
+  assert.equal(params.RecordingStatusCallback, undefined);
+  assert.equal(params.TimeLimit, '600');
+});
+
+test('legacy Twilio never records from call creation either', async () => {
+  let params = {};
+  const provider = new TwilioDialer({
+    accountSid: 'AC-test', authToken: 'test-token', twimlAppSid: 'AP-test',
+    statusCallbackUrl: 'https://staging.example.com/api/outbound-events',
+    fetchImpl: async (_url, init) => {
+      params = Object.fromEntries(new URLSearchParams(init.body));
+      return { ok: true, text: async () => JSON.stringify({ sid: 'CA-test' }) };
+    }
+  });
+
+  await provider.startPowerDialSession({
+    targets: [{ id: 'target-a', campaignId: 'campaign-a', phoneE164: '+15555550100' }],
+    campaign: { id: 'campaign-a', callerId: '+15555550101', recordCalls: true },
+    sessionId: 'session-a'
+  });
+
+  assert.equal(params.Record, undefined);
+  assert.equal(params.RecordingStatusCallback, undefined);
+  assert.equal(params.TimeLimit, '600');
 });

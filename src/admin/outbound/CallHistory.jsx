@@ -52,7 +52,8 @@ function operatorLabel(call) {
 export default function CallHistory({ campaignId, campaigns = [], onSelectCampaign }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const [openId, setOpenId] = useState(() => searchParams.get('call'));
-  const { rows, loading, error, capped, refresh } = useOutboundCalls(campaignId || 'all');
+  const accountId = campaigns.find(entry => entry.id === campaignId)?.accountId || '';
+  const { rows, loading, error, capped, refresh } = useOutboundCalls(campaignId || 'all', accountId);
   const directCall = useLiveDoc(openId ? `calls/${openId}` : '');
   const open = rows.find(row => row.id === openId) || directCall.data || null;
   const openCall = id => {
