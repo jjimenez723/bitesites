@@ -655,6 +655,10 @@ await testEnv.withSecurityRulesDisabled(async context => {
   await setDoc(doc(db, 'consentEvidenceCandidates', 'candidate_1'), { status: 'pending_review', phoneE164: '+12015550142' });
   await setDoc(doc(db, 'consentGrants', 'grant_1'), { status: 'active', phoneE164: '+12015550142' });
   await setDoc(doc(db, 'consentGrantEvents', 'grant_1', 'events', 'issued'), { type: 'issued', at: new Date() });
+  await setDoc(doc(db, 'calendarSettings', 'bitesites'), {
+    accountId: 'bitesites', timezone: 'America/New_York', slotMinutes: 20,
+    location: '', cancellationPolicy: { noticeHours: 24, policy: 'A day, please.' }
+  });
   await setDoc(doc(db, 'campaignIncidents', 'incident_1'), {
     accountId: 'bitesites', campaignId: 'camp1', reason: 'ai_media_control_failure',
     severity: 'critical', status: 'open', detectedAt: new Date()
@@ -840,6 +844,26 @@ await it('no browser can forge, approve, revoke, or rewrite a consent grant', as
   await assertFails(setDoc(doc(adminByDoc, 'consentEvidenceCandidates', 'candidate_forged'), { status: 'pending_review' }));
   await assertFails(updateDoc(doc(adminByDoc, 'consentGrants', 'grant_1'), { status: 'revoked' }));
   await assertFails(setDoc(doc(adminByDoc, 'consentGrantEvents', 'grant_1', 'events', 'revoked'), { type: 'revoked' }));
+});
+
+describe('calendar settings — server-normalized, browser-readable only');
+
+await it('an operator scoped to the seller can read the schedule', async () => {
+  await assertSucceeds(getDoc(doc(adminByDoc, 'calendarSettings', 'bitesites')));
+  await assertSucceeds(getDoc(doc(staleClaimRep, 'calendarSettings', 'bitesites')));
+  await assertFails(getDoc(doc(anon, 'calendarSettings', 'bitesites')));
+});
+
+await it('no browser can write a meeting location or a cancellation policy', async () => {
+  // Both are spoken to the prospect and printed on their invitation, so a
+  // browser that could set them could send someone to an address we never
+  // approved. updateCalendarSettings normalizes every field server-side.
+  await assertFails(updateDoc(doc(adminByDoc, 'calendarSettings', 'bitesites'),
+    { location: '1 Forged Street' }));
+  await assertFails(updateDoc(doc(adminByDoc, 'calendarSettings', 'bitesites'),
+    { cancellationPolicy: { noticeHours: 0, policy: '' } }));
+  await assertFails(setDoc(doc(staleClaimRep, 'calendarSettings', 'stone-bellisimo'),
+    { accountId: 'stone-bellisimo', location: 'Anywhere' }));
 });
 
 describe('campaign circuit breaker — explainable to operators, server-write only');

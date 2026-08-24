@@ -49,9 +49,14 @@ state, or legal reliance.
    consent for the first ten calls. This is the first allowed carrier cohort.
 6. **Seller calendars:** approve each seller's Google calendar/host, timezone,
    hours, buffers, lead time, booking horizon, location, cancellation rules,
-   and handoff contact. For Stone, confirm showroom visiting hours and the
-   person who receives the appointment. For Fine Line, confirm assessment
-   coverage and emergency escalation contact.
+   and handoff contact. Every one of these is now a stored, normalized field
+   with a console control — what remains is the values.
+   [SELLER_CALENDAR_CHECKLIST.md](./SELLER_CALENDAR_CHECKLIST.md) lists them
+   field by field. BiteSites is configured; **Stone Bellisimo and Fine Line
+   have no calendar at all** and would otherwise book against generic
+   defaults. For Stone, confirm showroom visiting hours and the person who
+   receives the appointment. For Fine Line, confirm assessment coverage and
+   emergency escalation contact.
 7. **Human handoff:** approve the staffed hours, recipient list, and on-call
    roster. The **maximum answer time and fallback are decided and built**: a
    handoff no rep accepts expires after 30 seconds, the AI offers a callback

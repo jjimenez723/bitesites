@@ -572,7 +572,7 @@ Current BiteSites wiring:
 | | |
 |---|---|
 | Service account | `bitesites-calendar@bitesites-org.iam.gserviceaccount.com` |
-| Meetings are written to | `6da92e6a…@group.calendar.google.com` (shared booking calendar) |
+| Meetings are written to | `jensy@bitesites.org` (owner-confirmed 2026-08-24) |
 | Read for conflicts only | `jensyjimenez723@gmail.com` |
 
 ### Automatic Google Meet links

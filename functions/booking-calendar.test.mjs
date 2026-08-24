@@ -22,6 +22,7 @@ import {
   GOOGLE_ADMISSION_VERSION,
   HOLD_TTL_MS,
   preflightGoogleAdmission,
+  cancelAppointment,
   commitBooking,
   syncAppointmentToGoogle
 } from './booking-calendar.js';
@@ -591,4 +592,107 @@ test('a sync lease admits only one concurrent Google invitation', async () => {
   assert.equal([first, second].filter(result => result.ok).length, 1);
   assert.equal([first, second].find(result => result.skipped)?.reason, 'sync_in_progress');
   assert.equal(record.googleAdmissionReconciliation.state, 'reconciled');
+});
+
+// --------------------------------------------- location and cancellation rules
+
+test('a location is opt-in and an emptied one stays empty', () => {
+  const fresh = normalizeCalendarSettings({}, { accountId: 'stone-bellisimo' });
+  assert.equal(fresh.location, '', 'no seller gets a guessed address');
+
+  const set = normalizeCalendarSettings(
+    { location: '618 23rd St, Union City, NJ 07087' }, { accountId: 'stone-bellisimo' });
+  assert.equal(set.location, '618 23rd St, Union City, NJ 07087');
+
+  // Absent means "never configured"; present-but-empty means an operator
+  // deliberately removed it, exactly as with googleCalendarId.
+  const cleared = normalizeCalendarSettings({ location: '' }, { accountId: 'stone-bellisimo' });
+  assert.equal(cleared.location, '');
+});
+
+test('a cancellation policy defaults to unset rather than permissive', () => {
+  const fresh = normalizeCalendarSettings({}, { accountId: 'fine-line-group' });
+  assert.deepEqual(fresh.cancellationPolicy, { noticeHours: 0, policy: '' });
+
+  const configured = normalizeCalendarSettings({
+    cancellationPolicy: { noticeHours: 24, policy: 'Please give a day so we can offer the slot on.' }
+  }, { accountId: 'fine-line-group' });
+  assert.equal(configured.cancellationPolicy.noticeHours, 24);
+  assert.match(configured.cancellationPolicy.policy, /offer the slot on/);
+
+  // A week is the ceiling; junk falls back rather than becoming NaN.
+  assert.equal(normalizeCalendarSettings({ cancellationPolicy: { noticeHours: 9999 } }).cancellationPolicy.noticeHours, 168);
+  assert.equal(normalizeCalendarSettings({ cancellationPolicy: { noticeHours: -5 } }).cancellationPolicy.noticeHours, 0);
+  assert.equal(normalizeCalendarSettings({ cancellationPolicy: 'nope' }).cancellationPolicy.noticeHours, 0);
+});
+
+test('the invitation carries the location the prospect agreed to', () => {
+  const settings = normalizeCalendarSettings({ location: 'New showroom, 9 Main St' });
+  const startAt = Date.UTC(2026, 8, 1, 14, 0, 0);
+  const base = {
+    id: 'appt-1', status: 'booked', startAt, endAt: startAt + 1_200_000,
+    attendee: { name: 'Dana Reed', email: 'dana@example.com' }
+  };
+
+  // The appointment's own snapshot wins: moving the showroom must not silently
+  // redirect a meeting somebody already booked.
+  const booked = buildGoogleEvent({ ...base, location: 'Old showroom, 1 First Ave' }, settings);
+  assert.equal(booked.location, 'Old showroom, 1 First Ave');
+
+  // Older appointments predate the field and fall back to current settings.
+  const legacy = buildGoogleEvent(base, settings);
+  assert.equal(legacy.location, 'New showroom, 9 Main St');
+
+  // A video consultation has no address and must not invent one.
+  assert.equal(buildGoogleEvent(base, normalizeCalendarSettings({})).location, undefined);
+});
+
+test('cancelling records the notice given against the policy that was booked', async () => {
+  const now = new Date('2026-09-01T09:00:00.000Z');
+  const startAt = new Date('2026-09-03T14:00:00.000Z').getTime();
+
+  const makeDb = appointment => {
+    const store = { 'appointments/appt-1': appointment };
+    const snapshot = path => ({
+      exists: store[path] !== undefined,
+      data: () => store[path],
+      get: field => store[path]?.[field]
+    });
+    return {
+      doc: path => ({ path }),
+      runTransaction: async work => work({
+        get: async ref => snapshot(ref.path),
+        set: (ref, data) => { store[ref.path] = { ...store[ref.path], ...data }; }
+      }),
+      read: () => store['appointments/appt-1']
+    };
+  };
+
+  const booked = {
+    accountId: 'stone-bellisimo', status: 'booked', startAt,
+    cancellationPolicy: { noticeHours: 24, policy: 'A day, please.' }
+  };
+
+  const db = makeDb(booked);
+  const outcome = await cancelAppointment(db, { appointmentId: 'appt-1', actor: 'ai', now });
+  assert.equal(outcome.ok, true);
+  const notice = db.read().cancellationNotice;
+  assert.equal(notice.hoursRequired, 24);
+  assert.equal(notice.hoursGiven, 53);
+  assert.equal(notice.withinPolicy, true);
+
+  // Two hours out against a 24-hour policy is late, and recorded as late — but
+  // still cancelled, because refusing does not make anybody turn up.
+  const lateDb = makeDb({ ...booked });
+  const late = await cancelAppointment(lateDb, {
+    appointmentId: 'appt-1', actor: 'prospect', now: new Date(startAt - 2 * 3_600_000)
+  });
+  assert.equal(late.ok, true);
+  assert.equal(lateDb.read().status, 'cancelled');
+  assert.equal(lateDb.read().cancellationNotice.withinPolicy, false);
+
+  // No configured policy is not the same as compliance.
+  const unsetDb = makeDb({ ...booked, cancellationPolicy: { noticeHours: 0, policy: '' } });
+  await cancelAppointment(unsetDb, { appointmentId: 'appt-1', actor: 'ai', now });
+  assert.equal(unsetDb.read().cancellationNotice.withinPolicy, null);
 });

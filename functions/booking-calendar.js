@@ -61,6 +61,14 @@ export const DEFAULT_CALENDAR_SETTINGS = Object.freeze({
   blackoutDates: [],
   meetingTitle: 'BiteSites strategy call',
   hostName: 'BiteSites specialist',
+  // Empty on purpose, and it must stay that way until an owner sets it. A
+  // showroom address or an assessment location is spoken to a prospect and
+  // printed on their invitation, so a plausible guess is worse than a blank:
+  // one sends somebody to the wrong building.
+  location: '',
+  // `noticeHours: 0` means no policy has been configured, not "cancel any
+  // time" — nothing enforces a window that nobody approved.
+  cancellationPolicy: Object.freeze({ noticeHours: 0, policy: '' }),
   googleCalendarId: '',
   busyCalendarIds: []
 });
@@ -101,7 +109,9 @@ export function calendarDefaultsForAccount(accountId = LEGACY_ACCOUNT_ID) {
     googleCalendarId: overrides.googleCalendarId || '',
     busyCalendarIds: [...(overrides.busyCalendarIds || [])],
     meetingTitle: `${label} consultation`,
-    hostName: `${label} specialist`
+    hostName: `${label} specialist`,
+    location: overrides.location || DEFAULT_CALENDAR_SETTINGS.location,
+    cancellationPolicy: { ...DEFAULT_CALENDAR_SETTINGS.cancellationPolicy }
   };
 }
 
@@ -235,6 +245,10 @@ export function normalizeCalendarSettings(input = {}, { accountId = LEGACY_ACCOU
       .slice(0, 200),
     meetingTitle: clean(source.meetingTitle, 200) || defaults.meetingTitle,
     hostName: clean(source.hostName, 120) || defaults.hostName,
+    // Same "absent is not empty" rule as the calendar id below: an operator who
+    // clears the location has removed it deliberately.
+    location: 'location' in source ? clean(source.location, 300) : defaults.location,
+    cancellationPolicy: normalizeCancellationPolicy(source.cancellationPolicy, defaults.cancellationPolicy),
     // Neither of these is a secret — a calendar ID is an email address — so
     // they live in settings where an admin can change them without a redeploy.
     // Only the service-account key is held in Secret Manager.
@@ -250,6 +264,20 @@ export function normalizeCalendarSettings(input = {}, { accountId = LEGACY_ACCOU
       : [...defaults.busyCalendarIds],
     googleImpersonate: clean(source.googleImpersonate, 200),
     googleSyncEnabled: source.googleSyncEnabled !== false
+  };
+}
+
+/**
+ * How much warning a prospect owes before cancelling, and what to tell them.
+ *
+ * Recorded rather than enforced. Refusing a late cancellation does not keep the
+ * appointment, it just means the host finds out by nobody arriving.
+ */
+export function normalizeCancellationPolicy(input, fallback = { noticeHours: 0, policy: '' }) {
+  const source = input && typeof input === 'object' ? input : {};
+  return {
+    noticeHours: int(source.noticeHours, 0, 168, Number(fallback?.noticeHours) || 0),
+    policy: clean(source.policy, 500) || clean(fallback?.policy, 500)
   };
 }
 
@@ -874,6 +902,11 @@ export async function commitBooking(db, {
 
     tx.set(ref, {
       status: 'booked',
+      // Snapshot, not a live reference. Both are spoken to the prospect at
+      // booking time, so a later settings change must not silently rewrite what
+      // they were told — the same reason a call plan is sealed.
+      location: clean(settings.location, 300),
+      cancellationPolicy: normalizeCancellationPolicy(settings.cancellationPolicy),
       attendee: contact,
       notes: clean(notes, 1000),
       confirmationRef: confirmation,
@@ -907,7 +940,7 @@ export async function commitBooking(db, {
 }
 
 export async function cancelAppointment(db, {
-  appointmentId, reason = '', actor = '', accountId = ''
+  appointmentId, reason = '', actor = '', accountId = '', now = new Date()
 } = {}) {
   const id = clean(appointmentId, 200);
   if (!id) return { ok: false, error: 'appointment_required' };
@@ -922,10 +955,26 @@ export async function cancelAppointment(db, {
     const status = snapshot.get('status');
     if (status === 'cancelled') return { ok: true, idempotent: true };
     if (!BLOCKING_STATES.has(status)) return { ok: false, error: `cannot_cancel_${clean(status, 40)}` };
+    // Recorded, never used to refuse the cancellation. A prospect who cannot
+    // cancel simply does not turn up, and the host loses the slot anyway.
+    const startMs = toMillis(snapshot.get('startAt'));
+    const policy = normalizeCancellationPolicy(snapshot.get('cancellationPolicy'));
+    const hoursGiven = startMs > 0
+      ? Math.max(0, Math.round(((startMs - (now instanceof Date ? now : new Date(now)).getTime()) / 3_600_000) * 10) / 10)
+      : null;
+
     tx.set(ref, {
       status: 'cancelled',
       cancelReason: clean(reason, 300),
       cancelledBy: clean(actor, 120),
+      cancellationNotice: {
+        hoursGiven,
+        hoursRequired: policy.noticeHours,
+        // `null` where no policy is configured — absent is not "compliant".
+        withinPolicy: policy.noticeHours > 0 && hoursGiven !== null
+          ? hoursGiven >= policy.noticeHours
+          : null
+      },
       cancelledAt: FieldValue.serverTimestamp(),
       googleSyncState: 'pending',
       googleSyncReason: 'cancelled',
@@ -1193,10 +1242,16 @@ export function buildGoogleEvent(appointment, settings, { conference = true } = 
     appointment.callId ? `Call: ${appointment.callId}` : ''
   ].filter(Boolean);
 
+  // The appointment's own snapshot wins over current settings: the location on
+  // the invitation must be the one the prospect agreed to, even if an operator
+  // has since moved the showroom.
+  const location = clean(appointment.location, 300) || clean(settings.location, 300);
+
   return {
     id: googleEventIdForAppointment(appointment.id),
     summary: `${settings.meetingTitle} — ${who}`,
     description: lines.join('\n'),
+    ...(location ? { location } : {}),
     start: { dateTime: new Date(toMillis(appointment.startAt)).toISOString(), timeZone: settings.timezone },
     end: { dateTime: new Date(toMillis(appointment.endAt)).toISOString(), timeZone: settings.timezone },
     status: appointment.status === 'cancelled' ? 'cancelled' : 'confirmed',

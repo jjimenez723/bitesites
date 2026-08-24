@@ -620,6 +620,11 @@ function ScheduleSettings({ accountId, settings, google, onSaved, openRef }) {
 
   const set = (field, value) => setDraft(current => ({ ...current, [field]: value }));
 
+  const setPolicy = (field, value) => setDraft(current => ({
+    ...current,
+    cancellationPolicy: { ...(current.cancellationPolicy || {}), [field]: value }
+  }));
+
   const setDay = (weekday, field, value) => setDraft(current => {
     const hours = { ...(current.workingHours || {}) };
     const existing = hours[String(weekday)]?.[0] || ['09:00', '17:00'];
@@ -682,6 +687,30 @@ function ScheduleSettings({ accountId, settings, google, onSaved, openRef }) {
             <label><span>Meetings at once</span>
               <input type="number" min="1" max="20" value={draft.capacity || 1}
                 onChange={event => set('capacity', Number(event.target.value))} /></label>
+          </div>
+
+          <label className="cal-wide"><span>Where the meeting happens</span>
+            <input value={draft.location || ''} maxLength={300}
+              placeholder="Showroom address, or leave blank for a video call"
+              onChange={event => set('location', event.target.value)} />
+            <small>
+              Appears on the invitation and is what the AI tells the prospect. Leave it
+              blank rather than guessing — a wrong address sends someone to the wrong door.
+            </small>
+          </label>
+
+          <div className="cal-booking-grid">
+            <label><span>Cancellation notice (hours)</span>
+              <input type="number" min="0" max="168"
+                value={draft.cancellationPolicy?.noticeHours ?? 0}
+                onChange={event => setPolicy('noticeHours', Number(event.target.value))} />
+              <small>0 means no policy is set. Late cancellations are recorded, never refused.</small>
+            </label>
+            <label className="cal-wide"><span>Cancellation policy</span>
+              <input value={draft.cancellationPolicy?.policy || ''} maxLength={500}
+                placeholder="What the prospect is told when they book"
+                onChange={event => setPolicy('policy', event.target.value)} />
+            </label>
           </div>
 
           <div className="cal-hours">

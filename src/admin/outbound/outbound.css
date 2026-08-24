@@ -629,3 +629,14 @@
 
 .bs-admin .cal-meet-link { color: var(--brand-blue); text-decoration: none; word-break: break-all; }
 .bs-admin .cal-meet-link:hover { text-decoration: underline; }
+
+/* An address or a policy sentence needs the full row, not a grid half. */
+.cal-settings .cal-wide { grid-column: 1 / -1; }
+.cal-settings .cal-wide small,
+.cal-settings label small {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.4;
+  opacity: 0.7;
+}
