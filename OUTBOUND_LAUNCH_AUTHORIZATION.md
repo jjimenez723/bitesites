@@ -52,10 +52,12 @@ state, or legal reliance.
    and handoff contact. For Stone, confirm showroom visiting hours and the
    person who receives the appointment. For Fine Line, confirm assessment
    coverage and emergency escalation contact.
-7. **Human handoff:** approve the staffed hours, recipient list, maximum answer
-   time, and fallback when nobody accepts. Recommended initial SLA: offer a
-   callback rather than hold the prospect if no named person accepts within
-   30 seconds.
+7. **Human handoff:** approve the staffed hours, recipient list, and on-call
+   roster. The **maximum answer time and fallback are decided and built**: a
+   handoff no rep accepts expires after 30 seconds, the AI offers a callback
+   instead of holding the prospect, and an abandoned call is ended by a
+   one-minute reconciler. What remains is *who* is on the other end — the
+   recipient list and the hours they are staffed.
 8. **Budget:** approve initial limits. Recommended: one concurrent call, one
    attempt per target, no retry inside 24 hours, ten-minute hard duration,
    $50/day, $500/month, and a $3 all-in warning ceiling per connected AI call.

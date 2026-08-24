@@ -52,6 +52,14 @@ export function routeDecision({ session, call }) {
     : { controller: 'ai', idempotent: false, reason: 'rep_busy' };
 }
 
+/**
+ * How long a prospect may wait for a colleague before we stop holding the line
+ * and offer a callback instead. Approved by the owner; recommended in
+ * OUTBOUND_LAUNCH_AUTHORIZATION.md §7. Enforced in handoff-failsafe.js, which
+ * imports it from here so the two modules stay one-directional.
+ */
+export const HANDOFF_ACCEPT_TIMEOUT_MS = 30_000;
+
 export function handoffPriority(requestedBy) {
   return requestedBy === 'prospect' ? 100 : requestedBy === 'rep' ? 80 : 0;
 }
@@ -273,9 +281,13 @@ export async function requestHumanHandoff(db, callId, {
   }
 
   const priority = handoffPriority(requestedBy);
+  // The deadline is stamped once, from the request, and never extended. A clock
+  // that restarts every time a busy rep is re-polled is not a deadline.
+  const deadlineAt = timestamp(new Date(now.getTime() + HANDOFF_ACCEPT_TIMEOUT_MS));
   await ref.set({
     handoff: {
-      requestedBy, requestedAt: timestamp(now), state: 'requested', priority, completedAt: null
+      requestedBy, requestedAt: timestamp(now), state: 'requested', priority, completedAt: null,
+      deadlineAt, fallbackDelivered: false
     },
     ...(requestedBy === 'prospect' ? { analytics: { prospectRequestedHuman: true } } : {}),
     updatedAt: FieldValue.serverTimestamp()
@@ -285,7 +297,7 @@ export async function requestHumanHandoff(db, callId, {
     callId, sessionId: call.sessionId, campaignId: call.campaignId,
     actorType: requestedBy === 'rep' ? 'rep' : 'prospect', actorId, metadata: { priority }, now
   });
-  return { ok: true, idempotent: false, state: 'requested', priority };
+  return { ok: true, idempotent: false, state: 'requested', priority, deadlineAt };
 }
 
 /** Reserve a free rep and begin a smooth handoff. */

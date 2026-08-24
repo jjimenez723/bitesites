@@ -33,6 +33,7 @@ import {
   resolveAccountAccess
 } from './account-access.js';
 import { listCampaignIncidents, resolveCampaignIncident } from './campaign-circuit-breaker.js';
+import { reconcileStaleHandoffs } from './handoff-failsafe.js';
 import { csvToRecords } from './providers/lead-sources/csv-source.js';
 import { promoteProspect } from './prospect-conversion.js';
 import {
@@ -817,6 +818,24 @@ export const reconcileOutbound = onSchedule(
     const released = await releaseDueTargets(db);
     const jobs = await recoverStaleJobs(db);
     console.log(`[outbound] reconcile: ${JSON.stringify({ ...sessions, released, recoveredJobs: jobs })}`);
+  }
+);
+
+/**
+ * Durable backstop for the handoff SLA.
+ *
+ * Every minute rather than every five: the promise is measured in seconds, and
+ * the in-band check in agent-tools only fires while the AI is still acting.
+ * This is the sweep for the calls where it is not.
+ */
+export const reconcileHandoffSla = onSchedule(
+  { schedule: 'every 1 minutes', timeoutSeconds: 120 },
+  async () => {
+    const db = getFirestore();
+    const outcome = await reconcileStaleHandoffs(db, { now: new Date() });
+    if (outcome.expired.length || outcome.abandoned.length) {
+      console.log('[handoff] sla sweep: ' + JSON.stringify(outcome));
+    }
   }
 );
 

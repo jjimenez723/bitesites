@@ -2646,6 +2646,9 @@ export {
   listCampaignIncidentsCall,
   resolveCampaignIncidentCall,
 
+  // Human-handoff SLA.
+  reconcileHandoffSla,
+
   // Dialing.
   startPowerDialerSession,
   startParallelDialerSession,

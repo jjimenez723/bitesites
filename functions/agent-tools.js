@@ -23,6 +23,9 @@ import {
   beginSmoothHandoff, requestHumanHandoff, recordCallAuditEvent
 } from './hybrid-call-orchestration.js';
 import {
+  HANDOFF_FALLBACK_DIRECTIVE, expireHandoff, isHandoffExpired, markHandoffFallbackDelivered
+} from './handoff-failsafe.js';
+import {
   cancelAppointment, commitBooking, findAvailability, holdSlot, rescheduleAppointment,
   syncAppointmentToGoogle, loadCalendarSettings
 } from './booking-calendar.js';
@@ -799,6 +802,15 @@ export async function executeAgentTool(db, {
   try { argsHash = toolArgumentsHash(args); }
   catch { return { ok: false, error: 'invalid_tool_arguments' }; }
   const now = new Date(nowMs);
+
+  // The prospect asked for a person and the clock has run out. Expire it before
+  // the tool runs so this result carries the instruction to offer a callback.
+  const expiredNow = isHandoffExpired(call, now)
+    ? await expireHandoff(db, callId, {
+      reason: 'handoff_accept_timeout', source: 'agent_tool', now
+    }).catch(() => null)
+    : null;
+
   const claim = await claimToolExecution(db, {
     callId, requestId: safeRequestId, tool: authorized.name, argsHash, now
   });
@@ -827,5 +839,20 @@ export async function executeAgentTool(db, {
     metadata: { tool: authorized.name, ok: result?.ok === true, error: text(result?.error, 80) }
   }).catch(() => {});
 
+  // Offering the callback and ending the call are the two ways the AI discharges
+  // the fallback. Recording it stops the abandon sweep from ending a call the AI
+  // is already closing properly.
+  if (['schedule_callback', 'end_call'].includes(authorized.name)
+      && clean(call?.handoff?.state, 40) === 'expired') {
+    await markHandoffFallbackDelivered(db, callId, { now }).catch(() => {});
+  }
+
+  if (expiredNow?.ok) {
+    return {
+      ...result,
+      handoffExpired: true,
+      note: [text(result?.note, 400), HANDOFF_FALLBACK_DIRECTIVE].filter(Boolean).join(' ')
+    };
+  }
   return result;
 }
