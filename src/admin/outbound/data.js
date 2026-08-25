@@ -377,6 +377,11 @@ export const outbound = {
   prepareCampaignResearch: campaignId => callable('prepareCampaignResearch', { campaignId }),
   approveCampaignResearch: campaignId => callable('approveCampaignResearch', { campaignId }),
 
+  campaignIncidents: (campaignId, status = '') =>
+    callable('listCampaignIncidentsCall', { campaignId, status }),
+  resolveCampaignIncident: (incidentId, remediation) =>
+    callable('resolveCampaignIncidentCall', { incidentId, remediation }),
+
   createConsentEvidenceCandidate: candidate => callable('createConsentEvidenceCandidateCall', candidate),
   issueConsentGrant: candidateId => callable('issueConsentGrantCall', { candidateId }),
   revokeConsentGrant: (grantId, reason) => callable('revokeConsentGrantCall', { grantId, reason }),

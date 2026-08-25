@@ -9,6 +9,7 @@ import React, { useState } from 'react';
 import { outbound, useAction, useOutboundCalls } from './data';
 import { StatusPill, formatWhen, providerLabel, Empty, QueryState } from './SourceBadge';
 import CampaignBuilder from './CampaignBuilder';
+import CampaignIncidents from './CampaignIncidents';
 import CampaignMetrics from './CampaignMetrics';
 
 const MODE_LABELS = { ai: 'AI', power: 'Power', parallel: 'Parallel' };
@@ -83,13 +84,22 @@ export default function CampaignList({ campaigns, loading, error, refresh, provi
                     <td className="cell-dim">{formatWhen(campaign.createdAt)}</td>
                     <td onClick={event => event.stopPropagation()}>
                       <div className="admin-filters">
+{/* The server refuses a resume while the breaker holds an incident, so the
+                            button says why instead of offering an action that will fail. */}
                         {['draft', 'ready', 'paused'].includes(campaign.status) && (
-                          <button className="btn-admin" type="button" disabled={action.busy}
-                            onClick={() => act(() => campaign.status === 'paused'
-                              ? outbound.resumeCampaign(campaign.id)
-                              : outbound.startCampaign(campaign.id), 'Campaign armed.')}>
-                            {campaign.status === 'paused' ? 'Resume' : 'Arm campaign'}
-                          </button>
+                          campaign.safetyLock?.engaged ? (
+                            <button className="btn-admin" type="button" disabled
+                              title="Resolve the open safety incident first — select the campaign to see it.">
+                              Halted
+                            </button>
+                          ) : (
+                            <button className="btn-admin" type="button" disabled={action.busy}
+                              onClick={() => act(() => campaign.status === 'paused'
+                                ? outbound.resumeCampaign(campaign.id)
+                                : outbound.startCampaign(campaign.id), 'Campaign armed.')}>
+                              {campaign.status === 'paused' ? 'Resume' : 'Arm campaign'}
+                            </button>
+                          )
                         )}
                         {campaign.status === 'running' && (
                           <button className="btn-admin danger" type="button" disabled={action.busy}
@@ -117,6 +127,12 @@ export default function CampaignList({ campaigns, loading, error, refresh, provi
           </div>
         )}
       </div>
+
+      {/* Above the metrics on purpose: a halted campaign is the first thing an
+          operator needs to see, not something below a fold of numbers. */}
+      {selected && (
+        <CampaignIncidents campaignId={selected.id} campaign={selected} onResolved={refresh} />
+      )}
 
       {selected && <CampaignMetrics campaign={selected} calls={calls} />}
     </div>

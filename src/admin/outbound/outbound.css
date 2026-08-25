@@ -640,3 +640,71 @@
   line-height: 1.4;
   opacity: 0.7;
 }
+
+/* ------------------------------------------------ safety-breaker incidents */
+
+.incident-panel.is-halted {
+  border-color: color-mix(in srgb, #d64545 55%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, #d64545 25%, transparent);
+}
+
+.incident-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+
+.incident {
+  border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+.incident.is-open { border-color: color-mix(in srgb, #d64545 45%, transparent); }
+.incident.is-resolved { opacity: 0.72; }
+
+.incident-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
+
+.incident-badge {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+}
+.incident-badge.open {
+  border-color: color-mix(in srgb, #d64545 55%, transparent);
+  color: #d64545;
+}
+
+.incident-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 20px;
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+.incident-facts div { display: flex; gap: 6px; }
+.incident-facts dt { opacity: 0.65; }
+.incident-facts dd { margin: 0; }
+.incident-facts .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+
+.incident-detail { margin: 6px 0 0; font-size: 13px; opacity: 0.85; }
+.incident-error { color: #d64545; font-size: 13px; }
+.incident-note { font-size: 13px; opacity: 0.8; }
+
+.incident-resolve { display: grid; gap: 8px; margin-top: 10px; }
+.incident-resolve label { display: grid; gap: 4px; font-size: 13px; }
+.incident-resolve textarea {
+  width: 100%;
+  resize: vertical;
+  font: inherit;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  background: transparent;
+  color: inherit;
+}
+.incident-resolve button { justify-self: start; }
+
+.incident-resolved-by { font-size: 13px; opacity: 0.8; }
+
+@media (max-width: 640px) {
+  .incident-facts { gap: 4px 12px; }
+}
