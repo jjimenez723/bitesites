@@ -154,6 +154,11 @@ firebase functions:secrets:set TWILIO_TWIML_APP_SID
 # GoHighLevel outbound (GHL_API_TOKEN already exists for the inbound integration)
 firebase functions:secrets:set GHL_OUTBOUND_WORKFLOW_ID
 
+# GoHighLevel contact reading for the no-dial eligibility audit. A Private
+# Integration scoped to contacts.readonly, deliberately NOT the write-capable
+# GHL_API_TOKEN — see LEAD_DISCOVERY_SETUP.md.
+firebase functions:secrets:set GHL_CONTACTS_READ_TOKEN
+
 # Lead discovery
 firebase functions:secrets:set LEAD_SOURCE_API_KEY      # Google Places
 firebase functions:secrets:set DISCOVERY_WORKER_SECRET  # the local scraping worker

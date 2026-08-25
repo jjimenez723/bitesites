@@ -669,6 +669,14 @@ await testEnv.withSecurityRulesDisabled(async context => {
   await setDoc(doc(db, 'preDialScreenings', 'screen_1'), {
     sellerAccountId: 'bitesites', phoneHash: 'hash', status: 'cleared', checkedAt: new Date()
   });
+  await setDoc(doc(db, 'outboundEligibilityAudits', 'audit_1'), {
+    accountId: 'bitesites', campaignId: 'camp1', kind: 'outbound_eligibility_audit',
+    totals: { scanned: 3, eligibleNow: 0 }, generatedAt: new Date()
+  });
+  await setDoc(doc(db, 'outboundEligibilityAudits', 'audit_other_seller'), {
+    accountId: 'stone-bellisimo', campaignId: 'camp9', kind: 'outbound_eligibility_audit',
+    totals: { scanned: 1, eligibleNow: 0 }, generatedAt: new Date()
+  });
   await setDoc(doc(db, 'scrapeJobs', 'job1'), { provider: 'mock', status: 'queued' });
   await setDoc(doc(db, 'scrapeJobs', 'job1', 'results', 'r1'), { raw: { name: 'x' } });
   await setDoc(doc(db, 'importRuns', 'run1'), { sourceSystem: 'watcher_leads', status: 'completed' });
@@ -904,6 +912,29 @@ await it('only an admin can inspect a pre-dial screening result', async () => {
 await it('no browser can forge or extend a pre-dial clearance', async () => {
   await assertFails(setDoc(doc(adminByDoc, 'preDialScreenings', 'screen_forged'), { status: 'cleared' }));
   await assertFails(updateDoc(doc(adminByDoc, 'preDialScreenings', 'screen_1'), { expiresAt: new Date('2099-01-01') }));
+});
+
+describe('eligibility audits — readable by the seller\u2019s operators, server-write only');
+
+await it('an operator scoped to the seller can read that seller\u2019s audit', async () => {
+  await assertSucceeds(getDoc(doc(adminByDoc, 'outboundEligibilityAudits', 'audit_1')));
+  // Same reasoning as the incident ledger: an operator looking at a campaign
+  // with nothing in its queue is entitled to see why without asking an admin.
+  await assertSucceeds(getDoc(doc(staleClaimRep, 'outboundEligibilityAudits', 'audit_1')));
+  await assertFails(getDoc(doc(outboundRep, 'outboundEligibilityAudits', 'audit_1')));
+  await assertFails(getDoc(doc(anon, 'outboundEligibilityAudits', 'audit_1')));
+});
+
+await it('an audit does not leak across the seller boundary', () =>
+  assertFails(getDoc(doc(staleClaimRep, 'outboundEligibilityAudits', 'audit_other_seller'))));
+
+await it('no browser can write an eligibility verdict', async () => {
+  await assertFails(setDoc(doc(adminByDoc, 'outboundEligibilityAudits', 'audit_forged'), {
+    accountId: 'bitesites', totals: { scanned: 9000, eligibleNow: 9000 }
+  }));
+  await assertFails(updateDoc(doc(adminByDoc, 'outboundEligibilityAudits', 'audit_1'), {
+    totals: { scanned: 3, eligibleNow: 3 }
+  }));
 });
 
 await it('anonymous visitor cannot read scrape jobs', () =>

@@ -27,6 +27,7 @@ through a callable; the server runs it.
 | `google_places` | Cloud Function | ✅ | ✅ | `LEAD_SOURCE_API_KEY` | Live-verified and deployed 2026-08-12 |
 | `watcher_workflow` | Migration script | — | — | none | Field mapping only |
 | `bitesites_leads` | Migration script | — | — | none | Field mapping only |
+| `gohighlevel_contacts` | Cloud Function | ❌ | ✅ | `GHL_CONTACTS_READ_TOKEN` | Read-only; drives the eligibility audit, cannot start a discovery job |
 
 ### Mock
 
@@ -76,6 +77,40 @@ visible rather than silently dropped. Preview is mandatory: the upload button
 sends `dryRun: true`, and the import button only appears after a preview
 returns. The file is never uploaded to Storage — it travels as the body of an
 authenticated callable.
+
+### GoHighLevel contacts — read-only
+
+`gohighlevel_contacts` reads the CRM contact book and nothing else. It exists
+so the eligibility audit can answer "how many of the contacts we already have
+could lawfully be called", and it is built so that it cannot become a second
+way to start a call:
+
+- it uses **`GHL_CONTACTS_READ_TOKEN`**, a Private Integration scoped to
+  `contacts.readonly` — a different secret from `GHL_API_TOKEN`, which can
+  upsert a contact and enrol it in a workflow;
+- `assertReadOnlyRequest` allows exactly one request, `POST /contacts/search`,
+  and throws on anything else, including the enrolment path the calling
+  adapter uses;
+- page size, page count, total records and per-request timeout are all bounded,
+  and a capped read reports `truncated: true` rather than looking complete;
+- a contact from a location other than the configured one aborts the read
+  instead of being normalised — all three sellers share one sub-account, and
+  the tag is the only boundary between their books;
+- **a CRM field claiming consent stays evidence.** `normalize()` deliberately
+  emits no `consentBasis`, `consentGrantId`, consenting seller, consented
+  number or grant time, so an imported row lands as `basis: 'not_recorded'`
+  whatever the CRM says. The artifact *references* — form version, evidence id,
+  source URL — do survive, so a reviewer can go and read the paperwork before
+  issuing a real grant through the consent ledger.
+
+```bash
+firebase functions:secrets:set GHL_CONTACTS_READ_TOKEN
+```
+
+Create it in GoHighLevel as a Private Integration with `contacts.readonly` and
+no write scopes. If it is ever granted `contacts.write`, the code above still
+refuses to use it — but the point of the separate token is that the refusal
+stops being the only thing standing in the way.
 
 ### The migrated sources
 

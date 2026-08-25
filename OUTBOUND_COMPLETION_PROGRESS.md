@@ -91,3 +91,70 @@ a finding never carries the matched value into a log.
 
 **Blockers:** branch protection is an owner action; nothing here is blocked on
 it.
+
+---
+
+## Checkpoint 2 — CRM reading and the no-dial audit (milestones 3, 4, 5)
+
+**Changes:**
+
+- `functions/providers/lead-sources/gohighlevel-contacts.js` — a read-only
+  GoHighLevel contact source. Its own secret (`GHL_CONTACTS_READ_TOKEN`, scoped
+  `contacts.readonly`), a one-entry endpoint allow-list that throws on every
+  write/enrolment path, bounded pagination with retry/backoff on 429 and 5xx,
+  per-request timeouts, a hard record cap that reports itself truncated, and a
+  refusal to normalise a contact from another GoHighLevel location.
+- `functions/outbound-eligibility-audit.js` — the audit. It **calls** the
+  dialer's gates rather than restating them, then adds the ones
+  `evaluateCompliance` cannot see (account alignment, research approval,
+  campaign safety lock, provider capability, deployment admission), so it can
+  only ever be stricter. Five outcome classes, thirteen blocker buckets,
+  per-record verdicts with masked numbers and stable ids, masked CSV export.
+- `runOutboundEligibilityAudit` callable, admin-gated, with the CRM read
+  narrowed to owner/admin — a bulk read of the shared sub-account is a
+  different privilege from a report about records BiteSites already holds.
+- `src/admin/outbound/EligibilityAudit.jsx` + its own stylesheet, and a new
+  Eligibility Audit tab under Admin.
+- `prospects` gained `gohighlevel` as a source system and
+  `source.recordCreatedAt` / `source.recordUpdatedAt`. A CRM contact recorded
+  as `scraper` was a provenance lie, and `importedAt` cannot distinguish a
+  contact edited last week from one untouched since 2019.
+- `outboundEligibilityAudits` Firestore rules: readable by the seller's
+  operators, written only by the server.
+
+**Evidence:**
+
+```
+npm run test:ghl-contacts       → 20 assertions, 0 failed
+npm run test:eligibility-audit  → 69 assertions, 0 failed
+npm run test:rules              → 161 assertions, 0 failed (158 before)
+npm run test:prospects/dedupe/migration/crm → 94 assertions, 0 failed
+npm run build                   → ok
+npm --prefix functions run check → ok
+```
+
+The audit tests assert the things that would be easy to get quietly wrong:
+
+- every reason the dialer would give appears in the audit's reasons, and the
+  audit never reports a record eligible that `evaluateCompliance` refuses;
+- running the audit issues no grant, clears no screening, creates no research
+  brief, imports nothing, starts no session, and leaves every target's state
+  and attempt count untouched;
+- the only GoHighLevel request made is `POST /contacts/search`;
+- a CRM field saying `consent_basis: written_opt_in` produces
+  `basis: 'not_recorded'` and an empty grant id;
+- GoHighLevel `aiAgentCall` is still `false`, external dialing still defaults
+  to disabled, and staging stays non-dialing with the flag misconfigured;
+- no unmasked phone number appears in the report, the CSV, or the stored
+  summary.
+
+**Expected current result, confirmed:** a Watcher-style prospect with no
+seller- and number-bound grant is `evidence_missing`, and auditing it cannot
+create the grant that would change that.
+
+**Remaining:** milestones 2, 6, 7, 8.
+
+**Blockers:** `GHL_CONTACTS_READ_TOKEN` does not exist yet — creating the
+read-only Private Integration in GoHighLevel is an owner action. Until then
+the audit runs over Firestore scopes and refuses the CRM scope with a
+`failed-precondition` naming the secret.

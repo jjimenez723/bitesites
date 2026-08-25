@@ -37,6 +37,9 @@ import { reconcileStaleHandoffs } from './handoff-failsafe.js';
 import { ingestPreDialScreening } from './screening-ingestion.js';
 import { describeScreeningProviders } from './providers/screening/index.js';
 import { csvToRecords } from './providers/lead-sources/csv-source.js';
+import {
+  runEligibilityAudit, eligibilityAuditCsv, persistEligibilityAudit, AUDIT_SCOPES
+} from './outbound-eligibility-audit.js';
 import { promoteProspect } from './prospect-conversion.js';
 import {
   createCampaign, updateCampaign, setCampaignStatus, importTargets,
@@ -69,6 +72,12 @@ export const TWILIO_TWIML_APP_SID = defineSecret('TWILIO_TWIML_APP_SID');
 export const OUTBOUND_WEBHOOK_SECRET = defineSecret('OUTBOUND_WEBHOOK_SECRET');
 export const LEAD_SOURCE_API_KEY = defineSecret('LEAD_SOURCE_API_KEY');
 export const GHL_OUTBOUND_WORKFLOW_ID = defineSecret('GHL_OUTBOUND_WORKFLOW_ID');
+// Deliberately its own secret. A Private Integration scoped to
+// `contacts.readonly` cannot enrol a workflow, so the eligibility audit
+// cannot start a call even if the code above it were wrong. Reusing
+// GHL_API_TOKEN — which can upsert and enrol — would make that a promise
+// rather than a boundary. See providers/lead-sources/gohighlevel-contacts.js.
+export const GHL_CONTACTS_READ_TOKEN = defineSecret('GHL_CONTACTS_READ_TOKEN');
 export const DISCOVERY_WORKER_SECRET = defineSecret('DISCOVERY_WORKER_SECRET');
 
 const OUTBOUND_SECRETS = [
@@ -620,6 +629,83 @@ export const ingestPreDialScreeningCall = onCall(
       });
     } catch (error) {
       throw new HttpsError('failed-precondition', clean(error?.message, 300));
+    }
+  }
+);
+
+// -------------------------------------------------- eligibility audit
+
+/**
+ * How many of this campaign's contacts could actually be called, and why not.
+ *
+ * Gated at `requireAdmin` — an operator staring at a campaign with nothing in
+ * its queue is entitled to know which gate is holding it, and the report
+ * carries identifiers and verdicts rather than consent text or registry data.
+ * Reading the CRM contact book is narrower and needs an owner/admin, because
+ * that is a bulk read of every contact in the shared GoHighLevel sub-account
+ * rather than a report about records BiteSites already holds.
+ *
+ * Nothing here dials, enrols, imports, or issues evidence. The only write is
+ * the optional summary document, and it is written by this server.
+ */
+export const runOutboundEligibilityAudit = onCall(
+  { ...callOptions, timeoutSeconds: 300, secrets: [GHL_CONTACTS_READ_TOKEN] },
+  async request => {
+    const { db, access, email, uid, role } = await requireAdmin(request);
+    const accountId = requireScopedAccount(access, request.data?.accountId);
+    const campaignId = requireId(request.data?.campaignId, 'campaign id');
+    await requireScopedCampaign(db, access, campaignId);
+
+    const scopes = (Array.isArray(request.data?.scopes) ? request.data.scopes : ['campaign_targets'])
+      .map(scope => str(scope, 40))
+      .filter(scope => AUDIT_SCOPES.includes(scope));
+
+    let goHighLevel = null;
+    if (request.data?.includeGoHighLevel === true) {
+      if (role !== 'admin') {
+        throw new HttpsError('permission-denied',
+          'Only an owner or admin can read the GoHighLevel contact book.');
+      }
+      const token = secretValue(GHL_CONTACTS_READ_TOKEN);
+      if (!token) {
+        throw new HttpsError('failed-precondition',
+          'GHL_CONTACTS_READ_TOKEN is not configured. Create a read-only Private Integration '
+          + 'in GoHighLevel and set it with `firebase functions:secrets:set GHL_CONTACTS_READ_TOKEN`.');
+      }
+      goHighLevel = {
+        token,
+        locationId: process.env.GHL_LOCATION_ID || 'LDL5wuJlnVnqk9vn6taD',
+        criteria: {
+          query: str(request.data?.crmQuery, 120),
+          tags: idList(request.data?.crmTags, 5)
+        }
+      };
+    }
+
+    try {
+      const report = await runEligibilityAudit(db, {
+        accountId,
+        campaignId,
+        scopes,
+        // runEligibilityAudit clamps this to [1, MAX_SCAN_LIMIT] itself.
+        limit: Number(request.data?.limit) || undefined,
+        goHighLevel
+      });
+
+      if (request.data?.persist === true) {
+        await persistEligibilityAudit(db, report, { actor: email, actorUid: uid });
+      }
+
+      return {
+        ...report,
+        // Built here rather than in the browser so the masking rules have one
+        // definition. A second implementation in the console is a second place
+        // for an unmasked number to escape.
+        csv: request.data?.includeCsv === true ? eligibilityAuditCsv(report) : ''
+      };
+    } catch (error) {
+      const code = /not found/i.test(String(error?.message)) ? 'not-found' : 'failed-precondition';
+      throw new HttpsError(code, clean(error?.message, 400));
     }
   }
 );

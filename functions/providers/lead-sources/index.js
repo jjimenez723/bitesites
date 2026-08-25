@@ -12,6 +12,7 @@ import { CsvLeadSource } from './csv-source.js';
 import { GooglePlacesLeadSource } from './google-places.js';
 import { WatcherWorkflowSource } from './existing-watcher-source.js';
 import { BiteSitesLeadsSource } from './existing-bitesites-leads-source.js';
+import { GoHighLevelContactsSource } from './gohighlevel-contacts.js';
 
 export { LeadSourceAdapter };
 
@@ -20,7 +21,8 @@ const REGISTRY = new Map([
   [CsvLeadSource.id, CsvLeadSource],
   [GooglePlacesLeadSource.id, GooglePlacesLeadSource],
   [WatcherWorkflowSource.id, WatcherWorkflowSource],
-  [BiteSitesLeadsSource.id, BiteSitesLeadsSource]
+  [BiteSitesLeadsSource.id, BiteSitesLeadsSource],
+  [GoHighLevelContactsSource.id, GoHighLevelContactsSource]
 ]);
 
 export const LEAD_SOURCE_IDS = [...REGISTRY.keys()];

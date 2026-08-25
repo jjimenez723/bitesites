@@ -515,7 +515,12 @@ export const PROSPECT_STATUSES = [
   'call_later', 'invalid', 'do_not_contact', 'archived'
 ];
 
-export const SOURCE_SYSTEMS = ['watcher_leads', 'bitesites_leads', 'manual', 'csv', 'scraper'];
+// Where a prospect came from, as a system rather than as an adapter. A record
+// read out of the CRM is not a scrape, and recording it as one is a provenance
+// lie that the duplicate reviewer and the eligibility audit both act on.
+export const SOURCE_SYSTEMS = [
+  'watcher_leads', 'bitesites_leads', 'gohighlevel', 'manual', 'csv', 'scraper'
+];
 
 /** A prospect nobody can call is not "ready" — this is the gate the queue reads. */
 export function contactabilityFor({ phoneE164, email, doNotCall = false, doNotEmail = false }) {
@@ -654,7 +659,13 @@ export function buildProspect(raw = {}, { source = {}, importRunId = '', now = n
       sourceDocumentId: clean(source.sourceDocumentId, 200),
       sourceUrl: normalizeWebsite(source.sourceUrl ?? raw.link ?? raw.sourceUrl) || clean(source.sourceUrl ?? raw.link, 500),
       searchJobId: clean(source.searchJobId, 80),
-      importedAt: source.importedAt ?? now
+      importedAt: source.importedAt ?? now,
+      // When the SOURCE says the record was created and last changed, as
+      // distinct from when BiteSites imported it. A CRM contact edited last
+      // week and a CRM contact untouched since 2019 are different prospects,
+      // and `importedAt` cannot tell them apart.
+      recordCreatedAt: toDate(raw.sourceCreatedAt ?? source.recordCreatedAt),
+      recordUpdatedAt: toDate(raw.sourceUpdatedAt ?? source.recordUpdatedAt)
     },
 
     lifecycle: {

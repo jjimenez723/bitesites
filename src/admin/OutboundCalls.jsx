@@ -18,6 +18,7 @@ import AppointmentCalendar from './outbound/AppointmentCalendar';
 import TransferInbox from './outbound/TransferInbox';
 import TeamCallCoach from './outbound/TeamCallCoach';
 import ConsentRegistry from './outbound/ConsentRegistry';
+import EligibilityAudit from './outbound/EligibilityAudit';
 import './outbound/outbound.css';
 import './outbound/hybrid.css';
 import './outbound/agents.css';
@@ -32,6 +33,7 @@ const TABS = [
   ['coaching', 'Team Coaching'],
   ['agents', 'AI Agents'],
   ['consent', 'AI Consent'],
+  ['eligibility', 'Eligibility Audit'],
   ['calendar', 'Calendar'],
   ['later', 'Call Later'],
   ['history', 'History'],
@@ -45,7 +47,7 @@ const TAB_GROUPS = [
   { key: 'operate', label: 'Operate', tabs: ['campaigns', 'queue', 'dialer', 'calendar', 'history'] },
   { key: 'build', label: 'Build', tabs: ['prospects', 'agents'] },
   { key: 'monitor', label: 'Monitor', tabs: ['coaching', 'later', 'settings'] },
-  { key: 'admin', label: 'Admin', tabs: ['discovery', 'review', 'consent'] }
+  { key: 'admin', label: 'Admin', tabs: ['discovery', 'review', 'consent', 'eligibility'] }
 ];
 
 const REP_TAB_KEYS = new Set(['queue', 'dialer', 'calendar', 'later', 'history']);
@@ -279,6 +281,9 @@ export default function OutboundCalls({ role = 'admin', currentUid = '' }) {
           {tab === 'coaching' && <TeamCallCoach accountIds={accountIds} allAccounts={allAccounts} />}
           {tab === 'agents' && <AgentProfiles />}
           {tab === 'consent' && <ConsentRegistry />}
+          {tab === 'eligibility' && (
+            <EligibilityAudit campaigns={campaigns.rows} role={role} accountIds={accountIds} />
+          )}
           {tab === 'calendar' && <AppointmentCalendar canManage={canManage} accountIds={accountIds} allAccounts={allAccounts} />}
           {tab === 'later' && (
             <CallLaterQueue campaignId={campaignId} campaigns={campaigns.rows} onSelectCampaign={setCampaignId} />

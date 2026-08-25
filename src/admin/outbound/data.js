@@ -377,6 +377,12 @@ export const outbound = {
   prepareCampaignResearch: campaignId => callable('prepareCampaignResearch', { campaignId }),
   approveCampaignResearch: campaignId => callable('approveCampaignResearch', { campaignId }),
 
+  // Read-only. The server refuses to dial, import, or approve anything from
+  // here; `includeCsv` asks it to build the masked export with the same
+  // masking rules it used for the rows, rather than the console inventing a
+  // second one.
+  eligibilityAudit: payload => callable('runOutboundEligibilityAudit', payload),
+
   campaignIncidents: (campaignId, status = '') =>
     callable('listCampaignIncidentsCall', { campaignId, status }),
   resolveCampaignIncident: (incidentId, remediation) =>

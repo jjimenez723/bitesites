@@ -57,7 +57,7 @@
     "test:realtime-lifecycle": "node --test src/admin/outbound/realtime-audio-lifecycle.test.mjs services/realtime-sideband/realtime-audio-lifecycle.test.mjs",
     "test:finance": "node --test src/admin/finance-calculations.test.mjs",
     "test:all": "npm run test:staging-infra && npm run test:staging-gate && node scripts/hybrid.mjs test-all",
-    "test:all:raw": "npm run build && npm run test:secrets && npm run test:finance && npm run test:accounts && npm run test:account-access && npm run test:role && npm run test:prospects && npm run test:dedupe && npm run test:migration && npm run test:email && npm run test:rules && npm run test:voice && npm run test:import && npm run test:lifecycle && npm run test:analytics && npm run test:discovery && npm run test:conversion && npm run test:outbound && npm run test:breaker && npm run test:handoff && npm run test:consent && npm run test:pre-dial-screening && npm run test:screening-ingestion && npm run test:outbound-webhook && npm run test:enrichment && npm run test:hybrid-dialer && npm run test:twilio && npm run test:staff-workflows && npm run test:agent-runtime && npm run test:seller-voice && npm run test:sales-readiness && npm run test:conversation-evals && npm run test:conversation-corpus && npm run test:calendar && npm run test:realtime-lifecycle && npm run test:sideband-poll && npm run test:sideband-warmup && npm run test:byte-persona && npm run test:byte-web && npm run test:bit-persona && npm run test:bit-chat && npm run test:crm && npm run test:inbound",
+    "test:all:raw": "npm run build && npm run test:secrets && npm run test:finance && npm run test:accounts && npm run test:account-access && npm run test:role && npm run test:prospects && npm run test:dedupe && npm run test:migration && npm run test:email && npm run test:rules && npm run test:voice && npm run test:import && npm run test:lifecycle && npm run test:analytics && npm run test:discovery && npm run test:conversion && npm run test:outbound && npm run test:breaker && npm run test:handoff && npm run test:consent && npm run test:pre-dial-screening && npm run test:ghl-contacts && npm run test:eligibility-audit && npm run test:screening-ingestion && npm run test:outbound-webhook && npm run test:enrichment && npm run test:hybrid-dialer && npm run test:twilio && npm run test:staff-workflows && npm run test:agent-runtime && npm run test:seller-voice && npm run test:sales-readiness && npm run test:conversation-evals && npm run test:conversation-corpus && npm run test:calendar && npm run test:realtime-lifecycle && npm run test:sideband-poll && npm run test:sideband-warmup && npm run test:byte-persona && npm run test:byte-web && npm run test:bit-persona && npm run test:bit-chat && npm run test:crm && npm run test:inbound",
     "seed:outbound": "node scripts/seed-outbound.mjs",
     "role": "node scripts/set-role.mjs",
     "calendar": "node scripts/calendar-settings.mjs",
@@ -81,7 +81,9 @@
     "test:handoff": "firebase emulators:exec --only firestore --project demo-bitesites \"node functions/handoff-failsafe.test.mjs\"",
     "test:screening-ingestion": "firebase emulators:exec --only firestore --project demo-bitesites \"node functions/screening-ingestion.test.mjs\"",
     "test:breaker": "firebase emulators:exec --only firestore --project demo-bitesites \"node functions/campaign-circuit-breaker.test.mjs\"",
-    "test:secrets": "node --test scripts/check-no-secrets.test.mjs"
+    "test:secrets": "node --test scripts/check-no-secrets.test.mjs",
+    "test:ghl-contacts": "node --test functions/providers/lead-sources/gohighlevel-contacts.test.mjs",
+    "test:eligibility-audit": "firebase emulators:exec --only firestore --project demo-bitesites \"node functions/outbound-eligibility-audit.test.mjs\""
   },
   "dependencies": {
     "@twilio/voice-sdk": "2.18.3",

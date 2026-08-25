@@ -648,6 +648,17 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // No-dial eligibility audits. Counts only — the per-record rows are
+    // returned to the caller who ran the audit and are never stored, because
+    // they are a snapshot of one moment and re-reading a stale one is how
+    // somebody ends up acting on last month's verdict. Readable by anyone who
+    // can work this seller's outbound queue: an operator looking at a campaign
+    // with nothing in it is entitled to see why. Written only by the server.
+    match /outboundEligibilityAudits/{auditId} {
+      allow read: if canAccessOutboundAccount(resource.data.accountId);
+      allow write: if false;
+    }
+
     match /scrapeJobs/{jobId} {
       allow read: if isAdmin();
       allow write: if false;
