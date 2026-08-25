@@ -100,7 +100,19 @@
     "@vitejs/plugin-react": "^4.4.1",
     "concurrently": "^9.1.2",
     "firebase-admin": "^14.2.0",
+    "firebase-tools": "15.28.1",
     "playwright": "^1.61.1",
     "vite": "^6.3.5"
+  },
+  "overrides": {
+    "teeny-request": {
+      "uuid": "^11.1.1"
+    },
+    "gaxios": {
+      "uuid": "^11.1.1"
+    },
+    "@google-cloud/pubsub": {
+      "@opentelemetry/core": "^2.8.0"
+    }
   }
 }

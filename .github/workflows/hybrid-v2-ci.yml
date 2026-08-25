@@ -1,3 +1,19 @@
+# The repository's only required check.
+#
+# OWNER ACTION REQUIRED — not something this workflow can do for itself:
+# enable branch protection on `main` and mark **Outbound AI CI / validate** a
+# required status check, with "Require branches to be up to date before
+# merging" on. Until that is set, a red run is advisory and a red run on an
+# outbound safety test can be merged by anyone. Nothing in this repository
+# changes repository settings; see OUTBOUND_OWNER_CHECKLIST.md.
+#
+# Every tool this job needs comes from a lockfile or from an explicit setup
+# step. That is deliberate: this suite runs the Firestore emulator twenty times
+# through the Firebase CLI, and the CLI used to be assumed present. It was not,
+# so the job died at the first emulator test with `firebase: not found` and the
+# application tests never reached a verdict. `firebase-tools` is now a pinned
+# root devDependency, and the emulator's Java runtime is installed here rather
+# than inherited from whatever the runner image happens to ship.
 name: Outbound AI CI
 
 on:
@@ -17,19 +33,39 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            functions/package-lock.json
+            services/realtime-sideband/package-lock.json
+
+      # The Firestore and Auth emulators are Java programs. The runner image
+      # ships a JDK today; pinning one means the suite does not silently start
+      # failing the week that changes.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
 
       - name: Install all dependencies from lockfiles
         run: |
           npm ci
           npm --prefix functions ci
           npm --prefix services/realtime-sideband ci
+
+      # Proves the CLI resolves from the lockfile rather than from a global
+      # install, which is the failure this job exists to have fixed.
+      - name: Confirm the toolchain resolves from the lockfile
+        run: |
+          npx --no-install firebase --version
+          node --version
 
       - name: Secret scan
         run: npm run secrets:check -- --all
