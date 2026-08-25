@@ -1225,14 +1225,22 @@ export async function runAICampaignSlice(db, campaignId, {
       continue;
     }
 
-    const consent = await resolveAIVoiceConsent(db, {
-      target, campaign, phoneE164: contact.phoneE164 || target.phoneE164, now
-    });
+    const phoneE164 = contact.phoneE164 || target.phoneE164;
+    const consent = await resolveAIVoiceConsent(db, { target, campaign, phoneE164, now });
+    // The interactive dialer has always resolved this. The autonomous runner
+    // did not, so `evaluateCompliance` defaulted it to null and every AI
+    // campaign on a carrier provider was blocked as `external_screening_missing`
+    // no matter what evidence the ledger held. Fails closed either way, but it
+    // could never be unblocked.
+    const externalScreening = requiresExternalPreDialScreening({ campaign, automatedVoice: true })
+      ? await resolvePreDialScreening(db, { campaign, phoneE164, consent, now })
+      : { eligible: true, reasons: [] };
     const compliance = evaluateCompliance({
       target: { ...target, consent }, contact, campaign, now,
       internalDoNotCall: contact.contactability?.doNotCall === true || contact.doNotCall === true,
-      suppressed: await isSuppressed(db, contact.phoneE164 || target.phoneE164),
-      automatedVoice: true
+      suppressed: await isSuppressed(db, phoneE164),
+      automatedVoice: true,
+      externalScreening
     });
     if (!compliance.eligible) {
       const terminal = compliance.reasons.some(reason =>

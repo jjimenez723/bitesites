@@ -2649,6 +2649,10 @@ export {
   // Human-handoff SLA.
   reconcileHandoffSla,
 
+  // Pre-dial screening ingestion.
+  listScreeningProviders,
+  ingestPreDialScreeningCall,
+
   // Dialing.
   startPowerDialerSession,
   startParallelDialerSession,

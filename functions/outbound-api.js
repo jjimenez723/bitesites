@@ -34,6 +34,8 @@ import {
 } from './account-access.js';
 import { listCampaignIncidents, resolveCampaignIncident } from './campaign-circuit-breaker.js';
 import { reconcileStaleHandoffs } from './handoff-failsafe.js';
+import { ingestPreDialScreening } from './screening-ingestion.js';
+import { describeScreeningProviders } from './providers/screening/index.js';
 import { csvToRecords } from './providers/lead-sources/csv-source.js';
 import { promoteProspect } from './prospect-conversion.js';
 import {
@@ -587,6 +589,40 @@ export const revokeConsentGrantCall = onCall(callOptions, async request => {
     throw new HttpsError(code, clean(error?.message, 300));
   }
 });
+
+// ------------------------------------------------------ pre-dial screening
+
+/** Capability metadata for the settings screen. Secret NAMES only. */
+export const listScreeningProviders = onCall(callOptions, async request => {
+  await requireOutboundStaff(request);
+  return { providers: describeScreeningProviders() };
+});
+
+// Gated like the consent ledger rather than like dialer operation. Writing a
+// "cleared" screening record is the evidence that permits an artificial-voice
+// call to a specific number, which is at least as consequential as issuing the
+// consent grant itself — and on a paid provider it also spends money.
+export const ingestPreDialScreeningCall = onCall(
+  { ...callOptions, secrets: OUTBOUND_SECRETS },
+  async request => {
+    const { db } = await requireConsentReviewer(request);
+    try {
+      return await ingestPreDialScreening(db, {
+        sellerAccountId: str(request.data?.sellerAccountId, 100),
+        phoneE164: str(request.data?.phoneE164, 40),
+        consentGrantedAt: request.data?.consentGrantedAt || null,
+        providerId: str(request.data?.providerId, 60) || undefined,
+        nationalDnc: request.data?.nationalDnc || null,
+        providerConfig: {
+          TWILIO_ACCOUNT_SID: secretValue(TWILIO_ACCOUNT_SID),
+          TWILIO_AUTH_TOKEN: secretValue(TWILIO_AUTH_TOKEN)
+        }
+      });
+    } catch (error) {
+      throw new HttpsError('failed-precondition', clean(error?.message, 300));
+    }
+  }
+);
 
 // ------------------------------------------------- campaign circuit breaker
 

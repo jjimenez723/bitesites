@@ -72,3 +72,52 @@ export function externalDialingBlockReason(providerId, values = null) {
   if (admission.allowed) return '';
   return `External dialing is disabled (${admission.reason}; environment=${admission.environment}; provider=${admission.provider}).`;
 }
+
+export const PAID_PHONE_SCREENING = defineString(
+  'PAID_PHONE_SCREENING',
+  { default: 'disabled' }
+);
+
+/**
+ * Admission for a screening provider that bills per lookup.
+ *
+ * Separate from `externalDialingAdmission` because the two authorizations are
+ * genuinely separate: OUTBOUND_LAUNCH_AUTHORIZATION.md §3 (paid Twilio Lookup
+ * and DNC scrubbing) has not been granted even though §1 and §2 have. A build
+ * that treated "we may deploy" as "we may spend" would bill the owner for a
+ * decision they never made.
+ *
+ * Free providers are admitted anywhere. The mock cannot clear a number for a
+ * real call regardless, because carrier dialing has its own gate.
+ */
+export function screeningAdmission(providerId, { paid = true, values = null } = {}) {
+  const provider = text(providerId) || 'mock';
+  if (paid !== true) {
+    return { allowed: true, provider, environment: 'any', reason: 'unpaid_provider', paidScreening: 'not_applicable' };
+  }
+
+  const paidScreening = text(values?.paidScreening
+    ?? parameterValue(PAID_PHONE_SCREENING, process.env.PAID_PHONE_SCREENING || 'disabled'));
+  const policy = resolveOutboundDeploymentPolicy(values);
+
+  if (policy.environment !== 'production') {
+    return {
+      allowed: false, provider, environment: policy.environment,
+      reason: 'non_production_environment', paidScreening
+    };
+  }
+  // Positive match only. Anything unset, empty or misspelled is a refusal.
+  if (paidScreening !== 'enabled') {
+    return {
+      allowed: false, provider, environment: policy.environment,
+      reason: 'paid_screening_not_explicitly_enabled', paidScreening
+    };
+  }
+  return { allowed: true, provider, environment: policy.environment, reason: '', paidScreening };
+}
+
+export function screeningBlockReason(providerId, options = {}) {
+  const admission = screeningAdmission(providerId, options);
+  if (admission.allowed) return '';
+  return `Paid phone screening is disabled (${admission.reason}; environment=${admission.environment}; provider=${admission.provider}).`;
+}

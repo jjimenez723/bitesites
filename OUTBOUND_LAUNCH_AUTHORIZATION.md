@@ -38,7 +38,12 @@ state, or legal reliance.
 3. **Paid screening:** authorize paid Twilio Lookup line-type and reassigned-
    number checks, plus procurement/enrollment for National and applicable
    state DNC scrubbing. A carrier-backed AI call remains blocked without a
-   fresh server-held screening result.
+   fresh server-held screening result. The ingestion path is built and the
+   Twilio provider is registered but **admission-denied**: enabling it takes a
+   deliberate `PAID_PHONE_SCREENING=enabled` on a production deploy, which is
+   the authorization being requested here. National/state DNC still needs an
+   actual enrolled service — no code can substitute for it, and the ingestion
+   path refuses to write evidence without a dated snapshot id from one.
 4. **Legal policy:** obtain counsel-approved, jurisdiction-specific decisions
    for artificial/AI voice consent, disclosure wording, DNC and state-list
    process, calling windows, cadence, consent retention/revocation, voicemail,
