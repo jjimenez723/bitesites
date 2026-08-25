@@ -15,6 +15,7 @@
     "configure:staging": "node scripts/staging.mjs configure",
     "preflight:staging": "node scripts/staging.mjs preflight",
     "dry-run:staging": "node scripts/staging.mjs dry-run",
+    "smoke:staging": "node scripts/staging-smoke.mjs",
     "deploy:staging": "node scripts/staging.mjs deploy",
     "bootstrap:sideband": "node scripts/hybrid.mjs bootstrap-sideband",
     "deploy:hybrid": "node scripts/hybrid.mjs deploy",

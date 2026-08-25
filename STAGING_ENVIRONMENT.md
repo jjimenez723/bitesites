@@ -65,6 +65,59 @@ use a separately named Cloud Run service, stage-only secrets, and the staging
 Hosting control URLs. Its outbound media path will still be blocked by the
 runtime gate above.
 
+## Deployed state
+
+Staging is deployed: Firestore rules and indexes, 120+ Functions, and Hosting at
+<https://bitesites-outbound-staging.web.app>. Billing is linked; the project has
+its own inert placeholder secrets and no production credential.
+
+Verify it with the smoke test rather than by reading a deploy log:
+
+```bash
+npm run smoke:staging                 # anonymous probes, no writes
+npm run smoke:staging -- --with-admin # also provisions a disposable admin
+```
+
+It checks four separate claims: every guarded callable is reachable and refuses
+an anonymous caller; the **deployed** runtime reports a non-production
+environment with external dialing disabled and paid screening off — read from
+the live function's own configuration, not from the local file that produced it;
+an admin can reach what an admin should; and, with `--with-admin`, the
+disposable user and its role document are removed again afterwards.
+
+The smoke test earned its place immediately: it caught two callables returning
+404 because they had been written after the last deploy, which a green deploy
+log cannot tell you.
+
+### One-time Auth setup already applied
+
+Firebase Auth had never been initialised in the staging project, so
+`createUser` failed with `CONFIGURATION_NOT_FOUND`. Applied once:
+
+```bash
+TOKEN=$(gcloud auth application-default print-access-token)
+curl -X POST "https://identitytoolkit.googleapis.com/v2/projects/bitesites-outbound-staging/identityPlatform:initializeAuth" \
+  -H "Authorization: Bearer $TOKEN" -H "X-Goog-User-Project: bitesites-outbound-staging" \
+  -H "Content-Type: application/json" -d '{}'
+
+curl -X PATCH "https://identitytoolkit.googleapis.com/v2/projects/bitesites-outbound-staging/config?updateMask=signIn.email.enabled,signIn.email.passwordRequired" \
+  -H "Authorization: Bearer $TOKEN" -H "X-Goog-User-Project: bitesites-outbound-staging" \
+  -H "Content-Type: application/json" -d '{"signIn":{"email":{"enabled":true,"passwordRequired":true}}}'
+```
+
+The `X-Goog-User-Project` header is required: local ADC has no quota project and
+the API refuses the call without it.
+
+### A deploy trap worth knowing
+
+Firebase's non-interactive deploy demands a value for **every** `defineString`
+parameter, including ones with a default. Adding `PAID_PHONE_SCREENING` broke
+the staging deploy until it was written into
+`functions/.env.bitesites-outbound-staging`. The production dotenv
+(`functions/.env.bitesites-org`) needs the same key —
+`PAID_PHONE_SCREENING=disabled` — before the next production deploy, or it will
+fail the same way.
+
 ## Decisions still required
 
 - Authorize a billing account for the dedicated staging project so Gen-2
