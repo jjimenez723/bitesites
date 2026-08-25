@@ -168,10 +168,6 @@ Expected new UI component:
 
 ## 6. Milestones
 
-> **🚧 IN PROGRESS** — 2026-08-25 — outbound completion spec, milestones 0–8 — `package.json`, `.github/workflows/hybrid-v2-ci.yml`, `scripts/check-no-secrets*.mjs`, `functions/providers/lead-sources/gohighlevel-contacts.js`, `functions/outbound-eligibility-audit.js`, `functions/conversation-eval-model-adapter.js`, `functions/outbound-api.js`, `src/admin/outbound/EligibilityAudit.jsx`, and the readiness documents
->
-> Progress is logged in [OUTBOUND_COMPLETION_PROGRESS.md](./OUTBOUND_COMPLETION_PROGRESS.md).
-
 ### Milestone 0 — Establish a trustworthy baseline
 
 1. Inspect repository instructions, outstanding work claims, current branch, and dirty files.

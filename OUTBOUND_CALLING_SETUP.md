@@ -280,8 +280,19 @@ npm run test:rules              # Firestore security rules
 npm run test:all                # everything, plus the build
 ```
 
-No automated test places a call, contacts a provider, reads a credential, or
-touches a real Firebase project.
+No automated test places a call, mutates provider state, or touches a real
+Firebase project.
+
+**One exception, and it is deliberate.** `npm run test:import`
+(`functions/voice-import.test.mjs`) reads a **read-only** GoHighLevel token from
+`~/.ghl-token` and pulls the live call log into the emulator, because the
+properties it pins — a repeat caller collapsing to one lead, `createdAt` being
+the call's own date — only show up against real data shapes. It **skips itself**
+when that file is absent, so CI never contacts a provider and never reads a
+credential. On a developer machine that has the token, `npm run test:all` does
+both, read-only. It also means the suite needs DNS on such a machine: a network
+outage fails that one test with `ENOTFOUND services.leadconnectorhq.com` rather
+than skipping it.
 
 ## Deployment order
 

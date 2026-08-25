@@ -28,8 +28,8 @@ machine where the Firebase CLI happens to be installed globally
   lockfiles, so `Outbound AI CI` fails at the first emulator test with
   `firebase: not found`. This is an environment failure, not an application
   failure — the suite has never reached a verdict in CI.
-- No `🚧 IN PROGRESS` markers anywhere in the repo; no other agent's work is
-  in flight.
+- No outstanding work claims anywhere in the repo (the greppable marker
+  CLAUDE.md defines returned nothing); no other agent's work is in flight.
 
 **Remaining:** milestones 1–8.
 
@@ -282,3 +282,95 @@ instead is the check that would have caught it:
    §9 has been granted — and it has not.
 2. Branch protection on `main` with `Outbound AI CI / validate` required.
 3. Create `GHL_CONTACTS_READ_TOKEN`.
+
+---
+
+## Checkpoint 5 — whole-repository validation and handoff (milestones 7, 8)
+
+**Changes:**
+
+- `OUTBOUND_COMPLETION_REPORT.md` — branch, commits, files, exact test results,
+  vulnerability disposition, a fixture-only eligibility-audit sample, staging
+  status with the rollback procedure and its unrehearsed caveat, every owner
+  and external blocker, and the one command that should happen next.
+- Two things found while re-reading the diff, both fixed:
+  - the audit reported `no_valid_phone` for a target whose prospect had been
+    deleted. The number is on the target; what is missing is the record behind
+    it. It now reports `contact_missing`, which is the code the dialer already
+    uses for the same condition.
+  - `readAll` called a read truncated whenever it used its two-hundredth page,
+    including when the provider had simply run out of contacts on that page. It
+    now tracks exhaustion separately. A report that cries truncation is a
+    report whose truncation warning gets ignored.
+- `recordClassification` added per row, with `recordClasses` counts and a
+  column in the console. Until launch the campaign is always blocked on
+  something, so every row inherited `configuration_blocked` and the per-record
+  picture disappeared. The audit sample below is what made that obvious.
+- The work-claim marker is removed from the spec, and the progress log no
+  longer contains a literal copy of the marker text — `grep -rn "IN PROGRESS"`
+  now returns nothing, which is what CLAUDE.md asks for.
+
+**Evidence** — clean install, final tree:
+
+```
+npm ci ×3; npx --no-install firebase --version → 15.28.1
+npm run secrets:check -- --all → 363 files, passed
+npm run test:all               → 438 node:test assertions, 0 failed
+                                 17 emulator suites, 0 failed
+npm --prefix functions run check           → passed
+npm --prefix services/realtime-sideband run check → passed
+npm audit (all three packages)             → 0 vulnerabilities
+exit 0
+```
+
+**Remaining:** nothing that can be done from this repository.
+
+**Blockers, owner action, in the order they matter:**
+
+1. `OUTBOUND_EXTERNAL_DIALING=enabled` in `functions/.env.bitesites-org`.
+   `npm run preflight:production` refuses it. Not changed here — it is the
+   owner's environment and a deploy-time policy flag is a decision, not a typo
+   to silently correct.
+2. Branch protection on `main` with `Outbound AI CI / validate` required.
+3. `GHL_CONTACTS_READ_TOKEN`, scoped `contacts.readonly`.
+4. The spend decisions (§3 paid screening, §10 live-model evaluation) and every
+   legal, carrier, calendar, staffing and budget item in
+   `OUTBOUND_OWNER_CHECKLIST.md` stages 4–6.
+
+The branch is **not pushed**. `git push -u origin feat/outbound-readiness-closeout`
+is ready when the owner wants CI to run on it.
+
+### Addendum to checkpoint 5 — the suite is not hermetic on a developer machine
+
+A validation re-run failed with `ENOTFOUND services.leadconnectorhq.com` during
+a DNS outage. Not a regression and not flakiness: `functions/voice-import.test.mjs`
+reads a **read-only** GoHighLevel token from `~/.ghl-token` and pulls the live
+call log into the emulator on purpose, and skips itself when that file is
+absent. CI has no such file, so CI never contacts a provider.
+
+`OUTBOUND_CALLING_SETUP.md` claimed no automated test contacts a provider or
+reads a credential. On a machine holding that token, both were false. The claim
+is corrected; the test is not changed, because the coverage it buys — a repeat
+caller collapsing to one lead against real data shapes — is real and the test
+already fails safe without the token.
+
+Recorded because it is also a disclosure: running `npm run test:all` during
+this work made read-only GoHighLevel API calls from this machine. Nothing was
+created, tagged, enrolled, or mutated.
+
+### Addendum 2 — an emulator port race, and a measurement flaw
+
+A later re-run failed with `Firestore Emulator has exited with code: 1 …
+Address already in use` while starting `npm run test:analytics`. `test:all:raw`
+boots `firebase emulators:exec` seventeen times in sequence against the pinned
+ports in `firebase.json`, and one boot found the previous instance's socket not
+yet released. `npm run test:analytics` passes on its own; nothing on this
+branch touches it. It can hit CI too — the durable fix is to run the
+emulator-backed suites inside a single `emulators:exec` instead of seventeen,
+which is a restructuring this branch did not attempt.
+
+Also fixed: the validation harness. `{ step; step; } > log; echo "EXIT=$?"`
+reports only the *last* command's status, so a failing `npm run test:all`
+followed by three successful `npm audit` calls read as `EXIT=0`. The final run
+records every step's status individually. Five full-suite runs total: three
+green, two failed for the environmental reasons above.

@@ -213,28 +213,42 @@ export default function EligibilityAudit({ campaigns = [], role = 'admin', accou
               </div>
             </dl>
             <p className="admin-note">
-              <b>Record-ready</b> counts records whose own gates pass. When it exceeds
-              <b> eligible now</b>, the difference is campaign configuration rather than
+              <b>Record-ready</b> counts records whose own gates pass. When it exceeds{' '}
+              <b>eligible now</b>, the difference is campaign configuration rather than
               anything about the people on the list.
-              {report.totals.truncated && ' This scan hit its limit — the counts cover the first '}
-              {report.totals.truncated && report.totals.scanLimit}
-              {report.totals.truncated && ' records only.'}
             </p>
+            {report.totals.truncated && (
+              <p className="admin-note">
+                This scan hit its limit. The counts above cover the first{' '}
+                {report.totals.scanLimit} records only.
+              </p>
+            )}
 
             <h4 className="eligibility-heading">Outcome</h4>
             <table className="admin-table">
               <thead>
-                <tr><th scope="col">Outcome</th><th scope="col">Records</th></tr>
+                <tr>
+                  <th scope="col">Outcome</th>
+                  <th scope="col">Records</th>
+                  <th scope="col">Ignoring campaign setup</th>
+                </tr>
               </thead>
               <tbody>
                 {CLASS_ORDER.map(([id, label]) => (
                   <tr key={id}>
                     <td>{label}</td>
                     <td>{Number(report.classes?.[id]) || 0}</td>
+                    <td>{Number(report.recordClasses?.[id]) || 0}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
+            <p className="admin-note">
+              The third column removes the campaign-wide blockers listed below. Until
+              launch the campaign is always blocked on something, and without that column
+              every record would read “blocked by configuration” whatever its own
+              evidence looks like.
+            </p>
 
             <div className="admin-filters" style={{ marginTop: 12 }}>
               <button

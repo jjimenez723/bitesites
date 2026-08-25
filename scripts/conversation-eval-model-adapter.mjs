@@ -35,7 +35,6 @@
 // admission function below refuses on any one of them, in the same shape the
 // paid-screening gate uses.
 
-import { readFile } from 'node:fs/promises';
 import { TOOL_SCHEMAS } from '../services/realtime-sideband/tool-schemas.js';
 
 const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
@@ -345,20 +344,4 @@ export function createOpenAIConversationAdapter({
       return { events: produced };
     }
   };
-}
-
-/**
- * Read the seller instruction bodies a preflight needs to size a run, without
- * importing the runtime compiler into this file. The caller supplies them; this
- * exists so `evaluate-conversations.mjs` can read a saved runtime dump when it
- * has one and pass `{}` when it does not.
- */
-export async function readInstructionsDump(path) {
-  if (!path) return {};
-  try {
-    const parsed = JSON.parse(await readFile(path, 'utf8'));
-    return parsed && typeof parsed === 'object' ? parsed : {};
-  } catch {
-    return {};
-  }
 }

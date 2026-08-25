@@ -480,6 +480,20 @@ console.log('\noutbound eligibility audit');
     !noZone.eligibleNow && noZone.reasons.includes('unknown_timezone'), noZone.reasons.join(','));
 }
 
+// 11b. A target whose contact was deleted.
+{
+  await reset();
+  await seedFullyEligible();
+  await db.doc('prospects/p-ok').delete();
+  const orphan = rowFor(await audit(), 't-ok');
+
+  check('a target whose record was deleted says so, rather than blaming the number',
+    !orphan.eligibleNow && orphan.reasons.includes('contact_missing')
+    && !orphan.reasons.includes('no_valid_phone')
+    && orphan.buckets.includes('invalid_or_missing_phone'),
+    orphan.reasons.join(','));
+}
+
 // 12. Campaign-wide blockers: the circuit breaker, the provider, the deployment.
 {
   await reset();
@@ -499,6 +513,11 @@ console.log('\noutbound eligibility audit');
     haltedRow.reasons.join(','));
   check('a halted campaign still reports which records are otherwise ready',
     halted.totals.recordReady === 1, JSON.stringify(halted.totals));
+  check('the record-only verdict survives a campaign-wide block',
+    haltedRow.recordClassification === 'eligible_now'
+    && halted.recordClasses.eligible_now === 1
+    && halted.classes.eligible_now === 0,
+    `${haltedRow.recordClassification} / ${JSON.stringify(halted.recordClasses)}`);
 
   await reset();
   await seedFullyEligible({ campaign: { provider: 'gohighlevel' } });
@@ -709,7 +728,10 @@ console.log('\noutbound eligibility audit');
     && !csv.includes('disclosure-v1'),
     'the export must not carry registry or consent evidence');
   check('the CSV carries the stable record id an admin investigates with',
-    csv.includes('p-ok') && csv.includes('record_id'));
+    csv.includes('p-ok') && csv.includes('record_id') && csv.includes('record_classification'));
+  check('the class counts and the record-only counts both add up',
+    Object.values(report.recordClasses).reduce((sum, value) => sum + value, 0) === report.totals.scanned,
+    JSON.stringify(report.recordClasses));
   check('the campaign caller ID is masked in the report too',
     report.campaign.callerId === maskPhone('+12015524949'), report.campaign.callerId);
   check('no unmasked phone number appears anywhere in the report',

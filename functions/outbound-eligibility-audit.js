@@ -128,6 +128,7 @@ const REASON_CLASSES = Object.freeze({
 
   // We do not hold what the gate requires.
   no_valid_phone: 'evidence_missing',
+  contact_missing: 'evidence_missing',
   unknown_timezone: 'evidence_missing',
   ai_consent_not_documented: 'evidence_missing',
   ai_consent_seller_mismatch: 'evidence_missing',
@@ -159,6 +160,7 @@ const REASON_CLASSES = Object.freeze({
 
 /** Labels the audit owns; everything else comes from the compliance module. */
 const AUDIT_REASON_LABELS = Object.freeze({
+  contact_missing: 'The lead or prospect this target points at no longer exists',
   crm_do_not_disturb: 'The CRM contact is marked do-not-disturb',
   crm_account_mismatch: 'The CRM contact is tagged for a different seller',
   campaign_safety_lock: 'The campaign is halted by the safety circuit breaker',
@@ -185,7 +187,8 @@ export const ELIGIBILITY_REASON_LABELS = Object.freeze({
  */
 export const AUDIT_BUCKETS = Object.freeze([
   ['eligible_now', 'Eligible now', []],
-  ['invalid_or_missing_phone', 'Invalid or missing phone', ['no_valid_phone', 'invalid_number']],
+  ['invalid_or_missing_phone', 'Invalid or missing phone, or no contact record',
+    ['no_valid_phone', 'invalid_number', 'contact_missing']],
   ['dnc_or_suppressed', 'CRM DND, internal DNC, or suppressed',
     ['do_not_call', 'do_not_contact', 'suppressed', 'crm_do_not_disturb']],
   ['account_mismatch', 'Account mismatch',
@@ -424,6 +427,12 @@ export async function auditRecord(db, {
     recordReady: recordReasons.length === 0,
     eligibleNow: reasons.length === 0,
     classification: classifyReasons(reasons),
+    // The same verdict with the campaign-wide blockers removed. Until launch
+    // the campaign is always blocked on something — the provider, the
+    // deployment gate — and without this every row would read
+    // `configuration_blocked` and hide whether its own evidence is in order.
+    recordClassification: classifyReasons(recordReasons),
+    recordReasons,
     reasons,
     labels: reasons.map(reasonLabel),
     buckets: bucketsForReasons(reasons),
@@ -508,7 +517,10 @@ async function gatherFirestoreCandidates(db, { campaign, scope, limit }) {
       candidates.push({
         target,
         contact: contact || {},
-        extraReasons: contact ? [] : ['no_valid_phone']
+        // Not `no_valid_phone` — the number is right there on the target. What
+        // is gone is the record behind it, and the dialer refuses that with
+        // this same code rather than dialling from stale target fields.
+        extraReasons: contact ? [] : ['contact_missing']
       });
     }
     return candidates;
@@ -706,11 +718,13 @@ function summarizeEligibilityAudit({
   campaign, seller, rows, scopeCounts, campaignReadiness, crm, truncated, scanLimit, now
 }) {
   const counts = Object.fromEntries(AUDIT_CLASSES.map(entry => [entry, 0]));
+  const recordCounts = Object.fromEntries(AUDIT_CLASSES.map(entry => [entry, 0]));
   const buckets = Object.fromEntries(AUDIT_BUCKETS.map(([bucketId]) => [bucketId, 0]));
   const reasonCounts = {};
 
   for (const row of rows) {
     counts[row.classification] = (counts[row.classification] || 0) + 1;
+    recordCounts[row.recordClassification] = (recordCounts[row.recordClassification] || 0) + 1;
     if (row.eligibleNow) buckets.eligible_now += 1;
     for (const bucket of row.buckets) buckets[bucket] = (buckets[bucket] || 0) + 1;
     for (const reason of row.reasons) reasonCounts[reason] = (reasonCounts[reason] || 0) + 1;
@@ -755,6 +769,7 @@ function summarizeEligibilityAudit({
       truncated
     },
     classes: counts,
+    recordClasses: recordCounts,
     buckets,
     reasons: reasonCounts,
     scopeCounts,
@@ -788,8 +803,8 @@ const csvCell = value => {
 export function eligibilityAuditCsv(report) {
   const header = [
     'record_id', 'record_type', 'target_id', 'account_id', 'name', 'phone_masked',
-    'timezone', 'local_time', 'classification', 'eligible_now', 'record_ready',
-    'attempt_count', 'reasons', 'reason_labels'
+    'timezone', 'local_time', 'classification', 'record_classification',
+    'eligible_now', 'record_ready', 'attempt_count', 'reasons', 'reason_labels'
   ];
   const lines = [
     `# ${ELIGIBILITY_DISCLAIMER}`,
@@ -799,7 +814,8 @@ export function eligibilityAuditCsv(report) {
   for (const row of report.rows || []) {
     lines.push([
       row.id, row.recordType, row.targetId, row.accountId, row.name, row.phoneMasked,
-      row.timezone, row.localTime, row.classification, row.eligibleNow, row.recordReady,
+      row.timezone, row.localTime, row.classification, row.recordClassification,
+      row.eligibleNow, row.recordReady,
       row.attemptCount, row.reasons.join(' '), row.labels.join('; ')
     ].map(csvCell).join(','));
   }
@@ -826,6 +842,7 @@ export async function persistEligibilityAudit(db, report, { actor = '', actorUid
     generatedAt: Timestamp.fromDate(report.generatedAt),
     totals: report.totals,
     classes: report.classes,
+    recordClasses: report.recordClasses,
     buckets: report.buckets,
     reasons: report.reasons,
     scopeCounts: report.scopeCounts,

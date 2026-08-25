@@ -452,6 +452,11 @@ export class GoHighLevelContactsSource extends LeadSourceAdapter {
     let pages = 0;
     let total = null;
     let truncated = false;
+    // Distinguishes "the provider ran out of contacts" from "we ran out of
+    // pages". Counting pages alone would call a read that finished naturally on
+    // its two-hundredth page truncated, and a report that cries truncation is a
+    // report whose truncation warning gets ignored.
+    let exhausted = false;
 
     while (pages < MAX_PAGES) {
       const page = await this.discover(criteria, cursor);
@@ -461,10 +466,11 @@ export class GoHighLevelContactsSource extends LeadSourceAdapter {
         if (records.length >= limit) { truncated = true; break; }
         records.push(record);
       }
-      if (truncated || page.done) break;
+      if (page.done) exhausted = true;
+      if (truncated || exhausted) break;
       cursor = page.cursor;
     }
-    if (pages >= MAX_PAGES && !truncated) truncated = true;
+    if (!exhausted) truncated = true;
 
     return { records, pages, total, truncated, requests: [...this.requestLog] };
   }
