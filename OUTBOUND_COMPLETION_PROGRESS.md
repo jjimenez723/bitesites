@@ -158,3 +158,55 @@ create the grant that would change that.
 read-only Private Integration in GoHighLevel is an owner action. Until then
 the audit runs over Firestore scopes and refuses the CRM scope with a
 `failed-precondition` naming the secret.
+
+---
+
+## Checkpoint 3 — the live-model path, built and guarded (milestone 6)
+
+**Changes:**
+
+- `scripts/conversation-eval-model-adapter.mjs` fills the seam
+  `runAdversarialConversationEvaluation({ enableLiveModel: true })` has always
+  had and nothing has ever occupied. It replays the corpus's adversarial
+  *prospect* turns at a real model, using the compiled seller runtime as
+  instructions and the sideband's own `TOOL_SCHEMAS`, and feeds the fixture's
+  own tool results back so the booking-truthfulness checks still bite.
+  In `scripts/` rather than `functions/` deliberately — `conversation-evals.js`
+  says in its header that it contains no OpenAI client, and putting one in the
+  deployed bundle beside the dialer would undo that.
+- Admission requires three independent things: `--live`, `OPENAI_API_KEY`, and
+  `CONVERSATION_EVAL_LIVE_RUN=authorized`. Two of three is a refusal, and a
+  near-miss value (`enabled`, `true`, `authorized-later`) is a refusal. The
+  refusal prints the preflight so the reader learns what it would have cost.
+- `npm run preflight:conversation-evals` — model, sellers, request count, token
+  estimates, output path, and the authorizations required. It refuses to invent
+  a dollar total: supply `--input-rate`/`--output-rate` and it does the
+  arithmetic, otherwise it reports the inputs and says why.
+- `evaluateConversationQualityGate` computes the thresholds the readiness plan
+  states in prose — 0 critical failures, ≥95% rubric quality, ≥98%
+  qualification precision, 100% grounding — with the definition of each metric
+  written down beside it. Every report now carries a `qualityGate` block, and a
+  fixture run reports `meaningful: false` / `not_conversational_evidence` so a
+  green fixture report cannot be waved at the gate.
+- The corpus and its four negative controls are unchanged, and a test asserts
+  the counts (1,036 / 28 / 4) so a refactor cannot quietly shrink the evidence.
+
+**Evidence:**
+
+```
+npm run test:conversation-adapter → 27 assertions, 0 failed
+npm run test:conversation-evals   →  6 assertions, 0 failed
+npm run test:conversation-corpus  →  5 assertions, 0 failed
+npm run test:agent-runtime        → 48 assertions, 0 failed
+npm run preflight:conversation-evals → 1,036 scenarios, ~3,851 requests,
+                                       ~11.6M prompt tokens, cost withheld
+node scripts/evaluate-conversations.mjs --live → exit 2, refused
+```
+
+**Remaining:** milestones 2 (partly done), 7, 8.
+
+**Blockers:** the live evaluation has **not been run** and must not be under
+this goal. It needs an owner decision to spend, now recorded as item 10 of
+`OUTBOUND_LAUNCH_AUTHORIZATION.md`. Note also that the adapter is a text
+rehearsal; production speech is realtime audio, so even an authorized green run
+is necessary and not sufficient for the conversational gate.

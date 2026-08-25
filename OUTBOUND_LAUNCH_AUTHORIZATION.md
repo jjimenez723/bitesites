@@ -41,20 +41,19 @@ state, or legal reliance.
    into it.
 3. **Paid screening — still required.** Authorize paid Twilio Lookup line-type
    and reassigned-number checks, plus procurement/enrollment for National and
-   applicable state DNC scrubbing. The ingestion path is built and ships
-   admission-denied: Twilio Lookup is registered but refused until
-   `PAID_PHONE_SCREENING=enabled` on a production deploy, and the gate requires
-   production as well as the flag, so neither alone can start spending. The
-   default provider is a mock that contacts nobody. National DNC has no vendor
-   in this repository at all — a dated snapshot id must be handed in, and is
-   refused rather than defaulted. A carrier-backed AI call remains blocked
-   without a
-   fresh server-held screening result. The ingestion path is built and the
-   Twilio provider is registered but **admission-denied**: enabling it takes a
-   deliberate `PAID_PHONE_SCREENING=enabled` on a production deploy, which is
-   the authorization being requested here. National/state DNC still needs an
-   actual enrolled service — no code can substitute for it, and the ingestion
-   path refuses to write evidence without a dated snapshot id from one.
+   applicable state DNC scrubbing.
+
+   The ingestion path is built and ships **admission-denied**. The Twilio
+   Lookup provider is registered but refused until `PAID_PHONE_SCREENING=enabled`
+   *and* the deployment reports production — neither alone can start spending —
+   and the default provider is a mock that contacts nobody. Granting this
+   authorization means setting that flag on a production deploy.
+
+   National and state DNC have no vendor in this repository at all. No code can
+   substitute for an enrolled service: the ingestion path refuses to write
+   evidence without a dated snapshot id from one, rather than defaulting to a
+   "clear" nobody checked. A carrier-backed AI call stays blocked without a
+   fresh, server-held screening result.
 4. **Legal policy:** obtain counsel-approved, jurisdiction-specific decisions
    for artificial/AI voice consent, disclosure wording, DNC and state-list
    process, calling windows, cadence, consent retention/revocation, voicemail,
@@ -85,6 +84,23 @@ state, or legal reliance.
 9. **External canary:** after legal, carrier, calendar, screening, and ten-call
    evidence are green, separately authorize at most 25 eligible calls per day.
    This is not authorized now and cannot be inferred from a staging approval.
+
+10. **Live-model conversational evaluation — still required.** Authorize spend
+    on running the 1,036-dialogue corpus through a real model. The adapter is
+    built (`scripts/conversation-eval-model-adapter.mjs`) and refuses to run
+    without three independent things: the `--live` flag, an `OPENAI_API_KEY`,
+    and `CONVERSATION_EVAL_LIVE_RUN=authorized` — which is *this* decision,
+    recorded in the environment. `npm run preflight:conversation-evals` prints
+    the model, request count, token estimates, sellers and output path without
+    contacting anything; supply per-million rates and it will do the arithmetic,
+    and without them it reports the inputs rather than inventing a total.
+
+    Two things to weigh before granting it. The estimate is roughly 3,900
+    requests and 12M prompt tokens for the full corpus, and `--limit` exists so
+    a smaller cohort can be run first. And the adapter is a **text** rehearsal:
+    production speech is realtime audio, so a green run is necessary evidence
+    for the conversational gate and not sufficient evidence about the deployed
+    call path.
 
 ## Promotion evidence
 
