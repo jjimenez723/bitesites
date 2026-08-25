@@ -31,8 +31,14 @@ requires to admit a carrier-backed call.
 
 - **Nothing is live.** The deployed production functions predate the parameter
   entirely and every campaign is paused. Even with this gate open, a call still
-  needs a consent grant, a fresh screening, a registered caller ID and a running
-  campaign; none of those exist.
+  needs a consent grant, a fresh pre-dial screening, and a running campaign —
+  and no consent grant or screening record exists. The caller ID is **not** one
+  of the missing pieces: `+12015524949` is provisioned in the shared Twilio
+  account and registered to Stone Bellisimo and Fine Line in `accounts.js`,
+  and BiteSites declares no allow-list, so any E.164 number passes
+  `callerIdAllowed` for it. What is still outstanding on caller identity is the
+  carrier-side work — verified identity, KYC, STIR/SHAKEN attestation, A2P
+  registration — which is a different thing from having a number.
 - **Nothing in this repository set it.** `scripts/staging.mjs` writes `disabled`
   and cannot target production. No other script writes that file.
 - **A production Functions deploy from this machine would have carried it**, and

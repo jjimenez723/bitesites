@@ -106,7 +106,12 @@ the carriers require.
       for the intended jurisdictions
 - [ ] National and applicable state DNC subscription, with a dated snapshot
       attached to each callable record
-- [ ] Verified caller identity, KYC, STIR/SHAKEN posture, registered numbers
+- [ ] Verified caller identity, KYC, STIR/SHAKEN attestation and A2P/carrier
+      registration for the numbers that will dial. Note this is the *carrier*
+      work, not the numbers: `+12015524949` is provisioned in the shared Twilio
+      account and registered to Stone Bellisimo and Fine Line in `accounts.js`.
+      BiteSites declares no allow-list, so any E.164 caller ID passes its
+      account check — declaring one is worth doing before the canary
 - [ ] Seller calendars: Stone Bellisimo and Fine Line have **none** and would
       book against generic defaults —
       [SELLER_CALENDAR_CHECKLIST.md](./SELLER_CALENDAR_CHECKLIST.md)

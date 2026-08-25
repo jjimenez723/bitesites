@@ -226,8 +226,11 @@ What is and is not true about that:
 
 - **Nothing is live.** The deployed production functions predate the parameter
   entirely, and every campaign is paused. Even with the deployment gate open, a
-  call still needs a consent grant, a fresh screening, a registered caller ID
-  and a running campaign — none of which exist.
+  call still needs a consent grant, a fresh screening and a running campaign —
+  none of which exist. (The caller ID is not missing: `+12015524949` is
+  provisioned and registered in `accounts.js`. The carrier-side verified
+  identity and STIR/SHAKEN attestation are what remain, and those are a
+  different thing.)
 - **Nothing in this repository put it there.** `scripts/staging.mjs` writes
   `disabled` and cannot target production; no other script writes that file.
 - **A production Functions deploy from that machine would have carried it**,
