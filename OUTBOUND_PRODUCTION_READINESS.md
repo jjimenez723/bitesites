@@ -5,7 +5,12 @@ Last updated: 2026-08-24
 ## Decision
 
 External automated lead-list campaigns are **not authorized to launch yet**.
-The backend is being prepared for controlled, consenting internal rehearsals.
+The backend is deployed to a non-dialing staging project and prepared for
+controlled, consenting internal rehearsals. What blocks the next step is no
+longer engineering: it is counsel-approved consent wording, a procured DNC
+scrubbing service, verified caller identity, named consenting rehearsal
+participants, seller calendar values, and a staffed handoff roster. None of
+those can be produced from this repository.
 Watcher and Byte-Dialer records have no known AI/artificial-voice consent and
 must remain blocked unless a number receives a verified, seller-specific grant
 through the consent ledger.
@@ -47,9 +52,12 @@ in [CLAUDE.md](./CLAUDE.md):
    decided from it. Keep the split between what is implemented, what is blocked,
    and on whom, explicit and current.
 
-## What is implemented locally
+## What is implemented
 
-Nothing in this section has been deployed by this workstream.
+Everything below is deployed to the **staging** project
+`bitesites-outbound-staging` and verified there by `npm run smoke:staging`.
+**Nothing here is deployed to production.** Production still runs the code that
+predates this workstream, with every campaign paused.
 
 | Boundary | Current local implementation |
 |---|---|
@@ -63,14 +71,14 @@ Nothing in this section has been deployed by this workstream.
 | Tool execution | Function-call IDs are immutable idempotency keys. Mutating retries cannot replay an uncertain action. Per-call quotas cap total, knowledge, availability, holds, bookings, and follow-up. |
 | Follow-up | Disabled in the launch profiles. The backend requires explicit in-call channel confirmation, resolves the recipient from the current contact record, and reports only “queued,” never “sent.” |
 | Appointment location & cancellation | Both are stored settings, normalized server-side, snapshotted onto the appointment at booking so a later settings change cannot rewrite what the prospect agreed to, and carried onto the Google invitation. Both default to unset — an unapproved address is worse than none. Per-seller values are still owner input: [SELLER_CALENDAR_CHECKLIST.md](./SELLER_CALENDAR_CHECKLIST.md). |
-| Booking | Firestore owns holds and attribution; Google Calendar owns live availability and events. Configured calendars are checked immediately before commit and fail closed when unavailable. Confirmed bookings invite the attendee once. |
+| Booking | Firestore owns holds and attribution; Google Calendar owns live availability and events. Configured calendars are checked immediately before commit and fail closed when unavailable. Confirmed bookings invite the attendee once. An appointment now carries a location and a cancellation policy, both snapshotted at booking so a later settings change cannot rewrite what the prospect was told. Both default to empty: an unconfirmed address is worse than none, because it is spoken aloud and printed on the invitation. |
 | AI media | A 20-second attachment deadline and durable reconciler end the PSTN and Realtime legs if no valid controller attaches. |
 | Human handoff | A handoff no rep accepts expires 30 seconds after the prospect asks. The deadline is stamped on the call, applied in-band on the AI's next tool call, and swept every minute. On expiry the AI is told to offer a callback and close; a call the AI then abandons is ended rather than left connected to nobody. Recipient list, staffed hours and the on-call roster remain owner decisions. |
 | Circuit breaker | A critical incident pauses the campaign, records an immutable reason and safety-stops live sessions. Resume is refused until an admin resolves every open incident with a stated corrective action, and resolving returns the campaign to *paused* rather than to dialing. Lost AI media control and account-boundary violations trip it. The halt, its reason and the remediation box appear on the campaign itself, and the Resume button reads Halted rather than offering an action the server will refuse. |
 | Operating limits | Every non-mock provider is capped server-side at one live leg, one attempt, a 24-hour minimum retry interval, and a 10-minute call limit, including stale campaign documents. |
 | Pre-dial screening | Carrier-backed AI requires a fresh, seller/number-bound server result for entity and number suppression, line type, and reassigned-number status. Missing, stale, unknown, mismatched, or unavailable evidence fails closed. Evidence now has a way in: a vendor-agnostic provider family (`functions/providers/screening/`) behind an admin callable, defaulting to a mock that contacts nobody. Paid lookups need a second authorization beyond deployment — `PAID_PHONE_SCREENING=enabled` in production — and are refused until §3 is granted. National DNC has no vendor in this repo: a dated snapshot id must be handed in, and is refused rather than defaulted. |
 | Provider control | Autonomous GoHighLevel AI is disabled because its external workflow cannot enforce the signed runtime. Hybrid Twilio is the controlled path. |
-| Staging isolation | Deployed and smoke-tested (`npm run smoke:staging`), including an authenticated admin path and a runtime check that the deployed functions still refuse carrier dialing. A separate Firebase project is provisioned locally. Staging and every non-production environment reject carrier-backed dialing even if the feature flag is accidentally enabled. Deployment awaits owner-authorized billing. |
+| Staging isolation | Deployed and smoke-tested (`npm run smoke:staging`), including an authenticated admin path and a runtime check that the deployed functions still refuse carrier dialing. A separate Firebase project is provisioned locally. Staging and every non-production environment reject carrier-backed dialing even if the feature flag is accidentally enabled — confirmed against the deployed functions' own configuration, not the local file that produced it. Billing was authorized and linked on 2026-08-24. |
 | Offline evaluation | All three canonical seller runtimes pass **1,036 multi-turn adversarial dialogues and 6,591 critical gates** with zero failures, spread evenly across the sellers and across every adversarial dimension this plan names. Four negative controls prove the gates actually fire rather than always passing. These are fixtures: the generator writes the adversarial turn *and* the compliant reply, so this shows the gates accept correct behavior over a broad corpus — it does not show that a model produces it. Live conversational evidence needs the model adapter (see below). |
 
 ## Tooling verdict
@@ -129,6 +137,17 @@ prospect is called:
    noise, wrong party, minor/uncertain identity, opt-out, price pressure,
    unsupported claims, scheduling races, carrier/tool timeout, and dropped
    media.
+
+   **Corpus built (1,036 dialogues, 6,591 gates, zero failures) — gate not yet
+   met.** `functions/conversation-eval-generator.js` composes the corpus across
+   every dimension listed above, and `npm run test:conversation-corpus` runs it.
+   But these are fixtures: the generator writes the adversarial turn *and* the
+   compliant reply, so a green run proves the gates accept correct behavior over
+   a broad corpus, not that a model produces it. Four negative controls prove
+   the gates fire rather than always passing. Closing this gate means running
+   the same corpus through
+   `runAdversarialConversationEvaluation({ enableLiveModel: true })` with a real
+   adapter, then meeting the thresholds in items 2 and 3 below.
 
    **Corpus built — 1,036 dialogues, every dimension covered**
    (`npm run test:conversation-corpus`, `npm run evaluate:conversation-evals`).
@@ -220,11 +239,18 @@ without competing with the main action.
 
 ## Deployment sequence
 
-1. Review and commit the local implementation. The `campaignIncidents` and
-   `dialerSessions` composite indexes added for the circuit breaker must be
-   built before the breaker can list or safety-stop under load.
-2. Authorize staging billing and deploy the non-dialing staging stack.
-3. Pass staging callable/UI smoke tests without production credentials.
+1. ~~Review and commit the local implementation.~~ **Done 2026-08-24.** The
+   `campaignIncidents` and `dialerSessions` composite indexes added for the
+   circuit breaker are built in staging and must be built in production before
+   the breaker can list or safety-stop under load.
+2. ~~Authorize staging billing and deploy the non-dialing staging stack.~~
+   **Done 2026-08-24.** Billing linked to the production billing account;
+   rules, indexes, Functions and Hosting deployed.
+3. ~~Pass staging callable/UI smoke tests without production credentials.~~
+   **Done 2026-08-24.** `npm run smoke:staging -- --with-admin`, 15 checks,
+   including a disposable admin and a runtime assertion that the deployed
+   functions still refuse carrier dialing. No production credential is used.
+   Rollback has **not** been rehearsed yet.
 4. Deploy rules and indexes first; wait for index readiness.
 5. Deploy functions and Realtime sideband with production secrets.
 6. Seed seller profiles/knowledge using dry-run output, then verify the exact

@@ -29,15 +29,26 @@ remain paused until every external-canary gate is evidenced and signed off.
 These are not implied by “continue” because they create cost, external account
 state, or legal reliance.
 
-1. **Staging billing:** authorize linking `bitesites-outbound-staging` to the
-   same Firebase billing account used by BiteSites production. This can incur
-   Google Cloud usage charges. External dialing remains technically disabled.
-2. **Staging deployment:** after billing is linked, authorize the first deploy
-   of rules, indexes, Functions, and Hosting to the staging project. No
-   production deploy is included.
-3. **Paid screening:** authorize paid Twilio Lookup line-type and reassigned-
-   number checks, plus procurement/enrollment for National and applicable
-   state DNC scrubbing. A carrier-backed AI call remains blocked without a
+1. ~~**Staging billing.**~~ **Granted and completed 2026-08-24.**
+   `bitesites-outbound-staging` is linked to billing account
+   `01B8AE-80D8CC-FFB5A0`, the same one production uses. Running cost is about
+   $1/month, dominated by Secret Manager; a $10/month budget alert is set at
+   50/90/100% and scoped to the staging project only.
+2. ~~**Staging deployment.**~~ **Granted and completed 2026-08-24.** Rules,
+   indexes, Functions and Hosting are deployed to the staging project. No
+   production deploy was included, and none has happened. Twenty-three secrets
+   exist in staging as inert placeholders; no production credential was copied
+   into it.
+3. **Paid screening — still required.** Authorize paid Twilio Lookup line-type
+   and reassigned-number checks, plus procurement/enrollment for National and
+   applicable state DNC scrubbing. The ingestion path is built and ships
+   admission-denied: Twilio Lookup is registered but refused until
+   `PAID_PHONE_SCREENING=enabled` on a production deploy, and the gate requires
+   production as well as the flag, so neither alone can start spending. The
+   default provider is a mock that contacts nobody. National DNC has no vendor
+   in this repository at all — a dated snapshot id must be handed in, and is
+   refused rather than defaulted. A carrier-backed AI call remains blocked
+   without a
    fresh server-held screening result. The ingestion path is built and the
    Twilio provider is registered but **admission-denied**: enabling it takes a
    deliberate `PAID_PHONE_SCREENING=enabled` on a production deploy, which is
@@ -80,7 +91,7 @@ state, or legal reliance.
 | Stage | Required evidence | Promotion authority |
 |---|---|---|
 | Offline backend | Full test suite; zero critical seller/tool/policy evaluation failures; circuit breaker proven to halt, refuse resume and require admin remediation | Engineering owner |
-| Non-dialing staging | Separate Firebase project; no production bindings; external-dialing gate proven; deployed callable/UI smoke test | Engineering owner after billing/deploy authorization |
+| ~~Non-dialing staging~~ **Evidenced 2026-08-24** | Separate Firebase project; no production bindings; external-dialing gate proven against the deployed runtime; `npm run smoke:staging -- --with-admin` passes 15 checks. Rollback not yet rehearsed. | Engineering owner after billing/deploy authorization |
 | Internal carrier rehearsal | Ten specifically consented internal calls; 100% transcript/event review; no critical failures; provider retry/teardown evidence | Business owner |
 | External canary | Counsel sign-off; fresh DNC/reassigned/line checks; verified caller identity; calendars and human handoff staffed; budget alerts | Business owner, explicit 25/day authorization |
 | Wider rollout | 48-hour stable cohort, zero critical failures, reviewed quality and unit economics | Business owner for each 100/day and 500/day step |

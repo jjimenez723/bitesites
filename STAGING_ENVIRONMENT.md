@@ -24,9 +24,31 @@ The local ignored staging config and public web SDK config point only to this
 project. Staging builds use Vite's `staging` mode and preflight refuses a
 production Firebase project or auth domain.
 
-The project is intentionally not linked to billing. Firebase therefore refuses
-to package/deploy Gen-2 Functions until an owner authorizes a billing account.
-No carrier, OpenAI, calendar, or production secret has been copied into it.
+**Billing was authorized and linked on 2026-08-24, and the stack is deployed.**
+Rules, indexes, Functions and Hosting are live; Firebase Auth is initialised so
+the smoke test can provision a disposable admin. No carrier, OpenAI, calendar,
+or production secret has been copied into it — the 23 secrets that exist are
+inert placeholders, so a staging function that reaches a vendor fails
+authentication rather than acting.
+
+Verify the deployment rather than trusting it:
+
+```bash
+npm run smoke:staging                 # anonymous probes: deployed, and guarded
+npm run smoke:staging -- --with-admin # also a disposable admin and one real call
+```
+
+Two traps worth knowing before the next deploy:
+
+- **Every `defineString` parameter needs a value in the dotenv file for a
+  non-interactive deploy, even one with a default.** `PAID_PHONE_SCREENING` is
+  set in the staging dotenv but is **not** in `functions/.env.bitesites-org`, so
+  the next production deploy will fail until `PAID_PHONE_SCREENING=disabled` is
+  added there.
+- **A Firebase deploy can exit non-zero after succeeding.** The Artifact
+  Registry cleanup-policy step runs last, and its failure aborts the run after
+  Functions deployed but before Hosting released. Read the log, not the exit
+  code alone.
 
 ## One-time local configuration
 
