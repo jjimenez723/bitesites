@@ -10,6 +10,10 @@ Engineering completion is met. **Launch authorization is not**, and the two are
 different things — see [OUTBOUND_OWNER_CHECKLIST.md](./OUTBOUND_OWNER_CHECKLIST.md)
 for which of the six stages we are actually on.
 
+This report is written in the vocabulary of the codebase. For what any of it
+means, and why the system cannot call anyone,
+[OUTBOUND_HANDOFF.md](./OUTBOUND_HANDOFF.md) says it in plain language.
+
 No call was placed. No GoHighLevel contact was created, tagged, or enrolled. No
 consent grant or screening clearance was issued. Nothing was deployed. No
 campaign was unpaused. No paid service was contacted.

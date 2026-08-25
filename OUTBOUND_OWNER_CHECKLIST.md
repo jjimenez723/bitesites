@@ -12,6 +12,10 @@ the one-page version, kept short enough to actually be read before a deploy.
 The stage a document *claims* is worth less than the evidence beside it. Where
 a row says "not done", it is not a gap somebody forgot — it is the honest state.
 
+If the terms here are opaque — "consent grant", "pre-dial screening" — read
+[OUTBOUND_HANDOFF.md](./OUTBOUND_HANDOFF.md) first. It explains what each of
+them actually is and why there are none.
+
 ---
 
 ## 1. Engineering complete — ✅ **met** (2026-08-25)
