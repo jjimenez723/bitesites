@@ -21,11 +21,14 @@
 | Provider-neutral architecture | Implemented and tested |
 | Mock dialer | Implemented, fully exercised — this is what the tests run on |
 | Kixie adapter | Implemented for what Kixie documents; **unverified against a live account** |
-| GoHighLevel outbound | Autonomous AI disabled; external workflow cannot enforce the signed runtime |
+| GoHighLevel outbound | Autonomous AI **disabled** — an external workflow cannot enforce the signed runtime, so `capabilities.aiAgentCall` is `false` and a campaign cannot be created that way |
+| GoHighLevel contact reading | Read-only lead source, separate `contacts.readonly` credential, one permitted endpoint; feeds the no-dial eligibility audit and cannot start a call |
 | Twilio / Hybrid V2 | Controlled adapter, browser voice, AI sideband and fail-safe implemented; **live end-to-end canary still required** |
-| Firestore rules and indexes | Implemented and tested; **not deployed** |
-| Cloud Functions | Implemented; **not deployed** |
+| Firestore rules and indexes | Implemented and tested; deployed to **staging** 2026-08-24; **not deployed to production** |
+| Cloud Functions | Implemented; deployed to **staging** 2026-08-24 and smoke-tested there; **not deployed to production** |
 | Provider webhooks | Endpoint implemented; **no provider is configured to call it** |
+| Pre-dial screening | Ingestion path implemented and admission-denied; National/state DNC has **no vendor procured** |
+| Eligibility audit | Implemented — an admin can measure a list against every dial-time gate without dialling |
 | Legal / compliance review | **Not done** |
 | Live test call | **Not performed** |
 
@@ -59,7 +62,7 @@ enforces. Reproduced here for reference.
 | Capability | Mock | Kixie | GoHighLevel | Twilio |
 |---|:--:|:--:|:--:|:--:|
 | Start a call on demand | ✅ | ❌ | ✅¹ | ✅ |
-| AI agent calls | ✅ | ❌ | ✅ | ❌ |
+| AI agent calls | ✅ | ❌ | ❌⁸ | ❌ |
 | Power dialing | ✅ | ✅² | ❌ | ✅ |
 | **BiteSites-controlled parallel dialing** | ✅ | ❌ | ❌ | ✅ |
 | Per-leg call ids | ✅ | ✅ | ❌³ | ✅ |
@@ -80,6 +83,12 @@ enforces. Reproduced here for reference.
 6. Requires a TwiML application and a Voice SDK token endpoint — **not built**.
 7. Shared custom header, compared in constant time. That is a secret, not a
    signature.
+8. Was ✅. Turned off deliberately: a published GoHighLevel workflow owns its
+   own prompt, retries, recording and tool surface, so it cannot prove it is
+   executing the signed BiteSites call manifest. `assertSupports('gohighlevel',
+   'ai')` therefore fails and an AI campaign cannot be created on it. The rest
+   of this row's ✅ marks — power dialing, per-leg ids, cancellation — were
+   already ❌, which is why Twilio is the controlled path.
 
 ### Kixie — verified findings
 
@@ -276,7 +285,14 @@ touches a real Firebase project.
 
 ## Deployment order
 
+> The order below is for a **production** deploy, which has not happened for
+> this workstream. Staging has its own helper and its own guard rails —
+> [STAGING_ENVIRONMENT.md](./STAGING_ENVIRONMENT.md). Run
+> `npm run preflight:production` first: `functions/.env.bitesites-org` is
+> untracked, so whatever it says is deployed without ever appearing in a diff.
+
 1. `npm run test:all`
+1. `npm run preflight:production`
 2. `npm run deploy:functions` — **before** the rules, so nothing depends on an
    undeployed function
 3. `firebase deploy --only firestore:indexes`
@@ -308,8 +324,11 @@ Every item is a decision for counsel, not a setting with a right default.
 - [ ] Opt-out handling, retention, and propagation across campaigns
 - [ ] Whether this system constitutes an ATDS in the relevant jurisdictions
 - [ ] Abandoned-call rate limits for parallel dialing
-- [ ] National and state DNC registry scrubbing — **not implemented**; the
-      internal DNC list is not a registry check
+- [ ] National and state DNC registry scrubbing — **no vendor is procured**.
+      The ledger and the ingestion path exist and fail closed without a dated
+      snapshot id from a real service; the internal DNC list is a suppression
+      record, not a registry check, and no code can substitute for the
+      subscription
 - [ ] Caller-ID registration and STIR/SHAKEN attestation
 - [ ] Data retention for recordings, transcripts and raw scrape payloads
 - [ ] Privacy notice coverage for cold contacts

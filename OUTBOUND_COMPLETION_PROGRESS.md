@@ -210,3 +210,75 @@ this goal. It needs an owner decision to spend, now recorded as item 10 of
 `OUTBOUND_LAUNCH_AUTHORIZATION.md`. Note also that the adapter is a text
 rehearsal; production speech is realtime audio, so even an authorized green run
 is necessary and not sufficient for the conversational gate.
+
+---
+
+## Checkpoint 4 — documents reconciled, and one finding (milestone 2)
+
+**Finding, and it is the important part of this checkpoint.**
+`functions/.env.bitesites-org` — untracked, local, and read by every
+`firebase deploy --only functions` — contains `OUTBOUND_EXTERNAL_DIALING=enabled`
+alongside `BITESITES_DEPLOYMENT_ENVIRONMENT=production`. Together those are the
+two conditions `resolveOutboundDeploymentPolicy` requires to admit a
+carrier-backed call.
+
+What is and is not true about that:
+
+- **Nothing is live.** The deployed production functions predate the parameter
+  entirely, and every campaign is paused. Even with the deployment gate open, a
+  call still needs a consent grant, a fresh screening, a registered caller ID
+  and a running campaign — none of which exist.
+- **Nothing in this repository put it there.** `scripts/staging.mjs` writes
+  `disabled` and cannot target production; no other script writes that file.
+- **A production Functions deploy from that machine would have carried it**,
+  and no diff, review, or CI run would have shown it.
+
+The value was **not changed**. It is the owner's local environment, it was set
+deliberately by someone, and silently flipping a deploy-time policy flag is the
+same class of unreviewed change that created the problem. What was added
+instead is the check that would have caught it:
+
+- `scripts/production-preflight.mjs` + `npm run preflight:production` — reads
+  the production dotenv, prints the three policy parameters, and exits non-zero
+  when one is open without its matching authorization
+  (`OUTBOUND_CANARY_AUTHORIZATION`, `PAID_SCREENING_AUTHORIZATION`). Same shape
+  as `screeningAdmission`: a flag alone is never enough. 10 assertions, wired
+  into `npm run test:staging-infra`.
+
+**Document changes:**
+
+- `OUTBOUND_OWNER_CHECKLIST.md` — new. Six stages on one page: engineering
+  complete, staging verified, production deployed-but-disabled, internal
+  rehearsal, external canary, wider rollout. Each with its evidence, its
+  decider, and its honest current state. Linked from CLAUDE.md and both
+  outbound documents.
+- `STAGING_ENVIRONMENT.md` — the "Decisions still required" section listed
+  billing and staging deployment, both granted and completed on 2026-08-24. It
+  now lists what is actually open (rollback never rehearsed, the Twilio
+  subaccount question, calendar test identities) and says plainly that
+  approving any of them approves nothing about production. The duplicated
+  deploy-trap section is gone, and the `PAID_PHONE_SCREENING` warning was
+  stale — the key has since been added to the production dotenv.
+- `OUTBOUND_CALLING_SETUP.md` — the status table said rules and Functions were
+  "not deployed"; they are deployed to staging and not to production, and it
+  now says which. The capability matrix advertised GoHighLevel **AI agent
+  calls ✅**; that has been `false` in code since the provider control was
+  added, and the footnote now explains why. The DNC checklist line said
+  "not implemented" when what is missing is a procured vendor, not code.
+- `OUTBOUND_PRODUCTION_READINESS.md` — the duplicated conversational-evaluation
+  paragraph is gone; the deployment sequence gained the production preflight as
+  a numbered step; the finding above is recorded at the top.
+- `OUTBOUND_LAUNCH_AUTHORIZATION.md` — the duplicated half of §3 is gone, and
+  §10 records the live-model evaluation spend as its own decision.
+
+**Evidence:** `npm run test:staging-infra` → 17 assertions, 0 failed.
+
+**Remaining:** milestones 7, 8.
+
+**Blockers, owner action:**
+
+1. Decide whether `OUTBOUND_EXTERNAL_DIALING` should be `disabled` in
+   `functions/.env.bitesites-org`. It should be, unless the 25/day canary in
+   §9 has been granted — and it has not.
+2. Branch protection on `main` with `Outbound AI CI / validate` required.
+3. Create `GHL_CONTACTS_READ_TOKEN`.

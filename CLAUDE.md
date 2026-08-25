@@ -69,6 +69,7 @@ Read these before changing outbound behavior:
 
 | Document | What it governs |
 |---|---|
+| `OUTBOUND_OWNER_CHECKLIST.md` | The six stages on one page, and which one we are actually on |
 | `OUTBOUND_PRODUCTION_READINESS.md` | What is built, what is not, and the quality gates |
 | `OUTBOUND_LAUNCH_AUTHORIZATION.md` | Owner decisions already made, and the authorizations still required |
 | `STAGING_ENVIRONMENT.md` | The non-dialing staging project and how to deploy it |

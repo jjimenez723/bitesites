@@ -5,6 +5,15 @@ Last updated: 2026-08-24
 ## Decision
 
 External automated lead-list campaigns are **not authorized to launch yet**.
+
+> **Open item, 2026-08-25.** `functions/.env.bitesites-org` — untracked, local,
+> and read by every production Functions deploy — contains
+> `OUTBOUND_EXTERNAL_DIALING=enabled`. Nothing in this repository put it there
+> and no production deploy has carried it, so the deployed runtime is
+> unaffected; but a deploy from that machine would admit carrier dialing
+> without a decision. `npm run preflight:production` now refuses that
+> combination, and setting the value back to `disabled` is an owner action.
+
 The backend is deployed to a non-dialing staging project and prepared for
 controlled, consenting internal rehearsals. What blocks the next step is no
 longer engineering: it is counsel-approved consent wording, a procured DNC
@@ -215,7 +224,12 @@ These require authority or services not available from repository code alone:
 - live Twilio/OpenAI/Google sandbox integration evidence, including provider
   retry, duplicate, timeout, webhook signature, and teardown tests;
 - a staffed human-handoff owner and response-time commitment;
-- approved daily/monthly/per-connected-call budgets and cost alerts.
+- approved daily/monthly/per-connected-call budgets and cost alerts;
+- authorized spend for a live-model conversational evaluation
+  ([OUTBOUND_LAUNCH_AUTHORIZATION.md](./OUTBOUND_LAUNCH_AUTHORIZATION.md) §10);
+- a read-only GoHighLevel Private Integration (`GHL_CONTACTS_READ_TOKEN`),
+  without which the eligibility audit can measure Firestore records but not the
+  CRM contact book.
 
 Until these are closed, the correct campaign state is paused.
 
@@ -268,15 +282,26 @@ without competing with the main action.
    including a disposable admin and a runtime assertion that the deployed
    functions still refuse carrier dialing. No production credential is used.
    Rollback has **not** been rehearsed yet.
-4. Deploy rules and indexes first; wait for index readiness.
-5. Deploy functions and Realtime sideband with production secrets.
-6. Seed seller profiles/knowledge using dry-run output, then verify the exact
+4. **Run `npm run preflight:production` and read what it prints.**
+   `functions/.env.bitesites-org` is untracked, so its contents never appear in
+   a diff, a review, or a CI run — and on 2026-08-25 it was found holding
+   `OUTBOUND_EXTERNAL_DIALING=enabled`. The deployed production runtime predates
+   the parameter, so nothing was live, but the next Functions deploy from that
+   machine would have admitted carrier dialing without anyone deciding to. The
+   preflight exits non-zero when a parameter is open without the matching
+   authorization from
+   [OUTBOUND_LAUNCH_AUTHORIZATION.md](./OUTBOUND_LAUNCH_AUTHORIZATION.md).
+5. Deploy rules and indexes first; wait for index readiness.
+6. Deploy functions and Realtime sideband with production secrets.
+7. Seed seller profiles/knowledge using dry-run output, then verify the exact
    production documents.
-7. Keep all campaigns paused and recording disabled.
-8. Run read-only preflight and provider health checks.
-9. Run the 10-call internal-consent cohort.
-10. Close legal, DNC, carrier, calendar, handoff, and budget blockers.
-11. Obtain explicit owner authorization for the 25/day external canary.
+8. Keep all campaigns paused and recording disabled.
+9. Run read-only preflight and provider health checks.
+10. Run the 10-call internal-consent cohort.
+11. Close legal, DNC, carrier, calendar, handoff, and budget blockers.
+12. Obtain explicit owner authorization for the 25/day external canary.
 
 The owner-facing decision record is in
-[OUTBOUND_LAUNCH_AUTHORIZATION.md](./OUTBOUND_LAUNCH_AUTHORIZATION.md).
+[OUTBOUND_LAUNCH_AUTHORIZATION.md](./OUTBOUND_LAUNCH_AUTHORIZATION.md),
+and the one-page version of where we actually are is
+[OUTBOUND_OWNER_CHECKLIST.md](./OUTBOUND_OWNER_CHECKLIST.md).

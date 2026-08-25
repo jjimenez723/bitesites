@@ -75,7 +75,7 @@
     "test:sideband-warmup": "node --test functions/hybrid-sideband-warmup.test.mjs",
     "test:crm": "node --test functions/flg-crm.test.mjs functions/flg-commission-sync.test.mjs src/admin/crm-calculations.test.mjs",
     "test:inbound": "firebase emulators:exec --only firestore --project demo-bitesites \"node functions/inbound-compliance.test.mjs\"",
-    "test:staging-infra": "node --test functions/deployment-environment.test.mjs scripts/staging.test.mjs",
+    "test:staging-infra": "node --test functions/deployment-environment.test.mjs scripts/staging.test.mjs scripts/production-preflight.test.mjs",
     "test:staging-gate": "firebase emulators:exec --only firestore --project demo-bitesites \"node functions/outbound-environment-gate.test.mjs\"",
     "test:twilio": "node --test functions/twilio-compliance.test.mjs functions/hybrid-twilio-signature.test.mjs",
     "test:handoff": "firebase emulators:exec --only firestore --project demo-bitesites \"node functions/handoff-failsafe.test.mjs\"",
@@ -85,7 +85,8 @@
     "test:ghl-contacts": "node --test functions/providers/lead-sources/gohighlevel-contacts.test.mjs",
     "test:eligibility-audit": "firebase emulators:exec --only firestore --project demo-bitesites \"node functions/outbound-eligibility-audit.test.mjs\"",
     "test:conversation-adapter": "node --test scripts/conversation-eval-model-adapter.test.mjs",
-    "preflight:conversation-evals": "node scripts/evaluate-conversations.mjs --preflight"
+    "preflight:conversation-evals": "node scripts/evaluate-conversations.mjs --preflight",
+    "preflight:production": "node scripts/production-preflight.mjs"
   },
   "dependencies": {
     "@twilio/voice-sdk": "2.18.3",

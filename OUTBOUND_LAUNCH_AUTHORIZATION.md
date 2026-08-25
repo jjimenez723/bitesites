@@ -9,6 +9,8 @@ changing outbound behavior updates both in the same commit — see
 [CLAUDE.md](./CLAUDE.md) for the documentation and work-claiming conventions.
 It does not authorize external dialing by itself. The production campaign must
 remain paused until every external-canary gate is evidenced and signed off.
+The one-page summary of which stage we are on is
+[OUTBOUND_OWNER_CHECKLIST.md](./OUTBOUND_OWNER_CHECKLIST.md).
 
 ## Owner decisions recorded
 

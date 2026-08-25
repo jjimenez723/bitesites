@@ -31,20 +31,26 @@ or production secret has been copied into it — the 23 secrets that exist are
 inert placeholders, so a staging function that reaches a vendor fails
 authentication rather than acting.
 
-Verify the deployment rather than trusting it:
+Verify the deployment rather than trusting it — see **Deployed state** below
+for the commands and what each one actually proves.
 
-```bash
-npm run smoke:staging                 # anonymous probes: deployed, and guarded
-npm run smoke:staging -- --with-admin # also a disposable admin and one real call
-```
-
-Two traps worth knowing before the next deploy:
+Three traps worth knowing before the next deploy:
 
 - **Every `defineString` parameter needs a value in the dotenv file for a
-  non-interactive deploy, even one with a default.** `PAID_PHONE_SCREENING` is
-  set in the staging dotenv but is **not** in `functions/.env.bitesites-org`, so
-  the next production deploy will fail until `PAID_PHONE_SCREENING=disabled` is
-  added there.
+  non-interactive deploy, even one with a default.** Adding
+  `PAID_PHONE_SCREENING` broke the staging deploy until it was written into
+  `functions/.env.bitesites-outbound-staging`. It has since been added to
+  `functions/.env.bitesites-org` as well, so the production dotenv no longer
+  fails on it.
+- **A production deploy switches on whatever that dotenv says, and nobody
+  reviews it.** `functions/.env.bitesites-org` is untracked and local: it never
+  appears in a diff, in CI, or in a pull request, and on 2026-08-25 it was
+  found holding `OUTBOUND_EXTERNAL_DIALING=enabled` — the flag every readiness
+  document describes as disabled. The deployed production runtime predates the
+  parameter, so the documents were true about production and false about the
+  file that would replace it. Run `npm run preflight:production` before any
+  production Functions deploy; it prints the three policy parameters and exits
+  non-zero when one of them is open without its matching authorization.
 - **A Firebase deploy can exit non-zero after succeeding.** The Artifact
   Registry cleanup-policy step runs last, and its failure aborts the run after
   Functions deployed but before Hosting released. Read the log, not the exit
@@ -89,11 +95,10 @@ runtime gate above.
 
 ## Deployed state
 
-Staging is deployed: Firestore rules and indexes, 120+ Functions, and Hosting at
-<https://bitesites-outbound-staging.web.app>. Billing is linked; the project has
-its own inert placeholder secrets and no production credential.
-
-Verify it with the smoke test rather than by reading a deploy log:
+Rules, indexes, 120+ Functions and Hosting are live at
+<https://bitesites-outbound-staging.web.app>. Verify that with the smoke test
+rather than by reading a deploy log — a green deploy log describes what was
+uploaded, not what answers:
 
 ```bash
 npm run smoke:staging                 # anonymous probes, no writes
@@ -130,22 +135,22 @@ curl -X PATCH "https://identitytoolkit.googleapis.com/v2/projects/bitesites-outb
 The `X-Goog-User-Project` header is required: local ADC has no quota project and
 the API refuses the call without it.
 
-### A deploy trap worth knowing
-
-Firebase's non-interactive deploy demands a value for **every** `defineString`
-parameter, including ones with a default. Adding `PAID_PHONE_SCREENING` broke
-the staging deploy until it was written into
-`functions/.env.bitesites-outbound-staging`. The production dotenv
-(`functions/.env.bitesites-org`) needs the same key —
-`PAID_PHONE_SCREENING=disabled` — before the next production deploy, or it will
-fail the same way.
-
 ## Decisions still required
 
-- Authorize a billing account for the dedicated staging project so Gen-2
-  Functions can be packaged and deployed.
-- Choose whether stage needs a separate, non-production Twilio subaccount. Do
-  not copy production credentials into staging.
-- Choose calendar test identities/calendars and named internal test callers.
-- Approve a staging deployment. This repository change has not deployed,
-  provisioned, called, or unpaused anything.
+Billing and the staging deployment were both **granted and completed on
+2026-08-24** and are no longer open questions — see
+[OUTBOUND_LAUNCH_AUTHORIZATION.md](./OUTBOUND_LAUNCH_AUTHORIZATION.md) §1 and
+§2. What remains open about staging specifically:
+
+- **Rollback has never been rehearsed.** The deploy has been done; undoing it
+  has not. Nothing is known about how long it takes or what breaks halfway.
+- Whether staging needs a separate, non-production Twilio subaccount. Do not
+  copy production credentials into staging; the 23 secrets there are inert
+  placeholders and a staging function that reaches a vendor should fail
+  authentication rather than act.
+- Which calendars and test identities staging books against, and which named
+  internal callers may take part in a rehearsal.
+
+Approving any of these does **not** approve a production deploy, an external
+call, or unpausing a campaign. Those are separate decisions and are recorded
+separately.
