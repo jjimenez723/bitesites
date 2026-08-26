@@ -6,7 +6,9 @@
       "Bash(npm run deploy)",
       "Bash(npm run deploy:hosting)",
       "Bash(npm run deploy:rules)",
-      "Bash(npm run deploy:firestore)"
+      "Bash(npm run deploy:firestore)",
+      "Bash(npm run deploy:functions)"
+
     ]
   }
 }

@@ -11,6 +11,7 @@ import { useLeads, setLeadStatus, saveLeadCommercial, loadLeadActivities, toDate
 import { Panel, DetailRows, Pill } from './Panel';
 import Transcript from './Transcript';
 import { receivingAgent, receivingAgentLabel } from './voice-attribution';
+import { activateRow } from './row-activate';
 
 const STATUSES = ['new', 'contacted', 'qualified', 'booked', 'proposal', 'won', 'lost'];
 const firstWord = value => String(value || '').trim().split(/\s+/)[0] || '';
@@ -395,7 +396,7 @@ export default function Leads() {
                     <tr
                       key={lead.id}
                       className={`clickable ${openId === lead.id ? 'selected' : ''}`}
-                      onClick={() => openLead(lead.id)}
+                      {...activateRow(() => openLead(lead.id))}
                     >
                       <td>
                         <div className="cell-strong">{lead.name}</div>

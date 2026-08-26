@@ -30,3 +30,6 @@ serviceAccountKey*.json
 *.mov
 /*.mp4
 /New Portfolio Clios/
+
+# Resume cursor for scripts/backfill-phone-intelligence.mjs — machine-local run state.
+.cache/

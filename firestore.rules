@@ -596,6 +596,17 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Public numbering data, cached per NPA-NXX. It belongs to nobody and
+    // carries no account scope, so any signed-in outbound user may read it —
+    // it is the same data anyone can query from the public source. Writes are
+    // server-only because a browser that could edit a block record could
+    // relabel a mobile as a landline, and the line-type triage on the queue
+    // would quietly start lying. It is triage, never screening evidence.
+    match /numberingExchanges/{exchangeId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
     match /leadResearch/{contactKey} {
       // Read-only in the browser. Approval goes through approveLeadResearch,
       // which is what keeps `verifiedFacts` and `sources` unforgeable — an

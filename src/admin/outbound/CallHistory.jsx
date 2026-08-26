@@ -13,6 +13,7 @@ import Transcript from '../Transcript';
 import { StatusPill, formatWhen, formatDuration, providerLabel, Empty, QueryState } from './SourceBadge';
 import { receivingAgent, receivingAgentLabel } from '../voice-attribution';
 import { ACCOUNTS } from '../../../functions/accounts.js';
+import { activateRow } from '../row-activate';
 
 const MODE_LABELS = {
   human: 'Human only', hybrid: 'Hybrid', ai: 'AI only',
@@ -102,7 +103,7 @@ export default function CallHistory({ campaignId, campaigns = [], onSelectCampai
               </thead>
               <tbody>
                 {rows.map(row => (
-                  <tr key={row.id} className={`clickable ${openId === row.id ? 'selected' : ''}`} onClick={() => openCall(row.id)}>
+                  <tr key={row.id} className={`clickable ${openId === row.id ? 'selected' : ''}`} {...activateRow(() => openCall(row.id))}>
                     <td className="cell-strong">{formatWhen(row.startedAt)}</td>
                     <td className="cell-dim cell-wrap">{(row.prospectId || row.leadId || row.targetId || '').slice(0, 24)}</td>
                     <td className="cell-dim cell-wrap">{receivingAgentLabel(row)}</td>

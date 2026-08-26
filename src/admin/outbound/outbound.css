@@ -64,7 +64,7 @@
 }
 .bs-admin .outbound-subnav button:hover { color: var(--ink-2); }
 .bs-admin .outbound-subnav button[aria-current='page'] { background: var(--surface-3); color: var(--ink); }
-.bs-admin .outbound-subnav button:focus-visible { outline: 2px solid var(--brand-violet); outline-offset: 1px; }
+.bs-admin .outbound-subnav button:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 .bs-admin .outbound-subnav .outbound-subnav-count {
   margin-left: 6px; font-size: 10.5px; color: var(--ink-3);
   font-variant-numeric: tabular-nums;
@@ -98,7 +98,7 @@
 .bs-admin .outbound-form-grid input:focus,
 .bs-admin .outbound-form-grid select:focus,
 .bs-admin .outbound-form-grid textarea:focus {
-  outline: none; border-color: var(--brand-violet); box-shadow: 0 0 0 3px rgba(124, 58, 237, .12);
+  outline: 2px solid var(--focus); outline-offset: 1px; border-color: transparent;
 }
 .bs-admin .outbound-form-grid .checkbox-row {
   flex-direction: row; align-items: center; gap: 9px;
@@ -134,7 +134,7 @@
 .bs-admin .pill.do_not_contact,
 .bs-admin .pill.invalid,
 .bs-admin .pill.invalid_number,
-.bs-admin .pill.cancelled { color: var(--critical); border-color: rgba(208, 59, 59, .35); }
+.bs-admin .pill.cancelled { color: var(--critical-ink); border-color: rgba(208, 59, 59, .35); }
 .bs-admin .pill.confirmed { color: var(--serious); border-color: rgba(236, 131, 90, .35); }
 .bs-admin .pill.unique { color: var(--ink-3); }
 
@@ -335,7 +335,7 @@
 }
 .bs-admin .cal-viewswitch button:hover { color: var(--ink-2); }
 .bs-admin .cal-viewswitch button[aria-pressed='true'] { background: var(--surface-3); color: var(--ink); }
-.bs-admin .cal-viewswitch button:focus-visible { outline: 2px solid var(--brand-violet); outline-offset: 1px; }
+.bs-admin .cal-viewswitch button:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 
 /* -------------------------------------------------------------- range bar */
 
@@ -427,7 +427,7 @@
   background: var(--surface-2); transform: translateY(-1px);
   box-shadow: 0 6px 18px rgba(0, 0, 0, .35); z-index: 4;
 }
-.bs-admin .cal-grid-event:focus-visible { outline: 2px solid var(--brand-violet); outline-offset: 1px; }
+.bs-admin .cal-grid-event:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 .bs-admin .cal-grid-event-time {
   color: var(--ink); font-size: 10.5px; font-weight: 700;
   font-variant-numeric: tabular-nums; line-height: 1.2;
@@ -490,7 +490,7 @@
   overflow: hidden; white-space: nowrap;
 }
 .bs-admin .cal-chip:hover { background: var(--surface-3); color: var(--ink); }
-.bs-admin .cal-chip:focus-visible { outline: 2px solid var(--brand-violet); outline-offset: 1px; }
+.bs-admin .cal-chip:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 .bs-admin .cal-chip-time { font-variant-numeric: tabular-nums; font-weight: 650; flex: 0 0 auto; }
 .bs-admin .cal-chip-who { overflow: hidden; text-overflow: ellipsis; }
 .bs-admin .cal-chip-src { margin-left: auto; color: var(--ink-3); font-size: 9px; font-weight: 700; }
@@ -574,7 +574,7 @@
   border-radius: 8px; color: var(--ink); padding: 8px 10px; font-size: 13px;
 }
 .bs-admin .cal-booking input:focus, .bs-admin .cal-booking select:focus {
-  outline: 2px solid var(--brand-violet); outline-offset: 1px;
+  outline: 2px solid var(--focus); outline-offset: 1px;
 }
 .bs-admin .cal-booking button[type='submit'] { align-self: flex-start; }
 
@@ -592,7 +592,7 @@
   background: var(--surface-2); border: 1px solid var(--line-strong);
   border-radius: 8px; color: var(--ink); padding: 8px 10px; font-size: 13px;
 }
-.bs-admin .cal-settings-body input:focus { outline: 2px solid var(--brand-violet); outline-offset: 1px; }
+.bs-admin .cal-settings-body input:focus { outline: 2px solid var(--focus); outline-offset: 1px; }
 .bs-admin .cal-settings-body .full { grid-column: 1 / -1; }
 
 .bs-admin .cal-hours { display: flex; flex-direction: column; gap: 6px; }

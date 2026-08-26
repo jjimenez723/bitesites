@@ -54,6 +54,7 @@ import {
   RESEARCH_EVIDENCE_POLICY_VERSION
 } from './lead-enrichment.js';
 import { loadContactForTarget } from './outbound-contacts.js';
+import { backfillPhoneIntel } from './phone-intelligence.js';
 import { clean } from './prospect-normalization.js';
 import { hybridOutboundEventsUrl } from './hybrid-urls.js';
 import {
@@ -1009,6 +1010,22 @@ export const outboundNightlyMaintenance = onSchedule(
 
     const expiredGrants = await expireDueConsentGrants(db, { limit: 500 });
 
-    console.log(`[outbound] nightly: pruned ${pruned} raw results, expired ${expiredGrants.expired} grants, recounted ${campaigns.size} campaigns`);
+    // Line-type triage for anything imported since the last run. Deliberately
+    // small: this calls a non-commercial third party, the throttle means a
+    // batch of 120 can take three minutes on its own, and the job shares a
+    // 540-second budget with everything above. New prospects arrive in the
+    // dozens, not the thousands, so a nightly trickle keeps up — and the
+    // 12,695-row initial corpus is the backfill script's job, not this one.
+    //
+    // Failure here must never take the rest of nightly maintenance with it: an
+    // unreachable numbering mirror is a missing triage field, not an incident.
+    const phoneIntel = await backfillPhoneIntel(db, { limit: 120, throttleMs: 1500 })
+      .catch(error => ({ updated: 0, errors: 1, reason: String(error?.message || error).slice(0, 200) }));
+
+    console.log(
+      `[outbound] nightly: pruned ${pruned} raw results, expired ${expiredGrants.expired} grants, `
+      + `recounted ${campaigns.size} campaigns, enriched ${phoneIntel.updated} phone records`
+      + `${phoneIntel.reason ? ` (phone intel failed: ${phoneIntel.reason})` : ''}`
+    );
   }
 );

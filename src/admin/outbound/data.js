@@ -392,6 +392,14 @@ export const outbound = {
   issueConsentGrant: candidateId => callable('issueConsentGrantCall', { candidateId }),
   revokeConsentGrant: (grantId, reason) => callable('revokeConsentGrantCall', { grantId, reason }),
 
+  // Pre-dial screening. The callable has existed since the ingestion path was
+  // built; nothing in the console could reach it, so the evidence the dial gate
+  // demands had no way of coming into existence outside a test. One number at a
+  // time and never a list, matching the server: a bulk sweep over a lead list is
+  // the shape of an accidental five-figure vendor bill.
+  screeningProviders: () => callable('listScreeningProviders'),
+  ingestPreDialScreening: payload => callable('ingestPreDialScreeningCall', payload),
+
   // Legacy dialer actions retained for compatibility and emulator rehearsal.
   startPowerSession: campaignId => callable('startPowerDialerSession', { campaignId }),
   startParallelSession: (campaignId, concurrency) =>

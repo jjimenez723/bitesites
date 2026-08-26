@@ -40,3 +40,16 @@ export function screeningProviderIsPaid(providerId) {
   const Provider = REGISTRY.get(String(providerId || '').trim().toLowerCase());
   return Provider ? Provider.capabilities?.paidLookup === true : true;
 }
+
+/**
+ * Does this provider get its answers from an outside authority?
+ *
+ * The second half of the admission decision, and the one that keeps simulated
+ * evidence out of the production ledger. Unknown providers read as false for
+ * the same reason unknown providers read as paid: the unsafe answer is the one
+ * that must require a positive declaration.
+ */
+export function screeningProviderVerifies(providerId) {
+  const Provider = REGISTRY.get(String(providerId || '').trim().toLowerCase());
+  return Provider ? Provider.capabilities?.verifiesExternally === true : false;
+}

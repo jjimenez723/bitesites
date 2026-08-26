@@ -40,6 +40,16 @@ export class ScreeningProviderAdapter {
    * `paidLookup` is separate from the rest and is the flag the admission gate
    * reads: a provider may be perfectly capable and still be refused because
    * nobody has authorised the spend.
+   *
+   * `verifiesExternally` is the second admission flag and answers a different
+   * question: does this provider ask an outside authority, or does it compute
+   * an answer locally?  The other capability flags describe *which* questions a
+   * provider answers; this one describes whether the answers are real.  A
+   * simulated `reassignedNumber: true` and a Twilio-verified one produce byte
+   * -identical ledger evidence, so without this flag the only thing separating
+   * fabricated compliance evidence from genuine evidence in production is which
+   * string an operator picked in a dropdown.  Defaults to false, so a provider
+   * added later is refused in production until it says otherwise.
    */
   static capabilities = {
     nationalDnc: false,
@@ -47,7 +57,8 @@ export class ScreeningProviderAdapter {
     reassignedNumber: false,
     phoneValidation: false,
     lineType: false,
-    paidLookup: false
+    paidLookup: false,
+    verifiesExternally: false
   };
 
   constructor(config = {}) {

@@ -14,6 +14,7 @@ import { useNeedsReview, useReviewQueue, useImportRuns, outbound, useAction } fr
 import { SourceBadge, StatusPill, formatWhen, formatPhone, Empty, QueryState } from './SourceBadge';
 // The server's registry, imported rather than mirrored — see CampaignBuilder.
 import { ACCOUNTS, ACCOUNT_IDS } from '../../../functions/accounts.js';
+import { activateRow } from '../row-activate';
 
 function CsvImport({ onImported }) {
   const [preview, setPreview] = useState(null);
@@ -153,7 +154,7 @@ function ReviewTable({ title, description, query, onOpen }) {
             </thead>
             <tbody>
               {rows.map(row => (
-                <tr key={row.id} className="clickable" onClick={() => onOpen?.(row.id)}>
+                <tr key={row.id} className="clickable" {...activateRow(() => onOpen?.(row.id))}>
                   <td className="cell-strong cell-wrap">{row.companyName || row.name || '(no name)'}</td>
                   <td className="cell-dim">{formatPhone(row.phoneE164)}</td>
                   <td className="cell-dim cell-wrap">

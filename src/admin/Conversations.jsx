@@ -13,6 +13,7 @@ import { useConversations, toDate } from './data';
 import { Panel, DetailRows, Pill } from './Panel';
 import Transcript from './Transcript';
 import { receivingAgent, receivingAgentLabel } from './voice-attribution';
+import { activateRow } from './row-activate';
 
 const TABS = [
   { key: 'chats', label: 'Bit · chat', sub: 'messages', agent: 'Bit' },
@@ -136,7 +137,7 @@ export default function Conversations() {
                     <tr
                       key={row.id}
                       className={`clickable ${openId === row.id ? 'selected' : ''}`}
-                      onClick={() => setOpenId(row.id)}
+                      {...activateRow(() => setOpenId(row.id))}
                     >
                       <td className="cell-strong">{when(row.startedAt)}</td>
                       {isVoice && (

@@ -1,14 +1,15 @@
 # Outbound AI launch authorization record
 
-Last updated: 2026-08-24
+Last updated: 2026-08-25
 
 This document separates business decisions already supplied by the owner from
 permissions that still require an explicit decision or an outside authority.
 It is only trustworthy if the readiness plan feeding it is current, so an agent
 changing outbound behavior updates both in the same commit — see
 [CLAUDE.md](./CLAUDE.md) for the documentation and work-claiming conventions.
-It does not authorize external dialing by itself. The production campaign must
-remain paused until every external-canary gate is evidenced and signed off.
+It does not authorize external dialing by itself. As of 2026-08-25 one campaign
+dials under §11 with **human reps only**; no campaign may carry an artificial
+voice until the external-canary gates are evidenced and signed off.
 The one-page summary of which stage we are on is
 [OUTBOUND_OWNER_CHECKLIST.md](./OUTBOUND_OWNER_CHECKLIST.md).
 
@@ -41,15 +42,31 @@ state, or legal reliance.
    production deploy was included, and none has happened. Twenty-three secrets
    exist in staging as inert placeholders; no production credential was copied
    into it.
-3. **Paid screening — still required.** Authorize paid Twilio Lookup line-type
-   and reassigned-number checks, plus procurement/enrollment for National and
-   applicable state DNC scrubbing.
+3. **Paid screening — still required, and now on the critical path.** Authorize
+   paid Twilio Lookup line-type and reassigned-number checks, plus
+   procurement/enrollment for National and applicable state DNC scrubbing.
 
    The ingestion path is built and ships **admission-denied**. The Twilio
    Lookup provider is registered but refused until `PAID_PHONE_SCREENING=enabled`
    *and* the deployment reports production — neither alone can start spending —
    and the default provider is a mock that contacts nobody. Granting this
    authorization means setting that flag on a production deploy.
+
+   **This is no longer deferrable past the internal rehearsal.** As of
+   2026-08-25 a provider that does not query an outside authority cannot write
+   screening evidence in production, and Twilio Lookup is the only registered
+   provider that does. Previously the mock could write production evidence that
+   the dial gate accepted — see the defect record in
+   `OUTBOUND_PRODUCTION_READINESS.md`. So the ordering is now: no §3, no
+   screening evidence, no calls at all — including the ten internal ones.
+
+   **Cost, so the decision is about the right number.** At ten-number rehearsal
+   scale Twilio Lookup is cents. National DNC access is **free for the first
+   five area codes** (confirmed 2026-08-25 against the FTC's FY2026 fee
+   schedule); beyond that it is $82 per area code per year, capped at $22,626
+   for all of them. The rehearsal cohort will almost certainly fit inside the
+   free tier, so what §3 actually authorizes today is an enrollment and a
+   sub-dollar vendor spend.
 
    National and state DNC have no vendor in this repository at all. No code can
    substitute for an enrolled service: the ingestion path refuses to write
@@ -61,9 +78,27 @@ state, or legal reliance.
    process, calling windows, cadence, consent retention/revocation, voicemail,
    and the unrecorded posture. Watcher and Byte-Dialer rows are not evidence of
    consent and remain ineligible.
+
+   **A draft now exists to review rather than a blank page.**
+   [AI_VOICE_CONSENT_v1.md](./AI_VOICE_CONSENT_v1.md) carries the disclosure
+   wording in three seller-specific versions, written against the federal
+   framework as it stands in August 2026, plus the mapping from a signature to a
+   ledger entry. It is explicitly **not counsel-approved** and lists what it
+   cannot decide. Nothing in it should reach a stranger before §4 is granted.
 5. **Internal rehearsal cohort:** identify the exact internal numbers and
    participants who will give written, seller-specific AI/artificial-voice
    consent for the first ten calls. This is the first allowed carrier cohort.
+
+   Granting this means setting `OUTBOUND_EXTERNAL_DIALING=enabled` and supplying
+   `OUTBOUND_CANARY_AUTHORIZATION=authorized` at deploy time — the variable is
+   named for the canary but the rehearsal opens the same gate, and the deploy
+   notes have to record which of the two was actually granted. The step-by-step
+   is [OUTBOUND_FIRST_CALL_RUNBOOK.md](./OUTBOUND_FIRST_CALL_RUNBOOK.md). The
+   flag was found set to `enabled` with no authorization on 2026-08-25, was
+   returned to `disabled`, and is `enabled` again under §11 — which is a
+   *different* grant and does not authorize this one. §5 remains **not
+   granted**: no AI voice may call anyone, and the consent and screening gates
+   refuse it independently of the flag.
 6. **Seller calendars:** approve each seller's Google calendar/host, timezone,
    hours, buffers, lead time, booking horizon, location, cancellation rules,
    and handoff contact. Every one of these is now a stored, normalized field
@@ -103,6 +138,43 @@ state, or legal reliance.
     production speech is realtime audio, so a green run is necessary evidence
     for the conversational gate and not sufficient evidence about the deployed
     call path.
+
+11. ~~**Human-only carrier dialing.**~~ **Granted 2026-08-25.** The owner
+    authorized reps dialing the prospect queue themselves, through the browser
+    dialer, with no artificial voice on the line. Recorded consequences:
+
+    - `OUTBOUND_EXTERNAL_DIALING=enabled` in `functions/.env.bitesites-org`, and
+      `OUTBOUND_CANARY_AUTHORIZATION=authorized` must be supplied at deploy time
+      with the deploy notes naming **§11**.
+    - Campaign `local-business-website-growth-aug-2026` moves to `running`
+      (500 targets, Twilio, caller ID `+12012989723`, which the Twilio account
+      owns).
+    - Sessions run in `operatingMode: 'human'`. That mode sets `automatedVoice`
+      false in `dialNext`, so AI-voice consent and paid pre-dial screening are
+      not evaluated — correctly, because no AI is on the call.
+
+    **What this grant does not cover, stated plainly because the flag it sets is
+    the same flag §5 and §9 need.** It does not authorize an AI voice, a hybrid
+    session, an AI takeover of a live call, or unpausing any other campaign. Those
+    remain blocked by §5/§9 *and* by the per-number consent and screening gates,
+    which hold independently — there are zero `consentGrants` and zero
+    `preDialScreenings` in production.
+
+    **The compliance surface this leaves.** Human mode does not consult national
+    DNC (that check is reached only under `automatedVoice`). The internal
+    suppression ledger is the only automatic stop, so a rep marking a refusal as
+    do-not-call is the mechanism that keeps the list honest. Federal DNC registry
+    rules largely exempt calls to business lines, which is what this queue is —
+    Watcher-sourced SMB prospects.
+
+    **How many of them are actually mobiles is now measurable.** As of
+    2026-08-26 `functions/phone-intelligence.js` stores a `phoneIntel.lineType`
+    on every contact, derived from public NANPA numbering data. A 40-record
+    production sample came back 40% landline, 30% VoIP/CLEC, 18% wireless. That
+    is triage, not evidence — it cannot see number portability, and
+    `evidenceGrade` is the constant `triage` precisely so it can never be
+    mistaken for the pre-dial screening §3 buys. Use it to sort and to size the
+    risk; do not use it to clear a number.
 
 ## Promotion evidence
 

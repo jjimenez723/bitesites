@@ -28,7 +28,10 @@ export class TwilioLookupScreeningProvider extends ScreeningProviderAdapter {
     reassignedNumber: true,
     phoneValidation: true,
     lineType: true,
-    paidLookup: true
+    paidLookup: true,
+    // Answers come from Twilio, not from this process, so this provider may
+    // write evidence in production once the spend in §3 is authorised.
+    verifiesExternally: true
   };
 
   async screen({ phoneE164, consentGrantedAt, fetchImpl, timeoutMs } = {}) {

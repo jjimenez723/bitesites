@@ -240,7 +240,67 @@ GoHighLevel contact → the company's own website → an approved external provi
 **No external enrichment provider is integrated.** §27 forbids integrating one
 without verifying its current API and terms, and none was verified here. Apollo,
 People Data Labs, Clay, Exa and Tavily are all candidates; each needs its terms
-read before it is wired in.
+read before it is wired in. That still holds for the fields those vendors sell —
+**email is missing on 87% of the corpus and a contact name on 96%**, and there
+is no free public source for either. Do not let the section below suggest
+otherwise.
+
+### Phone line type (`functions/phone-intelligence.js`)
+
+What a number's block of numbers was *assigned* for — wireless, landline, or
+CLEC/VoIP — from public NANPA numbering data. Free, no key, no account.
+
+It fills `phoneIntel` on `prospects` and `leads`:
+
+```
+lineType: 'wireless' | 'landline' | 'voip_or_clec' | ''
+carrier, ocn, rateCenter, region, lata, exchangeId, block
+evidenceGrade: 'triage'      // a constant — see below
+portabilityChecked: false
+```
+
+**It is triage and it is not screening evidence.** It cannot see number
+portability, so a number it calls `landline` may be ringing in a pocket. It is
+not a DNC check, not a reassignment check, not a validity check. `evidenceGrade`
+is a hard-coded constant rather than a parameter, nothing in the module writes
+to `preDialScreenings` or `consentGrants`, and a test asserts that negative —
+because this repository has already shipped one defect where a provider that
+verified nothing wrote production screening evidence the dial gate accepted.
+Twilio Lookup is still the only registered provider that can answer the
+compliance questions, and it still costs money on purpose.
+
+**Keyed per thousands-block, not per exchange.** Pooling splits one NPA-NXX into
+ten 1,000-number blocks that can belong to different carriers of different
+types. Verified on 2026-08-26, `201-552` blocks 0/1/8 are wireless while blocks
+2–7 are CLEC. One request returns every block, so the block key costs nothing
+and is the difference between right and wrong.
+
+**Running it.** Dry run is the default and writes nothing to contact documents:
+
+```bash
+npm run backfill:phone-intel -- --dry-run --limit 200
+npm run backfill:phone-intel -- --execute            # the whole corpus
+npm run backfill:phone-intel -- --execute --resume   # after an interruption
+```
+
+New contacts are picked up automatically by `outboundNightlyMaintenance`, which
+enriches up to 120 per night. That keeps pace with normal import volume; the
+existing 12,695-row corpus is the script's job, not the nightly job's.
+
+**About the upstream server, which matters.** The data comes from
+`localcallingguide.com`, a **non-commercial project run by an individual** that
+disclaims commercial use and guarantees nothing. `robots.txt` (checked
+2026-08-26) disallows only `/cgi-bin/`, which this endpoint is not under. So the
+module caches every exchange for 180 days, throttles live requests to one per
+1.5s, and only ever asks about an exchange it has never seen — the corpus has
+12,075 numbers but only 5,683 distinct exchanges, and the cache is that
+difference. **Do not remove the throttle or the cache.**
+
+If this becomes a routine bulk dependency, stop using the mirror: pull the
+authoritative NANPA CO Code / Thousands-Block reports and feed them through
+`ingestExchangeRecords`, which writes the same shape with a source of
+`nanpa_bulk`. One file download beats thousands of requests against a
+volunteer's server, and it is better data as well.
 
 What the website pass does verify, ported from the Watcher pipeline's
 `_fingerprint.py`: the site builder (and whether it is a DIY one, meaning no

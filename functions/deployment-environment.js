@@ -79,26 +79,54 @@ export const PAID_PHONE_SCREENING = defineString(
 );
 
 /**
- * Admission for a screening provider that bills per lookup.
+ * Admission for a screening provider, on two independent questions.
  *
- * Separate from `externalDialingAdmission` because the two authorizations are
- * genuinely separate: OUTBOUND_LAUNCH_AUTHORIZATION.md §3 (paid Twilio Lookup
- * and DNC scrubbing) has not been granted even though §1 and §2 have. A build
- * that treated "we may deploy" as "we may spend" would bill the owner for a
- * decision they never made.
+ * **Does it cost money?** Separate from `externalDialingAdmission` because the
+ * two authorizations are genuinely separate: OUTBOUND_LAUNCH_AUTHORIZATION.md
+ * §3 (paid Twilio Lookup and DNC scrubbing) has not been granted even though §1
+ * and §2 have. A build that treated "we may deploy" as "we may spend" would
+ * bill the owner for a decision they never made.
  *
- * Free providers are admitted anywhere. The mock cannot clear a number for a
- * real call regardless, because carrier dialing has its own gate.
+ * **Are its answers real?** Free providers used to be admitted anywhere, on the
+ * reasoning that the mock cannot clear a number for a real call because carrier
+ * dialing has its own gate. That reasoning was wrong, and on 2026-08-25 it was
+ * a live hole. The gates are not layered — they are independent conditions that
+ * are all required, so "another gate is also closed" is not a reason to leave
+ * this one open. `ingestPreDialScreening` writes `status: 'cleared'` documents,
+ * `evaluatePreDialScreening` reads the verdicts inside them and never the
+ * provider that produced them, and the mock derives its verdicts from the last
+ * two digits of the phone number. So in a production project — which is what an
+ * unset `BITESITES_DEPLOYMENT_ENVIRONMENT` resolves to — an admin picking
+ * "mock" in a dropdown could mint screening evidence that satisfies the dial
+ * gate completely, for a number nobody checked. Once external dialing is
+ * enabled for the rehearsal cohort, that is the whole distance between a
+ * dropdown and a stranger's phone.
+ *
+ * A provider that does not ask an outside authority is therefore refused in
+ * production regardless of price, and `verifies` defaults to false so a caller
+ * that forgets to pass it fails closed.
  */
-export function screeningAdmission(providerId, { paid = true, values = null } = {}) {
+export function screeningAdmission(providerId, { paid = true, verifies = false, values = null } = {}) {
   const provider = text(providerId) || 'mock';
+  const environmentPolicy = resolveOutboundDeploymentPolicy(values);
+
+  if (verifies !== true && environmentPolicy.environment === 'production') {
+    return {
+      allowed: false, provider, environment: environmentPolicy.environment,
+      reason: 'non_verifying_provider_in_production', paidScreening: 'not_applicable'
+    };
+  }
+
   if (paid !== true) {
-    return { allowed: true, provider, environment: 'any', reason: 'unpaid_provider', paidScreening: 'not_applicable' };
+    return {
+      allowed: true, provider, environment: environmentPolicy.environment,
+      reason: 'unpaid_provider', paidScreening: 'not_applicable'
+    };
   }
 
   const paidScreening = text(values?.paidScreening
     ?? parameterValue(PAID_PHONE_SCREENING, process.env.PAID_PHONE_SCREENING || 'disabled'));
-  const policy = resolveOutboundDeploymentPolicy(values);
+  const policy = environmentPolicy;
 
   if (policy.environment !== 'production') {
     return {
@@ -119,5 +147,11 @@ export function screeningAdmission(providerId, { paid = true, values = null } = 
 export function screeningBlockReason(providerId, options = {}) {
   const admission = screeningAdmission(providerId, options);
   if (admission.allowed) return '';
-  return `Paid phone screening is disabled (${admission.reason}; environment=${admission.environment}; provider=${admission.provider}).`;
+  // Two refusals with different remedies. Reporting a simulated provider as a
+  // spend problem would send an operator to authorise a budget that would not
+  // have helped.
+  const headline = admission.reason === 'non_verifying_provider_in_production'
+    ? 'This screening provider does not verify anything and cannot write production evidence'
+    : 'Paid phone screening is disabled';
+  return `${headline} (${admission.reason}; environment=${admission.environment}; provider=${admission.provider}).`;
 }

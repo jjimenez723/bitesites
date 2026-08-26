@@ -1,18 +1,19 @@
 # Outbound AI production-readiness plan
 
-Last updated: 2026-08-24
+Last updated: 2026-08-25
 
 ## Decision
 
 External automated lead-list campaigns are **not authorized to launch yet**.
 
-> **Open item, 2026-08-25.** `functions/.env.bitesites-org` — untracked, local,
-> and read by every production Functions deploy — contains
-> `OUTBOUND_EXTERNAL_DIALING=enabled`. Nothing in this repository put it there
-> and no production deploy has carried it, so the deployed runtime is
-> unaffected; but a deploy from that machine would admit carrier dialing
-> without a decision. `npm run preflight:production` now refuses that
-> combination, and setting the value back to `disabled` is an owner action.
+> **Closed 2026-08-25.** `functions/.env.bitesites-org` — untracked, local, and
+> read by every production Functions deploy — contained
+> `OUTBOUND_EXTERNAL_DIALING=enabled`. No production deploy carried it, so the
+> deployed runtime was never affected; but a deploy from that machine would have
+> admitted carrier dialing without a decision. It is now `disabled` and
+> `npm run preflight:production` passes. Re-enabling it for the rehearsal cohort
+> requires the flag *and* `OUTBOUND_CANARY_AUTHORIZATION=authorized` at deploy
+> time — see [OUTBOUND_FIRST_CALL_RUNBOOK.md](./OUTBOUND_FIRST_CALL_RUNBOOK.md).
 
 The backend is deployed to a non-dialing staging project and prepared for
 controlled, consenting internal rehearsals. What blocks the next step is no
@@ -61,6 +62,41 @@ in [CLAUDE.md](./CLAUDE.md):
    decided from it. Keep the split between what is implemented, what is blocked,
    and on whom, explicit and current.
 
+## Defects found in this plan's own controls
+
+A record of gates that were documented as closed and were not. This section is
+short on purpose — if it gets long, the thing to fix is how controls get
+reviewed, not this list.
+
+**2026-08-25 — a simulated screening provider could write production evidence.**
+`screeningAdmission` returned early for any provider that does not bill, before
+it looked at the environment at all. The mock screening provider is free, so it
+was admitted everywhere, including production. It derives its verdicts from the
+last two digits of the phone number, and `evaluatePreDialScreening` reads the
+verdicts rather than the provider that produced them — so a `status: 'cleared'`
+record written by the mock was indistinguishable from a Twilio-verified one and
+satisfied the dial gate completely.
+
+The mock's own header comment asserted that `screeningAdmission` "only accepts
+mock evidence outside production". That was false when it was written, and it is
+the reason this went unnoticed: the comment described the intent and every
+reader took it for the behaviour. The reasoning underneath it — that another
+gate is also closed, so this one need not be — is the specific error. The gates
+are independent conditions that are all required, not layers.
+
+Nothing was exploited: production runs code that predates the parameter and no
+screening record has ever been written outside a test. The fix adds a
+`verifiesExternally` capability, defaulting false so a provider added later is
+refused until it positively declares otherwise, and refuses a non-verifying
+provider in production regardless of price. Proven by
+`npm run test:screening-ingestion`, including through the ingestion path an
+operator would actually use, and including the case where the caller forgets to
+pass the flag at all.
+
+Consequence for the launch plan: §3 (paid screening) is now required *before*
+the internal rehearsal rather than alongside it, because the only provider that
+verifies anything is the paid one.
+
 ## What is implemented
 
 Everything below is deployed to the **staging** project
@@ -85,7 +121,7 @@ predates this workstream, with every campaign paused.
 | Human handoff | A handoff no rep accepts expires 30 seconds after the prospect asks. The deadline is stamped on the call, applied in-band on the AI's next tool call, and swept every minute. On expiry the AI is told to offer a callback and close; a call the AI then abandons is ended rather than left connected to nobody. Recipient list, staffed hours and the on-call roster remain owner decisions. |
 | Circuit breaker | A critical incident pauses the campaign, records an immutable reason and safety-stops live sessions. Resume is refused until an admin resolves every open incident with a stated corrective action, and resolving returns the campaign to *paused* rather than to dialing. Lost AI media control and account-boundary violations trip it. The halt, its reason and the remediation box appear on the campaign itself, and the Resume button reads Halted rather than offering an action the server will refuse. |
 | Operating limits | Every non-mock provider is capped server-side at one live leg, one attempt, a 24-hour minimum retry interval, and a 10-minute call limit, including stale campaign documents. |
-| Pre-dial screening | Carrier-backed AI requires a fresh, seller/number-bound server result for entity and number suppression, line type, and reassigned-number status. Missing, stale, unknown, mismatched, or unavailable evidence fails closed. Evidence now has a way in: a vendor-agnostic provider family (`functions/providers/screening/`) behind an admin callable, defaulting to a mock that contacts nobody. Paid lookups need a second authorization beyond deployment — `PAID_PHONE_SCREENING=enabled` in production — and are refused until §3 is granted. National DNC has no vendor in this repo: a dated snapshot id must be handed in, and is refused rather than defaulted. |
+| Pre-dial screening | Carrier-backed AI requires a fresh, seller/number-bound server result for entity and number suppression, line type, and reassigned-number status. Missing, stale, unknown, mismatched, or unavailable evidence fails closed. Evidence now has a way in: a vendor-agnostic provider family (`functions/providers/screening/`) behind an admin callable, defaulting to a mock that contacts nobody, and reachable from the console at Outbound Calls → AI Consent → Pre-dial screening since 2026-08-25. Admission asks two independent questions. **Does it cost money** — paid lookups need `PAID_PHONE_SCREENING=enabled` in production and are refused until §3 is granted. **Are its answers real** — a provider that computes verdicts locally instead of asking an outside authority is refused in production regardless of price. National DNC has no vendor in this repo: a dated snapshot id must be handed in, and is refused rather than defaulted. |
 | CRM reading | GoHighLevel contacts can be read, and only read. `functions/providers/lead-sources/gohighlevel-contacts.js` uses its own `GHL_CONTACTS_READ_TOKEN` (scoped `contacts.readonly`, separate from the dialer's `GHL_API_TOKEN`), allows exactly one endpoint — `POST /contacts/search` — and throws on every write, tag, opportunity, conversation and workflow-enrolment path. Pagination, page size, record count and timeouts are bounded, a capped read reports itself truncated, and a contact from another location aborts the read rather than being normalised. A CRM field claiming consent survives only as an artifact *reference*; nothing from the CRM can populate a grant. |
 | Eligibility audit | An admin can ask how many records could lawfully be called, without dialling. `functions/outbound-eligibility-audit.js` reuses `evaluateCompliance`, `resolveAIVoiceConsent` and `resolvePreDialScreening` rather than restating them, then adds the gates those cannot see — account alignment, research approval, campaign safety lock, provider capability, deployment admission — and can therefore only ever be stricter than the dial path. It returns aggregate counts, thirteen blocker buckets, and per-record verdicts with masked numbers and stable ids. It writes nothing outward: no dial, no provider request, no enrolment, no grant, no screening, no import; the only write is an optional server-written, account-scoped summary. **The current answer for Watcher and Byte-Dialer records is zero**, and the tests prove auditing them cannot create the grant that would change it. |
 | Provider control | Autonomous GoHighLevel AI is disabled because its external workflow cannot enforce the signed runtime. Hybrid Twilio is the controlled path. |
@@ -287,10 +323,13 @@ without competing with the main action.
    a diff, a review, or a CI run — and on 2026-08-25 it was found holding
    `OUTBOUND_EXTERNAL_DIALING=enabled`. The deployed production runtime predates
    the parameter, so nothing was live, but the next Functions deploy from that
-   machine would have admitted carrier dialing without anyone deciding to. The
-   preflight exits non-zero when a parameter is open without the matching
-   authorization from
-   [OUTBOUND_LAUNCH_AUTHORIZATION.md](./OUTBOUND_LAUNCH_AUTHORIZATION.md).
+   machine would have admitted carrier dialing without anyone deciding to. It
+   has since been set back to `disabled`. The preflight exits non-zero when a
+   parameter is open without the matching authorization from
+   [OUTBOUND_LAUNCH_AUTHORIZATION.md](./OUTBOUND_LAUNCH_AUTHORIZATION.md), and
+   names both authorizations that can open carrier dialing — §5 for the internal
+   rehearsal and §9 for the external canary — because the variable itself cannot
+   tell them apart.
 5. Deploy rules and indexes first; wait for index readiness.
 6. Deploy functions and Realtime sideband with production secrets.
 7. Seed seller profiles/knowledge using dry-run output, then verify the exact

@@ -14,6 +14,7 @@ import {
   agingBuckets, commissionRows, filterOpportunities, forPipeline,
   money, pipelineSummary, sortOpportunities, stageBreakdown
 } from './crm-calculations';
+import { activateRow } from './row-activate';
 
 const STATUS_FILTERS = [
   ['all', 'All statuses'],
@@ -76,7 +77,7 @@ function OpportunityTable({ rows, kind, openId, onOpen }) {
         </thead>
         <tbody>
           {rows.map(row => (
-            <tr key={row.id} className={`clickable ${openId === row.id ? 'selected' : ''}`} onClick={() => onOpen(row.id)}>
+            <tr key={row.id} className={`clickable ${openId === row.id ? 'selected' : ''}`} {...activateRow(() => onOpen(row.id))}>
               <td>
                 <div className="cell-strong">{row.contactName || row.name}</div>
                 <div className="cell-dim">{row.name}</div>

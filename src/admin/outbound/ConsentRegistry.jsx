@@ -1,10 +1,21 @@
-// Admin-only review queue for the server-owned AI voice consent ledger.
-// A candidate is evidence awaiting a named reviewer; only issuing its grant
-// can make a number eligible, and revocation remains visible forever.
+// Admin-only review queue for the server-owned AI voice consent ledger, and the
+// pre-dial screening that has to follow it.
+//
+// A candidate is evidence awaiting a named reviewer; only issuing its grant can
+// make a number eligible, and revocation remains visible forever.
+//
+// Screening lives on this screen rather than beside the dialer for two reasons.
+// It is gated identically — `requireConsentReviewer`, not merely outbound staff
+// — because writing a "cleared" screening record permits an artificial-voice
+// call to a specific number just as directly as issuing the grant does. And it
+// is strictly downstream of a grant: the reassignment answer is only meaningful
+// relative to the date consent was given, and the server compares the two to the
+// day. Selecting a grant rather than retyping a number is what keeps those two
+// dates from drifting apart.
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Panel } from '../Panel';
-import { outbound, useAction, useConsentEvidenceCandidates, useConsentGrants } from './data';
+import { outbound, toDate, useAction, useConsentEvidenceCandidates, useConsentGrants } from './data';
 import { formatPhone, formatWhen } from './SourceBadge';
 
 const SELLERS = [
@@ -26,18 +37,60 @@ const freshForm = () => ({
 
 const display = value => value || '—';
 
+const today = () => new Date().toISOString().slice(0, 10);
+
+const freshScreenForm = () => ({
+  grantId: '', providerId: '', dncSnapshotId: '', dncCheckedAt: today(), dncProvider: ''
+});
+
+/**
+ * The server's refusal codes, in words an operator can act on.
+ *
+ * Every one of these is a correct answer rather than a failure, and they have
+ * genuinely different remedies — authorise a budget, procure a service, pick a
+ * different provider, or stop, because this person asked us not to call. A
+ * single “screening failed” would send someone to fix the wrong thing.
+ */
+const SCREEN_REASONS = {
+  entity_dnc_suppressed:
+    'This number is on our own do-not-call list. That is a stop, not an obstacle — no evidence was written and none should be.',
+  non_verifying_provider_in_production:
+    'That provider computes its answers locally instead of asking anyone, so it cannot write evidence in production. Choose a verifying provider.',
+  paid_screening_not_explicitly_enabled:
+    'This provider bills per lookup and the spend is not authorised. PAID_PHONE_SCREENING=enabled must ship on a production deploy first — OUTBOUND_LAUNCH_AUTHORIZATION.md §3.',
+  non_production_environment:
+    'A paid lookup is refused outside production, so nothing was billed and nothing was written.'
+};
+
 export default function ConsentRegistry() {
   const candidates = useConsentEvidenceCandidates();
   const grants = useConsentGrants();
   const createAction = useAction();
   const reviewAction = useAction();
   const revokeAction = useAction();
+  const screenAction = useAction();
   const [form, setForm] = useState(freshForm);
   const [revokeId, setRevokeId] = useState('');
   const [revokeReason, setRevokeReason] = useState('');
+  const [screenForm, setScreenForm] = useState(freshScreenForm);
+  const [providers, setProviders] = useState([]);
+  const [screenResult, setScreenResult] = useState(null);
 
   const pending = useMemo(() => candidates.rows.filter(row => row.status === 'pending_review'), [candidates.rows]);
+  const active = useMemo(() => grants.rows.filter(row => row.status === 'active'), [grants.rows]);
   const set = (key, value) => setForm(current => ({ ...current, [key]: value }));
+  const setScreen = (key, value) => setScreenForm(current => ({ ...current, [key]: value }));
+
+  // Capability metadata only — secret names, never values. Failing quietly is
+  // right here: an operator who cannot read the provider list can still work the
+  // consent half of this screen, which is the half that gates on a human.
+  useEffect(() => {
+    let live = true;
+    outbound.screeningProviders()
+      .then(result => { if (live) setProviders(result?.providers || []); })
+      .catch(() => { if (live) setProviders([]); });
+    return () => { live = false; };
+  }, []);
 
   const create = async event => {
     event.preventDefault();
@@ -55,6 +108,39 @@ export default function ConsentRegistry() {
       'Grant issued and stamped onto the linked contact. Re-import the contact into a campaign to create a new immutable target snapshot.'
     );
     if (result) { candidates.refresh(); grants.refresh(); }
+  };
+
+  const screen = async event => {
+    event.preventDefault();
+    setScreenResult(null);
+    const grant = active.find(row => row.id === screenForm.grantId);
+    if (!grant) return;
+    // The grant owns the seller, the number and the consent date. Retyping any
+    // of the three is how a screening record ends up describing a different
+    // number, or carrying a consent date that will never match the grant it was
+    // written for.
+    const grantedAt = toDate(grant.grantedAt);
+    const checkedAt = screenForm.dncCheckedAt ? new Date(screenForm.dncCheckedAt) : null;
+    if (!grantedAt || !checkedAt || Number.isNaN(checkedAt.getTime())) return;
+
+    const result = await screenAction.run(() => outbound.ingestPreDialScreening({
+      sellerAccountId: grant.sellerAccountId,
+      phoneE164: grant.phoneE164,
+      consentGrantedAt: grantedAt.toISOString(),
+      ...(screenForm.providerId ? { providerId: screenForm.providerId } : {}),
+      nationalDnc: {
+        status: 'clear',
+        snapshotId: screenForm.dncSnapshotId,
+        checkedAt: checkedAt.toISOString(),
+        provider: screenForm.dncProvider
+      }
+    }));
+    if (result) {
+      setScreenResult(result);
+      // Keep the DNC snapshot fields — ten numbers are screened against one
+      // download — and clear only the grant, so the next one is a fresh choice.
+      if (result.written) setScreenForm(current => ({ ...current, grantId: '' }));
+    }
   };
 
   const revoke = async event => {
@@ -127,6 +213,46 @@ export default function ConsentRegistry() {
           <label><span>Why is this permission being revoked?</span><textarea required minLength={5} rows={2} value={revokeReason} maxLength={1000} onChange={event => setRevokeReason(event.target.value)} /></label>
           {revokeAction.error && <p className="admin-error">{revokeAction.error}</p>}
           <div className="admin-filters"><button className="btn-admin danger" type="submit" disabled={revokeAction.busy}>{revokeAction.busy ? 'Revoking…' : 'Confirm revocation'}</button><button className="btn-admin" type="button" disabled={revokeAction.busy} onClick={() => setRevokeId('')}>Cancel</button></div>
+        </form>}
+      </Panel>
+
+      <Panel title="Pre-dial screening" subtitle="Consent says we may call this person. Screening says the number is still theirs, still real, and not on a do-not-call list.">
+        <div className="outbound-compliance-note">
+          <strong>One number at a time, and never a list.</strong> A cleared record is valid for 31 days and is bound to one seller and one number. The national do-not-call answer is not something this system can look up — hand in the dated snapshot from the service you enrolled with. There is no default of “clear”, because “we did not check” and “we checked and it is fine” must never look the same.
+        </div>
+
+        {!active.length && <p className="admin-note">No active consent grants yet. Screening is always downstream of a grant — issue one above first.</p>}
+
+        {!!active.length && <form className="outbound-form" onSubmit={screen}>
+          <div className="outbound-form-grid">
+            <label className="full"><span>Consented number</span><select className="admin-select" required value={screenForm.grantId} onChange={event => { setScreen('grantId', event.target.value); setScreenResult(null); }}>
+              <option value="">Select an active grant…</option>
+              {active.map(grant => <option key={grant.id} value={grant.id}>
+                {formatPhone(grant.phoneE164)} · {SELLERS.find(([id]) => id === grant.sellerAccountId)?.[1] || grant.sellerAccountId} · consented {formatWhen(grant.grantedAt)}
+              </option>)}
+            </select></label>
+
+            <label><span>Screening provider</span><select className="admin-select" value={screenForm.providerId} onChange={event => setScreen('providerId', event.target.value)}>
+              <option value="">Server default</option>
+              {providers.map(provider => <option key={provider.id} value={provider.id}>{provider.label}</option>)}
+            </select></label>
+            <label><span>National DNC service</span><input required value={screenForm.dncProvider} maxLength={120} onChange={event => setScreen('dncProvider', event.target.value)} placeholder="e.g. ftc_telemarketing_donotcall_gov" /></label>
+            <label><span>DNC snapshot ID</span><input required value={screenForm.dncSnapshotId} maxLength={200} onChange={event => setScreen('dncSnapshotId', event.target.value)} placeholder="Subscription account number + download date" /></label>
+            <label><span>DNC checked on</span><input required type="date" max={today()} value={screenForm.dncCheckedAt} onChange={event => setScreen('dncCheckedAt', event.target.value)} /></label>
+          </div>
+
+          {!!providers.length && <p className="cell-dim" style={{ margin: '4px 0 10px' }}>
+            {providers.map(provider => `${provider.id}: ${provider.capabilities?.verifiesExternally ? 'verifies externally' : 'simulated — refused in production'}${provider.capabilities?.paidLookup ? ', bills per lookup' : ', free'}`).join(' · ')}
+          </p>}
+
+          {screenAction.error && <p className="admin-error">{screenAction.error}</p>}
+          {screenResult && !screenResult.written && <p className="admin-error">
+            No evidence was written. {SCREEN_REASONS[screenResult.reason] || screenResult.reason}
+          </p>}
+          {screenResult?.written && <p className="admin-note">
+            Cleared and recorded{screenResult.lineType ? ` as a ${screenResult.lineType} line` : ''}, valid until {formatWhen(screenResult.expiresAt)}. This number now satisfies the screening gate. It still cannot be called until external dialing is enabled on a production deploy and its campaign is unpaused.
+          </p>}
+          <button className="btn-admin primary" type="submit" disabled={screenAction.busy || !screenForm.grantId}>{screenAction.busy ? 'Screening…' : 'Screen this number'}</button>
         </form>}
       </Panel>
     </section>

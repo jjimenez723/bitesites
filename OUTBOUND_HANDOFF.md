@@ -57,6 +57,13 @@ e-signature), then Outbound Calls → AI Consent → enter the number, the selle
 the artifact ID, the disclosure version, the date, and the attestation. Two
 clicks after the hard part, which is the signature.
 
+**What changed on 2026-08-25.** The thing to sign now exists in draft:
+[AI_VOICE_CONSENT_v1.md](./AI_VOICE_CONSENT_v1.md) is the disclosure wording,
+in three seller-specific versions, with the field-by-field mapping from a
+signature to a ledger entry. It has **not** been reviewed by counsel, and it
+says so in its own first line. It does not make the consent problem go away; it
+removes the excuse that nobody knew what the form should say.
+
 ### 2. A pre-dial screening record — "this number is legal and real, checked recently"
 
 **What it is.** A dated record, no more than 31 days old, that answers four
@@ -64,7 +71,7 @@ separate questions about the number:
 
 | Question | Who answers it | Status |
 |---|---|---|
-| Is it on the **National Do Not Call registry**? | a subscription service | **not purchased** |
+| Is it on the **National Do Not Call registry**? | a subscription service | **not enrolled — but free at our scale** |
 | Is it on **our own** do-not-call list? | us, free, already works | ✅ working |
 | Was it **reassigned** to a different person since consent? | Twilio Lookup, billed per number | switched off |
 | Is it a **real, callable line** (not a fax, pager, or dead number)? | Twilio Lookup, billed per number | switched off |
@@ -83,9 +90,27 @@ and it's fine" must never look the same.
 
 **Worth knowing:** at ten-number rehearsal scale the Twilio Lookup spend is
 cents, not a budget line. The authorization is blocking something trivially
-cheap. Worth checking too whether the FTC's National DNC registry still offers
-telemarketers free access for a small number of area codes — if it does, that
-is the cheapest unlock on this entire list. Confirm it; don't take my word.
+cheap.
+
+**And the DNC question is now answered: the first five area codes are free.**
+That was checked on 2026-08-25 rather than assumed. The FTC charges $82 per area
+code for FY2026 and caps a single entity at $22,626 for all of them, but the
+first five cost nothing. Ten internal numbers will almost certainly span fewer
+than five, so the national DNC line item for the rehearsal is **$0** — what it
+costs is an enrollment at
+[telemarketing.donotcall.gov](https://telemarketing.donotcall.gov) and the time
+to download and check. This was the cheapest unlock on the list and it turned
+out to be free.
+
+**One thing got stricter, not looser.** Producing screening evidence in
+production now requires a provider that actually asks an outside authority, and
+the only one of those is the paid Twilio Lookup. Until 2026-08-25 an admin could
+select the mock provider in production and mint a fully-passing screening record
+whose reassignment and line-type verdicts were derived from the last two digits
+of the phone number — the dial gate reads the verdicts, not which provider wrote
+them. That is closed. The consequence for planning is that §3 is no longer
+optional for the rehearsal: no paid screening authorization, no screening
+evidence, no calls.
 
 ### 3. External dialing switched on — the master switch
 
@@ -95,13 +120,28 @@ create a carrier call, no matter what else is configured.
 **Why it exists.** So that a half-configured system, or a bug, or a wrong click,
 cannot ring a real phone.
 
-**Where it actually stands.** This is the one thing that is *not* off.
-`functions/.env.bitesites-org` on this machine says
-`OUTBOUND_EXTERNAL_DIALING=enabled`. That file is untracked, so it never shows
-up in a diff or a review, and a production deploy from here would have carried
-it. Nothing is live — production runs older code and the other three gates are
-empty — but this is the one item on this page that needs a decision today.
-`npm run preflight:production` now refuses it.
+**Where it actually stands.** ✅ **Resolved 2026-08-25 — it is off.**
+
+It had been on. `functions/.env.bitesites-org` on this machine said
+`OUTBOUND_EXTERNAL_DIALING=enabled`, and that file is untracked, so it never
+showed up in a diff or a review and a production deploy from here would have
+carried it. Nothing was ever live — production runs older code and the other
+three gates were empty — but it was the one live hazard on this page.
+
+It is now `disabled`, and `npm run preflight:production` passes. Two reasons for
+resolving it that way rather than leaving it on:
+
+- On, it bought nothing. Zero consent grants, zero screening records, every
+  campaign paused — it was the single open gate standing in front of three
+  closed ones.
+- Off, the production deploy in stage 3 of the checklist becomes safe to run
+  today, because a deploy is how this file reaches the runtime. On, that deploy
+  was blocked.
+
+Turning it back on for the rehearsal is one word plus
+`OUTBOUND_CANARY_AUTHORIZATION=authorized` in the shell at deploy time. The
+sequence is in
+[OUTBOUND_FIRST_CALL_RUNBOOK.md](./OUTBOUND_FIRST_CALL_RUNBOOK.md).
 
 ### 4. Verified caller identity — the carrier paperwork
 
@@ -140,30 +180,41 @@ What the branch added on top of that:
 
 ## The shortest real path to a first phone call
 
-The intended first cohort is ten calls to ten people who work for you, who have
-each signed something. That is the cheapest way to make all four gates real
-once, on people who will forgive you.
+The cheapest way to make all four gates real once is to call **one** person who
+has signed something: yourself. One grant, one screening record, your own phone.
+The system does not count participants — it checks evidence per number.
 
-In order, and none of these can be skipped:
+Ten is the cohort you want *before asking to call a stranger*, because ten calls
+is enough to learn something. It is not a prerequisite for the first call, and
+reading it as one has cost time already.
 
-1. **Write the consent form.** What an AI voice call is, which seller, that
-   they can opt out. Counsel should see this wording — it is the same wording
-   that will later face strangers.
+Step by step, with commands, this is now
+[OUTBOUND_FIRST_CALL_RUNBOOK.md](./OUTBOUND_FIRST_CALL_RUNBOOK.md). In outline,
+and none of these can be skipped:
+
+1. ~~**Write the consent form.**~~ **Drafted 2026-08-25** —
+   [AI_VOICE_CONSENT_v1.md](./AI_VOICE_CONSENT_v1.md), three seller-specific
+   versions. Counsel still has to see this wording; it is the same wording that
+   will later face strangers.
 2. **Get ten internal people to sign it.** Real signatures, retained, each with
    an ID you can type in.
-3. **Enter the ten grants** through Outbound Calls → AI Consent.
-4. **Solve DNC for ten numbers.** Enroll somewhere, or confirm the free tier
-   exists. You need a dated snapshot ID; the code will not proceed without one.
-5. **Authorize Twilio Lookup** (§3) so line-type and reassigned-number checks
-   can run. Cents at this scale.
-6. **Deploy production with dialing still off** — run
-   `npm run preflight:production` first, and build the two missing composite
-   indexes.
+3. **Enroll for DNC** at telemarketing.donotcall.gov and check the ten numbers.
+   Free for up to five area codes. You need a dated snapshot ID; the code will
+   not proceed without one.
+4. **Authorize Twilio Lookup** (§3) so line-type and reassigned-number checks
+   can run. Cents at this scale, and now genuinely required rather than
+   preferable.
+5. **Deploy production with dialing still off but screening on** — run
+   `npm run preflight:production` first. The two composite indexes are declared
+   in `firestore.indexes.json`, so deploying rules and indexes builds them.
+6. **Enter the ten grants**, then **screen the ten numbers**, both through
+   Outbound Calls → AI Consent.
 7. **Then, and only then**, turn on external dialing for the rehearsal, make
    the ten calls, and review every transcript.
 
-Steps 1 and 2 are the long pole and they are not technical. Everything after
-step 3 is days, not weeks.
+Steps 1 and 2 are the long pole and they are not technical — step 1 is now a
+draft awaiting counsel rather than a blank page. Everything after step 2 is
+days, not weeks.
 
 ---
 
@@ -175,8 +226,12 @@ paper**, and that has been true since before this branch started. The
 engineering has been ahead of the paperwork for a while, and more engineering
 will not close the gap.
 
-The second thing: decide the `OUTBOUND_EXTERNAL_DIALING` flag, because that one
-is a live hazard rather than a plan.
+The second thing was deciding the `OUTBOUND_EXTERNAL_DIALING` flag, because that
+one was a live hazard rather than a plan. That is done — it is off, and turning
+it on is now a deliberate two-part act rather than something a deploy could do
+by accident.
+
+So: signatures. Ten of them. Everything else on this page is waiting on that.
 
 ---
 
@@ -185,6 +240,8 @@ is a live hazard rather than a plan.
 | Document | What it is for |
 |---|---|
 | [OUTBOUND_OWNER_CHECKLIST.md](./OUTBOUND_OWNER_CHECKLIST.md) | The six stages, one page, who decides each |
+| [AI_VOICE_CONSENT_v1.md](./AI_VOICE_CONSENT_v1.md) | The form people sign, and what makes it count |
+| [OUTBOUND_FIRST_CALL_RUNBOOK.md](./OUTBOUND_FIRST_CALL_RUNBOOK.md) | The ten-call rehearsal, in order, with commands |
 | [OUTBOUND_COMPLETION_REPORT.md](./OUTBOUND_COMPLETION_REPORT.md) | What this branch changed, with test evidence |
 | [OUTBOUND_PRODUCTION_READINESS.md](./OUTBOUND_PRODUCTION_READINESS.md) | Every control, in detail |
 | [OUTBOUND_LAUNCH_AUTHORIZATION.md](./OUTBOUND_LAUNCH_AUTHORIZATION.md) | The decisions made and the ones outstanding |

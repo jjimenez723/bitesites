@@ -22,7 +22,12 @@
 
   --ink: #f4f4f7;
   --ink-2: #a8a8b6;
-  --ink-3: #74748a;
+  /* Tertiary ink carries a lot of this console — stat labels, table headers,
+     timestamps, axis ticks, the idle nav state. At the old #74748a that is
+     3.4:1 on --surface-3 and 4.0:1 on --surface-1, under AA for normal text
+     either way. #8a8aa0 clears 4.5:1 on all four surfaces above and is still
+     plainly a step below --ink-2. */
+  --ink-3: #8a8aa0;
 
   --brand: linear-gradient(115deg, #0071e3, #7c3aed 45%, #ff5e9c 75%, #34c9eb);
   --brand-blue: #0071e3;
@@ -50,8 +55,60 @@
   --warning: #fab219;
   --serious: #ec835a;
   --critical: #d03b3b;
+  /* --critical is tuned as a fill and a border. As text it is 3.2:1 on
+     --surface-3, so text that means "bad" uses this lighter step instead.
+     Same meaning, same reservation — it is never a series colour. */
+  --critical-ink: #ef6b6b;
 
-  --radius: 16px;
+  /* Radii — restrained, and scaled to the surface. Compact controls stay in
+     the 8–12px band; large containers 14–20px. Nothing is fully pill-shaped
+     except status pills, where the shape carries meaning. */
+  --r-xs: 8px;
+  --r-sm: 10px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-xl: 20px;
+  --radius: var(--r-lg);
+
+  /* 4px spacing grid. Section rhythm is generous, repeated-row rhythm tight. */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+
+  /* Type roles, not one-off sizes. */
+  --t-caption: 11.5px;
+  --t-footnote: 12.5px;
+  --t-body: 13.5px;
+  --t-callout: 15px;
+  --t-title-3: 17px;
+  --t-title-2: 21px;
+
+  /* Control geometry. 34px is the visible height of a compact control; the
+     hit region is padded out to 44px separately so density and reachability
+     do not have to trade against each other. */
+  --control-h: 34px;
+  --control-h-lg: 40px;
+  --hit: 44px;
+
+  /* Motion. One easing, three durations, all switched off under
+     prefers-reduced-motion at the foot of this file. */
+  --dur-fast: .12s;
+  --dur: .2s;
+  --dur-slow: .32s;
+  --ease: cubic-bezier(.32, .72, 0, 1);
+
+  /* One focus colour, bright enough to clear AA against every surface here.
+     The brand violet used previously fails that on --surface-3. */
+  --focus: #63a4ff;
+
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, .3);
+  --shadow-2: 0 8px 24px rgba(0, 0, 0, .38);
+  --shadow-3: 0 24px 64px rgba(0, 0, 0, .5);
+
   --sidebar: 248px;
 
   color-scheme: dark;
@@ -80,7 +137,7 @@
   display: grid;
   place-items: center;
   background: #0a0a0e;
-  color: #74748a;
+  color: #8a8aa0;
   font-family: var(--font-sans, "Tomorrow"), -apple-system, sans-serif;
   font-size: 14px;
 }
@@ -140,7 +197,7 @@
 .admin-nav-icon { width: 17px; height: 17px; flex: none; opacity: .85; }
 .admin-nav-count {
   margin-left: auto; font-size: 11px; font-variant-numeric: tabular-nums;
-  color: var(--ink-3); background: rgba(255, 255, 255, .06);
+  color: var(--ink-2); background: rgba(255, 255, 255, .06);
   padding: 1px 7px; border-radius: 20px;
 }
 
@@ -192,7 +249,7 @@
   border-radius: 10px; padding: 8px 13px; min-width: 220px; font-size: 13px;
 }
 .admin-search::placeholder { color: var(--ink-3); }
-.admin-search:focus-visible { outline: 2px solid var(--brand-violet); outline-offset: 1px; }
+.admin-search:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 
 .admin-select {
   background: var(--surface-2); border: 1px solid var(--line);
@@ -209,7 +266,7 @@
 .btn-admin:disabled { opacity: .45; cursor: not-allowed; }
 .btn-admin.primary { background: var(--brand); border-color: transparent; color: #fff; }
 .btn-admin.primary:hover { filter: brightness(1.08); }
-.btn-admin.danger { color: var(--critical); border-color: rgba(208, 59, 59, .4); }
+.btn-admin.danger { color: var(--critical-ink); border-color: rgba(208, 59, 59, .4); }
 
 /* ------------------------------------------------------------------ cards */
 
@@ -247,7 +304,7 @@
 .stat-foot { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--ink-3); margin-top: 2px; }
 .stat-delta { font-weight: 600; font-variant-numeric: tabular-nums; }
 .stat-delta.up { color: var(--good); }
-.stat-delta.down { color: var(--critical); }
+.stat-delta.down { color: var(--critical-ink); }
 .stat-delta.flat { color: var(--ink-3); }
 .stat-spark { margin-top: 10px; height: 34px; }
 
@@ -520,7 +577,7 @@
 .pill.converted { color: var(--good); border-color: rgba(12, 163, 12, .35); }
 .pill.completed { color: var(--good); border-color: rgba(12, 163, 12, .35); }
 .pill.abandoned { color: var(--ink-3); }
-.pill.failed, .pill.blocked { color: var(--critical); border-color: rgba(208, 59, 59, .35); }
+.pill.failed, .pill.blocked { color: var(--critical-ink); border-color: rgba(208, 59, 59, .35); }
 .pill.open { color: var(--warning); border-color: rgba(250, 178, 25, .3); }
 .pill.admin { color: #ff5e9c; border-color: rgba(255, 94, 156, .35); }
 .pill.client { color: #34c9eb; border-color: rgba(52, 201, 235, .3); }
@@ -801,7 +858,7 @@
 .finance-allocation-row { display: grid; grid-template-columns: minmax(150px,1.2fr) minmax(90px,.7fr) minmax(80px,.65fr) 28px; align-items: end; gap: 7px; }
 .finance-allocation-row:has(label:nth-child(2):last-of-type) { grid-template-columns: minmax(150px,1fr) minmax(90px,.7fr) 28px; }
 .finance-remove-row { width: 28px; height: 36px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink-3); background: var(--surface-2); cursor: pointer; }
-.finance-remove-row:hover { color: var(--critical); border-color: rgba(208,59,59,.35); }
+.finance-remove-row:hover { color: var(--critical-ink); border-color: rgba(208,59,59,.35); }
 .finance-check { display: flex !important; flex-direction: row !important; align-items: center; gap: 8px !important; color: var(--ink-2); font-size: 11px; cursor: pointer; }
 .finance-check input { width: 15px !important; min-height: 15px !important; accent-color: var(--brand-violet); }
 .finance-check span { color: var(--ink-2) !important; }
@@ -1006,7 +1063,7 @@
 }
 .bs-admin .admin-google-btn:hover:not(:disabled) { filter: brightness(.93); }
 .bs-admin .admin-google-btn:disabled { opacity: .5; cursor: not-allowed; }
-.bs-admin .admin-google-btn:focus-visible { outline: 2px solid var(--brand-violet); outline-offset: 2px; }
+.bs-admin .admin-google-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .admin-google-mark { width: 17px; height: 17px; flex: none; }
 
 .admin-auth-or {
@@ -1021,7 +1078,7 @@
   background: var(--surface-2); border: 1px solid var(--line);
   border-radius: 10px; padding: 11px 13px; font-size: 14px;
 }
-.admin-field input:focus-visible { outline: 2px solid var(--brand-violet); outline-offset: 1px; border-color: transparent; }
+.admin-field input:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; border-color: transparent; }
 .admin-auth-submit {
   background: var(--brand); border: 0; color: #fff; font-weight: 700; font-size: 14px;
   border-radius: 11px; padding: 12px; cursor: pointer; margin-top: 4px;
@@ -1049,6 +1106,168 @@
 .sr-only {
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
   overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+
+/* ------------------------------------------------------- interaction pass
+ *
+ * Everything below is the interaction layer the rest of this sheet assumed but
+ * never wrote down: one focus treatment, one set of control heights, one
+ * easing. It is deliberately last-but-one so it can normalise the components
+ * declared above without each of them having to be rewritten in place.
+ *
+ * The console stays dark in both system appearances on purpose — it is an
+ * internal tool sat in for hours and the validated chart palette above is
+ * stepped for #14141a specifically. A light mode would mean re-deriving that
+ * palette, not flipping tokens, so it is out of scope rather than forgotten.
+ */
+
+/* One visible focus style for every interactive thing in the console. The
+   previous violet ring cleared AA on --bg but not on --surface-3, where the
+   segmented control and the panel close button live. */
+.bs-admin :focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.bs-admin :focus:not(:focus-visible) { outline: none; }
+
+/* Rows and cells sit flush against their neighbours, so the ring goes inside
+   the element rather than overlapping the row above. */
+.bs-admin .admin-table tbody tr:focus-visible,
+.bs-admin .admin-nav a:focus-visible,
+.bs-admin .admin-segment button:focus-visible { outline-offset: -2px; }
+
+.bs-admin button,
+.bs-admin a,
+.bs-admin [role='button'],
+.bs-admin summary { touch-action: manipulation; }
+
+/* Skip link — ten nav items is a long way to tab past to reach the table. */
+.admin-skip {
+  position: absolute; z-index: 100; left: var(--sp-3); top: var(--sp-3);
+  background: var(--surface-3); color: var(--ink);
+  border: 1px solid var(--line-strong); border-radius: var(--r-sm);
+  padding: 10px var(--sp-4); font-size: var(--t-footnote); font-weight: 600;
+  transform: translateY(calc(-100% - var(--sp-5)));
+  transition: transform var(--dur) var(--ease);
+}
+.admin-skip:focus-visible { transform: none; }
+
+/* ------------------------------------------------------------- controls */
+
+/* Compact controls share one height so a filter row lines up on its
+   baselines instead of by eye. */
+.btn-admin,
+.admin-search,
+.admin-select {
+  min-height: var(--control-h);
+  border-radius: var(--r-sm);
+}
+.btn-admin {
+  padding: 7px 14px;
+  transition:
+    background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    filter var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease);
+}
+/* Press feedback, not entrance animation — brief and interruptible. */
+.btn-admin:active:not(:disabled) { transform: scale(.97); }
+.btn-admin.primary { font-weight: 700; }
+/* Destructive never gets the prominent treatment. */
+.btn-admin.danger:hover:not(:disabled) {
+  background: rgba(208, 59, 59, .12);
+  border-color: rgba(208, 59, 59, .55);
+}
+
+/* The native chevron does not exist once a select is restyled; without one
+   this control is indistinguishable from a text input. */
+.admin-select {
+  appearance: none; -webkit-appearance: none;
+  padding-right: 30px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none' stroke='%23a8a8b6' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 1.5 6 6.5l5-5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 11px center;
+}
+.admin-select:hover { border-color: var(--line-strong); }
+
+.admin-search { transition: border-color var(--dur-fast) var(--ease); }
+.admin-search:hover { border-color: var(--line-strong); }
+
+.admin-segment { min-height: var(--control-h); align-items: center; }
+.admin-segment button {
+  min-height: 26px;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+/* Selection is carried by fill and weight, not colour alone. */
+.admin-segment button[aria-pressed='true'] { box-shadow: var(--shadow-1); }
+
+/* Small icon-and-label toggles keep their compact look but take a 44px hit
+   region, so density and reachability do not have to trade off. */
+.view-toggle,
+.admin-panel-close {
+  position: relative;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.view-toggle::after,
+.admin-panel-close::after {
+  content: ''; position: absolute; left: 50%; top: 50%;
+  transform: translate(-50%, -50%);
+  width: max(100%, var(--hit)); height: max(100%, var(--hit));
+}
+
+/* ------------------------------------------------------ navigation layer */
+
+.admin-nav a { min-height: 36px; }
+/* The selection indicator used to sit at left: -16px, outside the sidebar
+   padding, where it read as a stray sliver against the window edge. Inside the
+   selected row it reads as part of the row. */
+.admin-nav a.active::before {
+  left: 0; top: 6px; bottom: 6px; width: 3px; border-radius: 3px;
+}
+.admin-nav a:active { background: rgba(255, 255, 255, .09); }
+.admin-nav a.active .admin-nav-icon { opacity: 1; }
+
+/* The topbar is the one surface that genuinely overlays scrolling content, so
+   it is the one surface that gets glass. Browsers without backdrop-filter get
+   an opaque bar rather than text over moving content. */
+.admin-topbar { min-height: 64px; }
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .admin-topbar { background: var(--bg); }
+}
+.admin-topbar h1 { font-size: var(--t-title-2); }
+
+/* ---------------------------------------------------------- content rows */
+
+/* 13px block padding puts a table row at ~44px, which is both comfortable to
+   hit and still dense enough to scan a few dozen leads at a glance. */
+.admin-table td { padding-block: 13px; }
+.admin-table tbody tr.clickable:active { background: rgba(255, 255, 255, .06); }
+.admin-table-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--surface-3) transparent;
+  overscroll-behavior-x: contain;
+}
+
+/* The slide-over reads as a sheet over the console rather than a second
+   window welded to the edge. */
+.admin-panel {
+  border-radius: var(--r-xl) 0 0 var(--r-xl);
+  box-shadow: var(--shadow-3);
+}
+.admin-panel:focus { outline: none; }
+.admin-panel-close { width: 32px; height: 32px; border-radius: var(--r-sm); }
+.admin-panel-backdrop { animation: adminFadeIn var(--dur) var(--ease); }
+@keyframes adminFadeIn { from { opacity: 0; } }
+
+.admin-signout { width: 100%; justify-content: center; }
+
+/* ------------------------------------------------------------ appearance */
+
+@media (forced-colors: active) {
+  .bs-admin :focus-visible { outline: 2px solid CanvasText; }
+  .admin-nav a.active,
+  .admin-segment button[aria-pressed='true'] { forced-color-adjust: none; }
+  .admin-card, .admin-panel, .pill { border-color: CanvasText; }
 }
 
 /* ------------------------------------------------------------- responsive */
@@ -1139,4 +1358,76 @@
   .finance-payout-list { overflow-x: auto; }
   .finance-payout-row { min-width: 650px; }
   .finance-form-actions { flex-wrap: wrap; }
+}
+
+/* ------------------------------------------------------ responsive: nav */
+
+/* Below 860px the sidebar becomes a top bar. Scrolling the whole bar pushed
+   the account and Sign out off the right edge with ten nav items in front of
+   them, so only the nav strip scrolls now — brand stays leading, account
+   stays trailing, and both are always reachable. */
+@media (max-width: 860px) {
+  .admin-sidebar { overflow: visible; flex-wrap: nowrap; }
+  .admin-nav {
+    flex: 1 1 auto; min-width: 0;
+    overflow-x: auto;
+    scroll-snap-type: x proximity;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+  }
+  .admin-nav::-webkit-scrollbar { display: none; }
+  .admin-nav a {
+    flex: none; white-space: nowrap;
+    scroll-snap-align: start;
+    min-height: var(--hit);
+    padding-inline: var(--sp-3);
+  }
+  /* Inside a scroll container the old indicator hung below the clip edge. */
+  .admin-nav a.active::before {
+    left: var(--sp-3); right: var(--sp-3); top: auto; bottom: 4px;
+    width: auto; height: 2px; border-radius: 2px;
+  }
+  /* The foot stacks vertically in the desktop sidebar; in a top bar that put
+     Sign out on top of the avatar. */
+  .admin-sidebar-foot { flex: none; display: flex; align-items: center; gap: var(--sp-2); }
+  .admin-signout { width: auto; }
+
+  /* Four stat tiles stacked one per screen meant scrolling past the whole
+     summary to reach the table it summarises. */
+  .admin-grid.cols-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+  /* Let the search take the slack so the filter row is two lines, not four. */
+  .admin-filters { gap: var(--sp-2); }
+  .admin-search { flex: 1 1 140px; min-width: 0; }
+
+  /* Auto table layout answers a narrow viewport by wrapping every cell into a
+     tower of two-word lines. The container already scrolls horizontally, so
+     give the table a floor and let it scroll instead of shredding the rows. */
+  .admin-table-scroll .admin-table { min-width: 620px; }
+
+  .admin-segment button { min-height: 32px; padding: 7px 14px; }
+  .view-toggle { padding: 6px 11px; }
+  .admin-body { padding-bottom: max(64px, env(safe-area-inset-bottom)); }
+}
+
+/* Motion is feedback here, never the only way to read a change, so removing
+   all of it costs nothing. Declared once, at the end, so it outranks every
+   transition and animation above. */
+@media (max-width: 560px) {
+  /* Below this the mark alone identifies the console and the nav strip needs
+     every pixel it can get. */
+  .admin-brand > div { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bs-admin *,
+  .bs-admin *::before,
+  .bs-admin *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .bs-admin .btn-admin:active:not(:disabled) { transform: none; }
 }

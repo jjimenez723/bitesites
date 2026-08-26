@@ -27,7 +27,8 @@ import { screeningAdmission } from './deployment-environment.js';
 import { isSuppressed } from './inbound-compliance.js';
 import { composePreDialScreening, preDialScreeningId } from './pre-dial-screening.js';
 import {
-  DEFAULT_SCREENING_PROVIDER_ID, getScreeningProvider, screeningProviderIsPaid
+  DEFAULT_SCREENING_PROVIDER_ID, getScreeningProvider, screeningProviderIsPaid,
+  screeningProviderVerifies
 } from './providers/screening/index.js';
 
 const text = (value, max = 200) => clean(value, max);
@@ -105,7 +106,10 @@ export async function ingestPreDialScreening(db, {
   if (!grantedAt) throw new Error('The consent grant date is required to screen a number');
 
   const paid = screeningProviderIsPaid(providerId);
-  const admission = screeningAdmission(providerId, { paid, values: admissionValues });
+  // Both halves of the admission question, and neither is inferable from the
+  // other: the mock is free and fabricated, Twilio Lookup is billable and real.
+  const verifies = screeningProviderVerifies(providerId);
+  const admission = screeningAdmission(providerId, { paid, verifies, values: admissionValues });
   if (!admission.allowed) {
     return { ok: false, written: false, reason: admission.reason, admission, providerId };
   }

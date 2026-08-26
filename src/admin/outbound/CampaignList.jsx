@@ -11,6 +11,7 @@ import { StatusPill, formatWhen, providerLabel, Empty, QueryState } from './Sour
 import CampaignBuilder from './CampaignBuilder';
 import CampaignIncidents from './CampaignIncidents';
 import CampaignMetrics from './CampaignMetrics';
+import { activateRow } from '../row-activate';
 
 const MODE_LABELS = { ai: 'AI', power: 'Power', parallel: 'Parallel' };
 
@@ -69,7 +70,7 @@ export default function CampaignList({ campaigns, loading, error, refresh, provi
                   <tr
                     key={campaign.id}
                     className={`clickable ${selectedId === campaign.id ? 'selected' : ''}`}
-                    onClick={() => onSelect?.(campaign.id)}
+                    {...activateRow(() => onSelect?.(campaign.id))}
                   >
                     <td className="cell-strong cell-wrap">{campaign.name}</td>
                     <td className="cell-dim">

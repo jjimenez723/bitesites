@@ -9,6 +9,7 @@
 import React, { useMemo, useState } from 'react';
 import { useProspects, outbound, useAction, PROSPECT_CAP } from './data';
 import { SourceBadge, StatusPill, formatWhen, formatPhone, Empty, QueryState } from './SourceBadge';
+import { activateRow } from '../row-activate';
 
 const STATUS_FILTERS = [
   ['all', 'All'], ['ready', 'Ready'], ['needs_review', 'Needs review'],
@@ -182,7 +183,7 @@ export default function ProspectList({ campaigns = [], accountIds = [], allAccou
                 {filtered.map(row => {
                   const selectable = row.lifecycle?.status === 'ready';
                   return (
-                    <tr key={row.id} className="clickable" onClick={() => onOpen?.(row.id)}>
+                    <tr key={row.id} className="clickable" {...activateRow(() => onOpen?.(row.id))}>
                       <td onClick={event => event.stopPropagation()}>
                         <input
                           type="checkbox"

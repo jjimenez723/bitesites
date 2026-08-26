@@ -71,6 +71,8 @@ Read these before changing outbound behavior:
 |---|---|
 | `OUTBOUND_HANDOFF.md` | Plain-language: what this system is and why it has not called anyone |
 | `OUTBOUND_OWNER_CHECKLIST.md` | The six stages on one page, and which one we are actually on |
+| `AI_VOICE_CONSENT_v1.md` | The disclosure wording people sign, and what turns a signature into a grant |
+| `OUTBOUND_FIRST_CALL_RUNBOOK.md` | The ten-call internal rehearsal, in order, with the deploy sequence |
 | `OUTBOUND_PRODUCTION_READINESS.md` | What is built, what is not, and the quality gates |
 | `OUTBOUND_LAUNCH_AUTHORIZATION.md` | Owner decisions already made, and the authorizations still required |
 | `STAGING_ENVIRONMENT.md` | The non-dialing staging project and how to deploy it |

@@ -189,6 +189,7 @@ function AuthenticatedAdminApp() {
 
   return (
     <div className="bs-admin">
+      <a className="admin-skip" href="#admin-main">Skip to content</a>
       <div className="admin-shell">
         <aside className="admin-sidebar">
           <div className="admin-brand">
@@ -199,8 +200,8 @@ function AuthenticatedAdminApp() {
             </div>
           </div>
 
-          <nav className="admin-nav">
-            <div className="admin-nav-label">Workspace</div>
+          <nav className="admin-nav" aria-label="Workspace">
+            <div className="admin-nav-label" aria-hidden="true">Workspace</div>
             {visibleNav.map(item => (
               <NavLink key={item.label} to={item.to} end={item.end}>
                 <Icon d={item.icon} />
@@ -217,13 +218,13 @@ function AuthenticatedAdminApp() {
                 <span title={email}>{email}</span>
               </div>
             </div>
-            <button className="btn-admin" type="button" onClick={signOutUser} style={{ width: '100%' }}>
+            <button className="btn-admin admin-signout" type="button" onClick={signOutUser}>
               Sign out
             </button>
           </div>
         </aside>
 
-        <div className="admin-main">
+        <main className="admin-main" id="admin-main" tabIndex={-1}>
           <Routes>
             {isAdminUser && <Route index element={<Overview />} />}
             {isAdminUser && <Route path="performance" element={<Performance />} />}
@@ -237,7 +238,7 @@ function AuthenticatedAdminApp() {
             {isAdminUser && <Route path="users" element={<Users />} />}
             <Route path="*" element={<Navigate to={isAdminUser ? '/admin' : '/admin/outbound'} replace />} />
           </Routes>
-        </div>
+        </main>
       </div>
     </div>
   );

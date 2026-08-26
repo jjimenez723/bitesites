@@ -3,9 +3,18 @@
 // This is the default, and it is what makes the rest of the screening stack
 // testable while every paid lookup stays switched off. It is deliberately
 // *not* a way to get a number cleared for a real call: `screeningAdmission`
-// only accepts mock evidence outside production, and the deployment gate
+// accepts mock evidence only outside production, and the deployment gate
 // refuses carrier dialing there anyway, so a mock-cleared number still cannot
 // be rung.
+//
+// That first claim was false until 2026-08-25. `screeningAdmission` returned
+// early for any unpaid provider, before it looked at the environment at all, so
+// this class could write a `status: 'cleared'` record in production whose
+// reassignment and line-type answers were derived from the last two digits of
+// the phone number. Nothing downstream could tell that record apart from a
+// Twilio-verified one — the dial gate reads the verdicts, not `ingestedBy`.
+// `verifiesExternally: false` is what now keeps it out of production, and it is
+// the honest description of this file: every answer below is computed locally.
 //
 // It answers deterministically from the number itself so a test can ask for a
 // specific verdict without a fixture file: a number ending 00 reads as
@@ -32,7 +41,10 @@ export class MockScreeningProvider extends ScreeningProviderAdapter {
     reassignedNumber: true,
     phoneValidation: true,
     lineType: true,
-    paidLookup: false
+    paidLookup: false,
+    // Simulated, not asked of anyone. This is the flag that keeps the
+    // deterministic answers below out of the production ledger.
+    verifiesExternally: false
   };
 
   async screen({ phoneE164, consentGrantedAt } = {}) {

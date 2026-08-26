@@ -42,7 +42,7 @@
   line-height: 1.4;
 }
 .bs-admin .hybrid-config-section input.is-invalid { border-color: var(--critical); }
-.bs-admin .hybrid-config-section .field-error { color: var(--critical); }
+.bs-admin .hybrid-config-section .field-error { color: var(--critical-ink); }
 .bs-admin .hybrid-range-field input[type="range"] {
   width: 100%;
   height: 20px;

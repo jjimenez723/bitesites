@@ -39,6 +39,11 @@ export const PRODUCTION_PARAM_FILE = join(ROOT, 'functions', `.env.${PRODUCTION_
  * living in the same commit is one edit, and the whole point is that they are
  * two decisions made by two people at two times.
  */
+// Named for the canary because that was the first authorization anyone expected
+// to need. The internal rehearsal in §5 needs the same flag and comes first, so
+// the variable is really "an owner has authorized carrier dialing for a named
+// cohort" — the name is kept rather than churned, because it is typed into a
+// shell by a human and a rename would silently stop refusing.
 export const EXTERNAL_DIALING_AUTHORIZATION_ENV = 'OUTBOUND_CANARY_AUTHORIZATION';
 export const PAID_SCREENING_AUTHORIZATION_ENV = 'PAID_SCREENING_AUTHORIZATION';
 
@@ -67,8 +72,13 @@ export const FINDING_LABELS = Object.freeze({
     + 'The runtime would treat the production project as a non-production environment.',
   external_dialing_enabled_without_authorization:
     `OUTBOUND_EXTERNAL_DIALING=enabled, and ${EXTERNAL_DIALING_AUTHORIZATION_ENV}=authorized is not `
-    + 'set. Deploying this would admit carrier-backed dialing in production. §9 of '
-    + 'OUTBOUND_LAUNCH_AUTHORIZATION.md — the 25/day external canary — has not been granted.',
+    + 'set. Deploying this would admit carrier-backed dialing in production. Three separate '
+    + 'authorizations can open this gate and none is implied by the others: §11 of '
+    + 'OUTBOUND_LAUNCH_AUTHORIZATION.md (human-only rep dialing, granted 2026-08-25), §5 (the '
+    + 'ten-call internal AI rehearsal cohort) or §9 (the 25/day external AI canary). Set the '
+    + 'authorization variable only for the one actually granted, and say which in the deploy '
+    + 'notes. Note that §11 does not admit an AI voice: that path fails closed on per-number '
+    + 'consent and screening evidence no matter what this flag says.',
   paid_screening_enabled_without_authorization:
     `PAID_PHONE_SCREENING=enabled, and ${PAID_SCREENING_AUTHORIZATION_ENV}=authorized is not set. `
     + 'Deploying this would let per-lookup vendor charges begin. §3 of '
