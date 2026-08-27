@@ -495,6 +495,44 @@ test('a backfill survives a transient write failure mid-run', async () => {
   assert.equal(db.docs.get('prospects/b').phoneIntel.status, 'resolved');
 });
 
+test('a backfill survives a transient failure on the page read', async () => {
+  // The second production failure, and a different code path from the write
+  // retry above: the run died on `query.get()` after 1,200 records, because a
+  // throttled loop leaves the channel idle long enough for the next page query
+  // to time out. Writes were already retried; reads were not.
+  const db = fakeDb({
+    'prospects/a': { phoneE164: '+12015524949' },
+    'prospects/b': { phoneE164: '+12015520001' }
+  });
+  let reads = 0;
+  const originalCollection = db.collection.bind(db);
+  db.collection = name => {
+    const chain = originalCollection(name);
+    const wrap = node => ({
+      orderBy: (...args) => wrap(node.orderBy(...args)),
+      limit: (...args) => wrap(node.limit(...args)),
+      startAfter: (...args) => wrap(node.startAfter(...args)),
+      async get() {
+        reads += 1;
+        if (reads === 1) {
+          const error = new Error('Deadline exceeded after 60.005s');
+          error.code = 4;
+          throw error;
+        }
+        return node.get();
+      }
+    });
+    return wrap(chain);
+  };
+
+  const stats = await backfillPhoneIntel(db, {
+    fetchImpl: okFetch(XML_201_552), throttleMs: 0, sleepImpl: async () => {}
+  });
+
+  assert.ok(reads > 1, 'the injected read failure must actually have fired');
+  assert.equal(stats.updated, 2, 'the run continues past a timed-out page query');
+});
+
 // ----------------------------------------------------------------- bulk path
 
 test('bulk ingest writes the same block shape and records its own source', async () => {

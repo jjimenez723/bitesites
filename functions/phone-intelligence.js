@@ -328,7 +328,7 @@ export async function lookupExchange(db, key, {
 } = {}) {
   if (!key?.exchangeId) return { blocks: {}, cached: false, fetched: false, reason: 'no_exchange' };
   const ref = db.doc(`numberingExchanges/${key.exchangeId}`);
-  const snapshot = await ref.get();
+  const snapshot = await withFirestoreRetry(() => ref.get(), { sleepImpl });
   if (!force && snapshot.exists) {
     const expiresAt = readTime(snapshot.get('expiresAt'));
     if (!expiresAt || expiresAt.getTime() > now.getTime()) {
@@ -436,7 +436,10 @@ export async function backfillPhoneIntel(db, {
   while (stats.updated < limit) {
     let query = db.collection(collection).orderBy('__name__').limit(pageSize);
     if (last) query = query.startAfter(last);
-    const page = await query.get();
+    // Reads need the same retry as writes, and for the same reason. The first
+    // production run died here, not on a write: a throttled loop leaves the
+    // gRPC channel idle long enough that the next page query times out.
+    const page = await withFirestoreRetry(() => query.get(), { sleepImpl });
     if (page.empty) { stats.done = true; break; }
 
     for (const doc of page.docs) {
