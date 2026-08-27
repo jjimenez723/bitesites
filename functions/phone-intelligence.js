@@ -116,6 +116,23 @@ export const ELEVATED_RISK_LINE_TYPES = Object.freeze(['wireless']);
 const digitsOf = value => String(value || '').replace(/\D/g, '');
 
 /**
+ * Sanitiser for identifier fields, as opposed to prose.
+ *
+ * `clean` is the repository's text sanitiser and it maps the string "0" to "".
+ * That is fine for a carrier name and wrong for anything whose legitimate value
+ * can *be* "0" — which here means the thousands-block digit. It bit this file
+ * twice: once in the parser, where it silently dropped every block-0 record,
+ * and once in `buildPhoneIntel`, where it stored an empty `block` on 194
+ * production rows before anyone looked. Line types were still correct both
+ * times because resolution uses the raw digit, but a record you cannot audit
+ * back to its block is a record you have to take on faith.
+ *
+ * Identifiers are short, known-shape and never rendered as prose, so a trim and
+ * a length cap is the whole job.
+ */
+const identifier = (value, maxLen) => String(value ?? '').trim().slice(0, maxLen);
+
+/**
  * Split a US/Canada number into the parts the numbering data is keyed by.
  * Returns null for anything outside NANP, including toll-free — a toll-free
  * number has no geographic exchange and asking for one returns noise.
@@ -230,14 +247,14 @@ export function buildPhoneIntel({ key, record, source = SOURCE_ID, now = new Dat
     lineType,
     // Kept beside the mapped value so an operator can see the raw NANPA code
     // rather than trusting this file's mapping of it.
-    companyType: clean(resolved.companyType, 4),
+    companyType: identifier(resolved.companyType, 4),
     carrier: clean(resolved.carrier, 120),
-    ocn: clean(resolved.ocn, 12),
+    ocn: identifier(resolved.ocn, 12),
     rateCenter: clean(resolved.rateCenter, 80),
-    region: clean(resolved.region, 8),
-    lata: clean(resolved.lata, 8),
-    exchangeId: clean(key?.exchangeId, 12),
-    block: clean(key?.block, 2),
+    region: identifier(resolved.region, 8),
+    lata: identifier(resolved.lata, 8),
+    exchangeId: identifier(key?.exchangeId, 12),
+    block: identifier(key?.block, 2),
     // Portability is the known blind spot; storing it as an explicit false is
     // the difference between "we checked and it is fine" and "we never asked".
     portabilityChecked: false,
@@ -526,10 +543,10 @@ export async function ingestExchangeRecords(db, rows = [], { now = new Date(), t
       npa, nxx, block, companyType,
       lineType: LINE_TYPE_BY_COMPANY_TYPE[companyType] || '',
       carrier: clean(row?.carrier, 120),
-      ocn: clean(row?.ocn, 12),
+      ocn: identifier(row?.ocn, 12),
       rateCenter: clean(row?.rateCenter, 80),
-      region: clean(row?.region, 8),
-      lata: clean(row?.lata, 8)
+      region: identifier(row?.region, 8),
+      lata: identifier(row?.lata, 8)
     });
   }
 

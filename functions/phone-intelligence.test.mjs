@@ -195,6 +195,26 @@ test('phoneIntel is always triage grade and never claims a portability check', (
   assert.equal(intel.status, 'resolved');
 });
 
+test('block 0 survives being stored — the string "0" is not empty', async () => {
+  // The second sighting of the same root cause. `clean('0')` returns '', so
+  // storing the thousands-block through it emptied the field on every block-0
+  // number: 194 production rows, all of them block 0, none of them any other
+  // digit. `lineType` was right the whole time because resolution uses the raw
+  // key, but the record could not be audited back to the block that answered.
+  const intel = buildPhoneIntel({
+    key: { exchangeId: '201-552', block: '0' },
+    record: { lineType: 'wireless', companyType: 'W', carrier: 'OMNIPOINT', ocn: '6623' }
+  });
+  assert.equal(intel.block, '0');
+  assert.equal(intel.exchangeId, '201-552');
+
+  const db = fakeDb({ 'prospects/a': { phoneE164: '+12015520045' } });
+  await backfillPhoneIntel(db, { fetchImpl: okFetch(XML_201_552), throttleMs: 0 });
+  const stored = db.docs.get('prospects/a').phoneIntel;
+  assert.equal(stored.block, '0', 'the stored block must round-trip');
+  assert.equal(stored.lineType, 'wireless', 'and still resolve to block 0, not the whole-code record');
+});
+
 test('an unresolvable number is marked, not silently left blank', () => {
   const intel = unresolvablePhoneIntel({});
   assert.equal(intel.status, 'not_applicable');
