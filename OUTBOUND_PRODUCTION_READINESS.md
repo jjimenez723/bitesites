@@ -304,7 +304,7 @@ decisions. The primary workflow should reduce to:
 Advanced research, consent, policy, provider, and audit details stay available
 without competing with the main action.
 
-### Human-led quick dial — built 2026-09-08
+### Human-led quick dial — built and deployed 2026-09-08
 
 Outbound Calls → **Dialer** now opens on `src/admin/outbound/QuickDial.jsx`: one
 **Start dialing** button, and when someone answers, the business name, contact,
@@ -345,6 +345,14 @@ screen names the switch rather than reporting a generic failure. This authorizes
 nothing new: an artificial voice still fails closed on per-number consent and
 pre-dial screening, both of which have zero records in production.
 
+**Deployed to production 2026-09-08** under §11 — rules/indexes, Functions and
+Hosting, in that order, after a passing `npm run preflight:production`. The
+deploy notes are in
+[OUTBOUND_OWNER_CHECKLIST.md](./OUTBOUND_OWNER_CHECKLIST.md) §3. Pressing
+**Start dialing** in production now places a real call to a real business, which
+is the point of §11 and is a person's decision at the moment they press it. The
+deploy itself placed none.
+
 **Throughput is capped well below a full calling day.** Every non-mock provider
 is held to one live leg and one attempt by `resolveCampaignOperatingLimits`, so
 one rep reaches roughly 150–250 dials in a day, not the 500–1,000 a predictive
@@ -377,9 +385,10 @@ UI change.
    has since been set back to `disabled`. The preflight exits non-zero when a
    parameter is open without the matching authorization from
    [OUTBOUND_LAUNCH_AUTHORIZATION.md](./OUTBOUND_LAUNCH_AUTHORIZATION.md), and
-   names both authorizations that can open carrier dialing — §5 for the internal
-   rehearsal and §9 for the external canary — because the variable itself cannot
-   tell them apart.
+   names all three authorizations that can open carrier dialing — §11 for
+   human-only rep dialing, §5 for the internal rehearsal, and §9 for the
+   external canary — because the variable itself cannot tell them apart. Set it
+   for the one actually granted and name that section in the deploy notes.
 5. Deploy rules and indexes first; wait for index readiness.
 6. Deploy functions and Realtime sideband with production secrets.
 7. Seed seller profiles/knowledge using dry-run output, then verify the exact

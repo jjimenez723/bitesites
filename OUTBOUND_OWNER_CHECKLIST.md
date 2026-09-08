@@ -56,10 +56,35 @@ production.
 
 ---
 
-## 3. Production deployed but disabled — ❌ **not done**, and no longer the shape of what is happening
+## 3. Production deployed — ✅ **deployed 2026-09-08 under §11**, and never "disabled"
 
-Production still runs the code that predates this workstream. Two things read
-from the live project on 2026-08-25 that this stage did not anticipate:
+> **Deploy notes — 2026-09-08, authorization §11 (human-only rep dialing).**
+> `npm run preflight:production` refused first, exactly as designed, until
+> `OUTBOUND_CANARY_AUTHORIZATION=authorized` was supplied; it then reported
+> `BITESITES_DEPLOYMENT_ENVIRONMENT=production`,
+> `OUTBOUND_EXTERNAL_DIALING=enabled`, `PAID_PHONE_SCREENING=disabled` and no
+> unauthorised capability. Deployed in order: `firestore:rules,firestore:indexes`
+> (rules already current, indexes unchanged — the human-led pickup query is
+> served by the existing `campaignId, state, nextAttemptAt, priority` index),
+> then Functions, then Hosting. `dialHybridTargets` and
+> `startHybridDialerSession` were confirmed updated by their deployed
+> `updateTime`, and the released Hosting bundle was confirmed to contain the new
+> dialer. The quota warnings in the Functions log are the usual per-minute
+> mutation retries on a ~117-function codebase; the deploy exited 0.
+>
+> **What this deploy did not do:** it placed no call, unpaused no campaign,
+> seeded no data, and issued no consent grant. §11 is human-only; an artificial
+> voice remains closed on per-number consent and screening regardless of the
+> flag.
+
+The stage below is kept as written on 2026-08-25 because the reasoning still
+explains how production got into the state this deploy found it in.
+
+### Why this stage said "disabled" and stopped being true
+
+As of 2026-08-25, production still ran the code that predated this workstream —
+no longer true since the 2026-09-08 deploy above. Two things read from the live
+project on 2026-08-25 that this stage did not anticipate:
 
 - The **deployed** runtime already has `OUTBOUND_EXTERNAL_DIALING=enabled`
   (functions last deployed 2026-08-25 20:25 UTC). The gate has been open in
