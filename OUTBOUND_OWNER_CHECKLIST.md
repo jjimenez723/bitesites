@@ -1,6 +1,6 @@
 # Outbound owner checklist
 
-Last updated: 2026-08-25
+Last updated: 2026-09-08
 
 Six stages, in order. Each one is a different question with a different
 decider, and none of them implies the next. The long-form reasoning lives in
@@ -70,6 +70,17 @@ from the live project on 2026-08-25 that this stage did not anticipate:
   intended to run rather than stay paused. "Deployed but disabled" is no longer
   the target state for the rep dialer; it is still the target state for anything
   with an artificial voice.
+
+A third thing, found 2026-09-08 by trying to use the console the way a rep
+would: with §11 granted and the flag on, the rep dialer **still could not place
+a call**. Every one of the campaign's targets sat in `pending` behind the AI
+call-plan approval gate, which the dial path applied to human sessions too, so
+the dialer reported "prepare and approve at least one call plan" and offered a
+four-step guided workflow instead of a call. The gate is now scoped to who is
+speaking — see the human-led quick dial section of
+[OUTBOUND_PRODUCTION_READINESS.md](./OUTBOUND_PRODUCTION_READINESS.md) — and
+Outbound Calls → Dialer opens on a single **Start dialing** button. An
+authorization nobody can act on is worth what an unauthorized feature is worth.
 
 Before a production Functions deploy:
 

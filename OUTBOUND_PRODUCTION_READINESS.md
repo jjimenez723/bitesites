@@ -1,6 +1,6 @@
 # Outbound AI production-readiness plan
 
-Last updated: 2026-08-25
+Last updated: 2026-09-08
 
 ## Decision
 
@@ -111,7 +111,7 @@ predates this workstream, with every campaign paused.
 | Recording | Disabled at campaign sanitization and carrier call creation. |
 | Voicemail | No generated or generic voicemail is authorized. New campaigns default to none. |
 | Research | Sourced facts carry evidence type, timestamp, confidence, and speakability. Internal IDs, stale directory facts, negative homepage guesses, and unsupported inferences cannot enter a spoken call plan. |
-| Call plan | Approved research is sealed to seller, target, contact, policy version, and content hash. Runtime rejects a mismatch. |
+| Call plan | Approved research is sealed to seller, target, contact, policy version, and content hash. Runtime rejects a mismatch. The gate is scoped to who is speaking: a **human-only** session (`operatingMode: 'human'`) dials targets still queued behind approval, because there is no AI to govern. Such a leg is placed with an unapproved or absent snapshot, so if it were ever handed to an AI, `normalizeApprovedCallPlan` returns null and the runtime falls back to neutral discovery. Every AI and hybrid session, and the autonomous campaign runner, keep the original gate — proven by `npm run test:outbound`. |
 | Sales authority | All known sellers are clamped to no pricing, discount, binding close, or payment authority. |
 | Tool execution | Function-call IDs are immutable idempotency keys. Mutating retries cannot replay an uncertain action. Per-call quotas cap total, knowledge, availability, holds, bookings, and follow-up. |
 | Follow-up | Disabled in the launch profiles. The backend requires explicit in-call channel confirmation, resolves the recipient from the current contact record, and reports only “queued,” never “sent.” |
@@ -303,6 +303,56 @@ decisions. The primary workflow should reduce to:
 
 Advanced research, consent, policy, provider, and audit details stay available
 without competing with the main action.
+
+### Human-led quick dial — built 2026-09-08
+
+Outbound Calls → **Dialer** now opens on `src/admin/outbound/QuickDial.jsx`: one
+**Start dialing** button, and when someone answers, the business name, contact,
+phone, category, location, their local time, and their website — as a link plus
+a best-effort inline preview loaded by the rep's own browser, never by a
+screenshot vendor. Outcome is one click, which dispositions the call, hangs up,
+and lets the server's capacity refill place the next one. The four-step guided
+flow (create plan → review & approve → preflight → start calls) still exists,
+one click away under **Advanced**, and remains the only way to reach AI-assisted
+and AI-led modes.
+
+What this changed in the backend, and only this:
+
+- `RESEARCH_WAITING_STATES` / `HUMAN_LED_DIALABLE_STATES` in
+  `functions/outbound-contacts.js`; `eligibleTargets` and `claimTarget` take the
+  pickup set as an argument, and `claimTarget` still re-checks it inside its
+  transaction.
+- `dialNext` passes the wider set, and calls `attachExistingResearch` instead of
+  `ensureResearch`, **only** when `session.operatingMode === 'human'`.
+- `releaseTarget` returns a target to its pre-claim state rather than to `ready`
+  when it was picked up out of the approval queue, so a human-led pickup can
+  never promote a target into the set an AI session dials from.
+
+What this did **not** change: compliance, calling hours, suppression, DNC, the
+account boundary, AI-voice consent, pre-dial screening, the one-live-leg and
+one-attempt operating limits, and the deployment admission gate. All of them are
+evaluated per leg in `dialNext` regardless of which screen asked for the call.
+`npm run test:outbound` (145 assertions) covers both directions: the human-only
+session dials the queued target and generates no research doing it, and the
+hybrid session on the same campaign still cannot.
+
+**Human-only dialing was already authorized** — §11 of
+[OUTBOUND_LAUNCH_AUTHORIZATION.md](./OUTBOUND_LAUNCH_AUTHORIZATION.md), granted
+2026-08-25, with `OUTBOUND_EXTERNAL_DIALING=enabled` already in the deployed
+production runtime. The AI call-plan gate applying to human sessions was what
+remained, and is what this change removed. Where dialing is *not* admitted the
+screen names the switch rather than reporting a generic failure. This authorizes
+nothing new: an artificial voice still fails closed on per-number consent and
+pre-dial screening, both of which have zero records in production.
+
+**Throughput is capped well below a full calling day.** Every non-mock provider
+is held to one live leg and one attempt by `resolveCampaignOperatingLimits`, so
+one rep reaches roughly 150–250 dials in a day, not the 500–1,000 a predictive
+dialer reaches. Raising it is a deliberate decision with its own consequences —
+abandoned-call rates, answering-machine detection, and the FCC one-in-thirty
+rule — and belongs in
+[OUTBOUND_LAUNCH_AUTHORIZATION.md](./OUTBOUND_LAUNCH_AUTHORIZATION.md), not in a
+UI change.
 
 ## Deployment sequence
 

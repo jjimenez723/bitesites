@@ -10,6 +10,7 @@ import ProspectDetail from './outbound/ProspectDetail';
 import ImportReview from './outbound/ImportReview';
 import LeadQueue from './outbound/LeadQueue';
 import DialerControls from './outbound/DialerControls';
+import QuickDial from './outbound/QuickDial';
 import CallLaterQueue from './outbound/CallLaterQueue';
 import CallHistory from './outbound/CallHistory';
 import ProviderStatus from './outbound/ProviderStatus';
@@ -29,7 +30,7 @@ const TABS = [
   ['prospects', 'Prospects'],
   ['review', 'Import Review'],
   ['queue', 'Queue'],
-  ['dialer', 'Live Dialer'],
+  ['dialer', 'Dialer'],
   ['coaching', 'Team Coaching'],
   ['agents', 'AI Agents'],
   ['consent', 'AI Consent'],
@@ -76,6 +77,9 @@ export default function OutboundCalls({ role = 'admin', currentUid = '' }) {
   const [campaignId, setCampaignId] = useState('');
   const [prospectId, setProspectId] = useState(null);
   const [queueEntry, setQueueEntry] = useState({ group: 'workable', key: 0 });
+  // The dialer opens on the one-button human flow. The guided AI setup is a
+  // deliberate detour, not the thing you have to get past to make a call.
+  const [dialerAdvanced, setDialerAdvanced] = useState(false);
   const [config, setConfig] = useState({ data: null, loading: true, error: null });
   const tabRefs = useRef([]);
 
@@ -171,7 +175,7 @@ export default function OutboundCalls({ role = 'admin', currentUid = '' }) {
             <h2>{activeCampaign?.name || 'Choose a campaign'}</h2>
             <p>
               {activeCampaign
-                ? 'Prepare and review call plans before opening the dialer. Starting a campaign only arms its queue; it never places a call by itself.'
+                ? 'Open Dialer to start calling this list yourself. Starting a campaign only arms its queue; it never places a call by itself.'
                 : 'Select a campaign to see its readiness, queue, dialer, and appointment context in one place.'}
             </p>
           </div>
@@ -269,15 +273,32 @@ export default function OutboundCalls({ role = 'admin', currentUid = '' }) {
               canManage={canManage}
               onSelectCampaign={setCampaignId} onOpenProspect={canManage ? setProspectId : null} />
           )}
-          {tab === 'dialer' && (
-            <DialerControls
+          {tab === 'dialer' && (dialerAdvanced ? (
+            <>
+              <div className="outbound-dialer-mode-switch">
+                <button className="btn-admin" type="button" onClick={() => setDialerAdvanced(false)}>
+                  ← Back to simple dialing
+                </button>
+                <p className="admin-note">
+                  Advanced setup: AI-assisted modes, call plans, agent profiles and preflight.
+                </p>
+              </div>
+              <DialerControls
+                campaignId={campaignId}
+                campaigns={campaigns.rows}
+                onSelectCampaign={setCampaignId}
+                onOpenQueue={() => openQueue('workable')}
+                role={role}
+              />
+            </>
+          ) : (
+            <QuickDial
               campaignId={campaignId}
               campaigns={campaigns.rows}
               onSelectCampaign={setCampaignId}
-              onOpenQueue={() => openQueue('workable')}
-              role={role}
+              onOpenAdvanced={() => setDialerAdvanced(true)}
             />
-          )}
+          ))}
           {tab === 'coaching' && <TeamCallCoach accountIds={accountIds} allAccounts={allAccounts} />}
           {tab === 'agents' && <AgentProfiles />}
           {tab === 'consent' && <ConsentRegistry />}

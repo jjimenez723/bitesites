@@ -25,6 +25,7 @@ const {
   releaseTargetsForApprovedResearch, prepareCampaignResearchBatch,
   approveCampaignResearchBatch
 } = await import('./outbound-calls.js');
+const { releaseTarget } = await import('./outbound-contacts.js');
 const { importProspects } = await import('./prospect-import.js');
 const { assertSupports } = await import('./providers/calling/index.js');
 const { MockDialer } = await import('./providers/calling/mock-dialer.js');
@@ -448,6 +449,67 @@ const afterApproval = await dialNext(db, gatedSession.sessionId, { now: NOW, fet
 check('once approved, the call proceeds', afterApproval.started.length === 1, JSON.stringify(afterApproval));
 
 await stopDialerSession(db, gatedSession.sessionId, { reason: 'test', now: NOW });
+
+// ---------------------------------------------------------------------------
+// The approval gate exists because an AI may only speak from an approved plan.
+// A human-only session has no AI, so it dials the same queue without one — and
+// must not, in doing so, hand an unapproved target to an AI session.
+console.log('\nhuman-only calling does not need an approved call plan');
+
+const humanLedCampaign = await createCampaign(db, {
+  accountId: 'bitesites',
+  name: 'Human led', mode: 'parallel', provider: 'mock',
+  callerId: '+15551234567', requireResearchApproval: true
+}, { createdBy: 'test' });
+const [humanLedProspect] = (await importProspects(db, [
+  { name: 'Rep Dials Co', phone: '2015557878', address: 'Ridgewood, NJ', website: 'repdials.com' }
+], { source: { system: 'csv', provider: 'csv' } })).written;
+await importTargets(db, humanLedCampaign, { prospectIds: [humanLedProspect], now: NOW });
+await setCampaignStatus(db, humanLedCampaign, 'running', { actor: 'test' });
+
+const humanLedTargetId = (await db.collection('outboundTargets').where('campaignId', '==', humanLedCampaign).get()).docs[0].id;
+check('the target starts behind the approval gate',
+  (await db.doc(`outboundTargets/${humanLedTargetId}`).get()).get('state') === 'pending');
+
+// A hybrid session sees exactly what it saw before: nothing dialable.
+const hybridSession = await startDialerSession(db, { campaignId: humanLedCampaign, userUid: 'rep-hy', mode: 'parallel', now: NOW });
+await db.doc(`dialerSessions/${hybridSession.sessionId}`).set({ operatingMode: 'hybrid' }, { merge: true });
+const hybridDial = await dialNext(db, hybridSession.sessionId, { now: NOW, fetchImpl: async () => ({ ok: false, status: 0 }) });
+check('an AI-assisted session still cannot dial an unapproved target',
+  hybridDial.started.length === 0, JSON.stringify(hybridDial));
+await stopDialerSession(db, hybridSession.sessionId, { reason: 'test', now: NOW });
+
+const humanSession = await startDialerSession(db, { campaignId: humanLedCampaign, userUid: 'rep-hu', mode: 'parallel', now: NOW });
+await db.doc(`dialerSessions/${humanSession.sessionId}`).set({ operatingMode: 'human' }, { merge: true });
+let researchWasGenerated = false;
+const humanDial = await dialNext(db, humanSession.sessionId, {
+  now: NOW,
+  fetchImpl: async () => { researchWasGenerated = true; return { ok: false, status: 0 }; }
+});
+check('a human-only session dials the same target', humanDial.started.length === 1, JSON.stringify(humanDial));
+check('and does not generate research to do it', researchWasGenerated === false);
+
+const humanCall = await db.doc(`calls/${humanDial.started[0].callId}`).get();
+check('the call carries no approved call plan, so an AI attached to it gets neutral discovery',
+  humanCall.get('callPlan.approved') === false && humanCall.get('callPlan.status') === 'missing',
+  JSON.stringify(humanCall.get('callPlan')));
+check('the rep still gets the identity they need on screen',
+  humanCall.get('companyName') === 'Rep Dials Co'
+  && humanCall.get('phoneE164') === '+12015557878'
+  && humanCall.get('website') === 'https://repdials.com'
+  && humanCall.get('contactLocation.region') === 'NJ',
+  JSON.stringify({
+    company: humanCall.get('companyName'), phone: humanCall.get('phoneE164'),
+    website: humanCall.get('website'), location: humanCall.get('contactLocation')
+  }));
+
+// Handing the target back must not promote it out of the approval queue: an
+// AI session dialing `ready` would otherwise inherit a plan nobody approved.
+await releaseTarget(db, humanLedTargetId, { state: 'ready' });
+check('releasing a human-led target returns it to the approval queue, not to ready',
+  (await db.doc(`outboundTargets/${humanLedTargetId}`).get()).get('state') === 'pending');
+
+await stopDialerSession(db, humanSession.sessionId, { reason: 'test', now: NOW });
 
 const toggledCampaign = await createCampaign(db, {
   accountId: 'bitesites',

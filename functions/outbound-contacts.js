@@ -22,6 +22,19 @@ export const TARGET_STATES = [
 /** States a target can be picked up from. Everything else is resolved or blocked. */
 export const DIALABLE_STATES = ['ready', 'call_later', 'no_answer', 'voicemail', 'busy'];
 
+/**
+ * States a target waits in while an AI call plan is researched and approved.
+ *
+ * That gate exists because an AI may only speak from a sealed, approved plan.
+ * It is not a compliance check on the number — `evaluateCompliance` owns that,
+ * and it runs on every leg regardless of who is speaking. A human-only session
+ * has no AI to govern, so these targets are dialable there and nowhere else.
+ */
+export const RESEARCH_WAITING_STATES = ['pending', 'researching', 'awaiting_approval'];
+
+/** The pickup set for a human-only session. Eight values, inside Firestore's `in` limit. */
+export const HUMAN_LED_DIALABLE_STATES = [...DIALABLE_STATES, ...RESEARCH_WAITING_STATES];
+
 // A session that stops heartbeating has crashed, been closed, or lost its
 // network. Five minutes is long enough that a slow call is never stolen and
 // short enough that a rep who reloaded the tab is not locked out of their queue.
@@ -175,7 +188,7 @@ export function lockIsStale(target, now = new Date()) {
  * same campaign will read the same "next" target, and only a transaction that
  * re-reads inside the commit can make exactly one of them win.
  */
-export async function claimTarget(db, targetId, sessionId, { now = new Date() } = {}) {
+export async function claimTarget(db, targetId, sessionId, { now = new Date(), states = DIALABLE_STATES } = {}) {
   const ref = db.doc(`outboundTargets/${targetId}`);
   return db.runTransaction(async transaction => {
     const snapshot = await transaction.get(ref);
@@ -185,31 +198,52 @@ export async function claimTarget(db, targetId, sessionId, { now = new Date() } 
     if (target.lockedBySessionId && target.lockedBySessionId !== sessionId && !lockIsStale(target, now)) {
       return { claimed: false, reason: 'locked' };
     }
-    if (!DIALABLE_STATES.includes(target.state)) {
+    // Re-checked inside the transaction rather than trusted from the caller's
+    // earlier query. `states` widens what this session may pick up; it does not
+    // remove the check that the target still holds one of them.
+    if (!states.includes(target.state)) {
       return { claimed: false, reason: `state_${target.state}` };
     }
 
     transaction.update(ref, {
       lockedBySessionId: sessionId,
       lockedAt: Timestamp.fromDate(now),
+      // Where this target came from, so a release can put it back there rather
+      // than into `ready`. See releaseTarget.
+      preClaimState: target.state,
       state: 'dialing',
       updatedAt: FieldValue.serverTimestamp()
     });
-    return { claimed: true, target: { id: targetId, ...target, state: 'dialing' } };
+    return { claimed: true, target: { id: targetId, ...target, preClaimState: target.state, state: 'dialing' } };
   });
 }
 
 /** Give a target back — on skip, on session end, or on stale-lock cleanup. */
 export async function releaseTarget(db, targetId, { state = 'ready', nextAttemptAt = null, extra = {} } = {}) {
+  const ref = db.doc(`outboundTargets/${targetId}`);
   const update = {
     lockedBySessionId: '',
     lockedAt: null,
     state,
+    preClaimState: '',
     updatedAt: FieldValue.serverTimestamp(),
     ...extra
   };
+
+  // `ready` is the generic "hand it back unchanged" release used by provider
+  // failures, stale-lock sweeps and session shutdown. For a target a human-only
+  // session picked up out of the AI approval queue, unchanged is not `ready` —
+  // it is the queue it was waiting in, since nothing approved a plan in
+  // between. One read, and only on that path: a disposition names its own state
+  // and never reaches here.
+  if (state === 'ready') {
+    const snapshot = await ref.get();
+    const preClaim = snapshot.get('preClaimState');
+    if (RESEARCH_WAITING_STATES.includes(preClaim)) update.state = preClaim;
+  }
+
   if (nextAttemptAt) update.nextAttemptAt = Timestamp.fromDate(nextAttemptAt);
-  await db.doc(`outboundTargets/${targetId}`).set(update, { merge: true });
+  await ref.set(update, { merge: true });
 }
 
 /**
@@ -222,10 +256,12 @@ export async function releaseTarget(db, targetId, { state = 'ready', nextAttempt
  * alternative (a scheduled sweep that clears stale locks) also exists, in
  * outbound-calls.js, so this filter is belt and braces.
  */
-export async function eligibleTargets(db, campaignId, { limit = 10, now = new Date(), contactType = '' } = {}) {
+export async function eligibleTargets(db, campaignId, {
+  limit = 10, now = new Date(), contactType = '', states = DIALABLE_STATES
+} = {}) {
   let query = db.collection('outboundTargets')
     .where('campaignId', '==', campaignId)
-    .where('state', 'in', DIALABLE_STATES);
+    .where('state', 'in', states);
   if (contactType) query = query.where('contactType', '==', contactType);
 
   const snapshot = await query

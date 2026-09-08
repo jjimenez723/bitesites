@@ -178,6 +178,58 @@ What the branch added on top of that:
 
 ---
 
+## The human-led path is a different, much shorter list — 2026-09-08
+
+Everything above is about **an AI voice** calling someone. If a person does the
+talking, most of that paperwork is not what is standing in the way, because the
+gates it describes are AI-voice gates.
+
+Outbound Calls → **Dialer** now opens on a single **Start dialing** button that
+runs a human-only session: it rings the next person in the list, connects them
+straight to your microphone, and shows you who you are talking to — business
+name, contact, phone, category, town, their local time, and their website.
+Outcome is one click, and the server places the next call. The four numbered
+steps are still there under **Advanced**, and they are still the only way to
+reach the AI modes.
+
+For a human-led call, the server still checks, per call, every time:
+
+- a valid phone number, and the campaign's caller ID is a real E.164 number;
+- the internal Do Not Call list, the suppression list, and do-not-contact;
+- the attempt cap and the retry delay;
+- **local** calling hours and allowed days where that business actually is.
+
+It does **not** check, because these are AI-voice gates: the written AI-voice
+consent grant, and the external pre-dial screening — which is also where the
+**national DNC scrub** lives. So a human-led call in this system is screened
+against *our* lists, not against the national registry. Calls to business
+lines are the usual reason that is acceptable; calls to anything that might be
+a residential or personal mobile number are not, and nothing in this codebase
+will stop you. §11 of
+[OUTBOUND_LAUNCH_AUTHORIZATION.md](./OUTBOUND_LAUNCH_AUTHORIZATION.md) records
+this same gap and the owner's reasoning for accepting it — a Watcher-sourced SMB
+queue is business lines — along with the line-type triage in
+`functions/phone-intelligence.js` that sizes the risk without clearing a number.
+If human-led calling becomes the main channel, the DNC scrub should move to
+cover it.
+
+Two more things that are true and worth knowing before you plan a day around it:
+
+- **This is already authorized.** §11 of
+  [OUTBOUND_LAUNCH_AUTHORIZATION.md](./OUTBOUND_LAUNCH_AUTHORIZATION.md) granted
+  human-only carrier dialing on 2026-08-25, and the deployed production runtime
+  already has `OUTBOUND_EXTERNAL_DIALING=enabled`. What was actually stopping
+  the button was the AI call-plan gate applying to a human session, which is the
+  thing that changed on 2026-09-08. The same flag is *not* an AI authorization:
+  an artificial voice still fails closed on per-number consent and screening,
+  of which production has zero.
+- **One line, one attempt.** Every carrier-backed campaign is capped server-side
+  at a single live leg and one attempt per lead, which is roughly 150–250 dials
+  in a working day for one person — not 500–1,000. That ceiling is a decision in
+  [OUTBOUND_LAUNCH_AUTHORIZATION.md](./OUTBOUND_LAUNCH_AUTHORIZATION.md), not a
+  bug, and raising it brings abandoned-call rate and answering-machine detection
+  along with it.
+
 ## The shortest real path to a first phone call
 
 The cheapest way to make all four gates real once is to call **one** person who

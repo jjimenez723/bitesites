@@ -28,7 +28,8 @@ import {
 } from './outbound-compliance.js';
 import {
   loadContactForTarget, updateContactAfterAttempt, recordContactActivity,
-  claimTarget, releaseTarget, eligibleTargets, lockIsStale, TARGET_STATES
+  claimTarget, releaseTarget, eligibleTargets, lockIsStale, TARGET_STATES,
+  DIALABLE_STATES, HUMAN_LED_DIALABLE_STATES
 } from './outbound-contacts.js';
 import { promoteProspect } from './prospect-conversion.js';
 import {
@@ -572,6 +573,35 @@ export async function ensureResearch(db, target, campaign, { fetchImpl, now = ne
   return { ok: true, research, contact };
 }
 
+/**
+ * A human-led leg is a person reading a screen, not an AI reading a plan.
+ *
+ * So this never generates research and never blocks a dial on approval: it
+ * attaches a brief that already exists, and otherwise returns none. Two
+ * consequences are deliberate. A rep can start calling a freshly imported list
+ * without waiting for research to be generated and approved for every row. And
+ * a call placed this way carries an unapproved (or absent) plan, so if it were
+ * ever handed to an AI, `normalizeApprovedCallPlan` rejects it and the runtime
+ * falls back to neutral discovery rather than speaking from unvetted claims.
+ *
+ * Generation is skipped rather than backgrounded on purpose: at the volumes a
+ * human dialer reaches, one research call per dial is a per-lead bill and a
+ * per-dial latency, for a document the rep is not the consumer of.
+ */
+export async function attachExistingResearch(db, target, campaign, { now = new Date() } = {}) {
+  const contact = await loadContactForTarget(db, target);
+  if (!contact) return { ok: false, reason: 'contact_missing' };
+
+  const key = contactKey({ contactType: target.contactType, leadId: target.leadId, prospectId: target.prospectId });
+  const research = await loadResearch(db, key, { now }).catch(() => null);
+  const usable = research
+    && research.accountId === campaign.accountId
+    && research.evidencePolicyVersion === RESEARCH_EVIDENCE_POLICY_VERSION
+    ? research
+    : null;
+  return { ok: true, research: usable, contact };
+}
+
 /** Release every queued target backed by a newly approved research brief. */
 export async function releaseTargetsForApprovedResearch(db, key, accountId) {
   const match = /^(lead|prospect)_([A-Za-z0-9_-]+)$/.exec(clean(key, 200));
@@ -963,7 +993,14 @@ export async function dialNext(db, sessionId, {
   // bounded but useful slice; research still runs only until enough eligible
   // legs have been claimed.
   const scanLimit = Math.max(60, wanted * 20);
-  const candidates = await eligibleTargets(db, session.campaignId, { limit: scanLimit, now });
+  // Human-only sessions may also pick up targets still queued behind AI call
+  // plan approval — see RESEARCH_WAITING_STATES. Every other mode, and the
+  // autonomous AI runner below, keeps the narrow set.
+  const humanLed = session.operatingMode === 'human';
+  const pickupStates = humanLed ? HUMAN_LED_DIALABLE_STATES : DIALABLE_STATES;
+  const candidates = await eligibleTargets(db, session.campaignId, {
+    limit: scanLimit, now, states: pickupStates
+  });
 
   // Wake the AI media service now, while these legs are still ringing.
   //
@@ -988,7 +1025,7 @@ export async function dialNext(db, sessionId, {
   for (const candidate of candidates) {
     if (claimedTargets.length >= wanted) break;
 
-    const claim = await claimTarget(db, candidate.id, sessionId, { now });
+    const claim = await claimTarget(db, candidate.id, sessionId, { now, states: pickupStates });
     if (!claim.claimed) { rejected.push({ targetId: candidate.id, reason: claim.reason }); continue; }
     const target = claim.target;
 
@@ -1049,7 +1086,9 @@ export async function dialNext(db, sessionId, {
       continue;
     }
 
-    const briefResult = await ensureResearch(db, target, campaign, { fetchImpl, now });
+    const briefResult = humanLed
+      ? await attachExistingResearch(db, target, campaign, { now })
+      : await ensureResearch(db, target, campaign, { fetchImpl, now });
     if (!briefResult.ok) {
       await releaseTarget(db, target.id, {
         state: briefResult.reason === 'awaiting_approval' ? 'awaiting_approval' : 'failed'
