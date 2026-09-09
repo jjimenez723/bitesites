@@ -12,7 +12,7 @@
 process.env.GCLOUD_PROJECT = 'demo-bitesites';
 
 const { initializeApp } = await import('firebase-admin/app');
-const { getFirestore, Timestamp } = await import('firebase-admin/firestore');
+const { FieldValue, getFirestore, Timestamp } = await import('firebase-admin/firestore');
 initializeApp({ projectId: 'demo-bitesites' });
 const db = getFirestore();
 
@@ -154,6 +154,11 @@ check('a prospect that is not ready cannot join a campaign',
 
 await setCampaignStatus(db, campaignId, 'running', { actor: 'test' });
 
+// The production seed predates account ownership. That document is still a
+// supported BiteSites read, and starting it must never send `undefined` into a
+// Firestore write.
+await db.doc(`outboundCampaigns/${campaignId}`).set({ accountId: FieldValue.delete() }, { merge: true });
+
 // ---------------------------------------------------------------------------
 console.log('\na parallel session dials three lines');
 
@@ -161,6 +166,8 @@ const { sessionId } = await startDialerSession(db, {
   campaignId, userUid: 'rep-1', mode: 'parallel', concurrency: 3, now: NOW
 });
 check('the session started', Boolean(sessionId));
+check('a legacy campaign starts under the BiteSites account',
+  (await db.doc(`dialerSessions/${sessionId}`).get()).get('accountId') === 'bitesites');
 await db.doc(`dialerSessions/${sessionId}`).set({ hybridV2: true }, { merge: true });
 const resumed = await findActiveDialerSession(db, 'rep-1', { hybridOnly: true });
 check('the active hybrid session can be recovered after client state is lost', resumed?.id === sessionId);
@@ -179,6 +186,8 @@ check('three targets are locked as dialing', dialingTargets.size === 3, String(d
 const callDocs = await db.collection('calls').where('sessionId', '==', sessionId).get();
 check('a call document exists per leg', callDocs.size === 3);
 check('each call is marked outbound', callDocs.docs.every(entry => entry.get('direction') === 'outbound'));
+check('legacy campaign calls retain the BiteSites account boundary',
+  callDocs.docs.every(entry => entry.get('accountId') === 'bitesites'));
 check('each call names its dialer mode', callDocs.docs.every(entry => entry.get('dialerMode') === 'parallel'));
 check('each call has a deterministic id',
   callDocs.docs.every(entry => entry.id === outboundCallId(entry.get('targetId'), entry.get('attemptNumber'))));

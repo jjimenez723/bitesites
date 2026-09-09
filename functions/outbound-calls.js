@@ -67,6 +67,24 @@ export const SESSION_HEARTBEAT_TTL_MS = 2 * 60 * 1000;
 
 const asDate = value => (value?.toDate ? value.toDate() : value instanceof Date ? value : null);
 
+/**
+ * Read a campaign through the one explicitly supported legacy exception.
+ *
+ * Campaigns created before the seller boundary was introduced have no
+ * `accountId`; those records belong to the BiteSites house account.  Normalize
+ * that fact as soon as the document is read so every downstream Firestore
+ * write contains a real account id instead of leaking `undefined` into a
+ * session, call or call-plan snapshot.
+ */
+const readCampaign = (snapshot, id) => {
+  const data = snapshot.data() || {};
+  return {
+    id,
+    ...data,
+    accountId: readAccountId(data.accountId, { fallback: LEGACY_ACCOUNT_ID })
+  };
+};
+
 // ------------------------------------------------------------------ campaigns
 
 /** Validate and bound everything an administrator can set on a campaign. */
@@ -641,7 +659,7 @@ export async function prepareCampaignResearchBatch(db, campaignId, {
 } = {}) {
   const campaignSnapshot = await db.doc(`outboundCampaigns/${campaignId}`).get();
   if (!campaignSnapshot.exists) throw new Error('Campaign not found');
-  const campaign = { id: campaignId, ...campaignSnapshot.data() };
+  const campaign = readCampaign(campaignSnapshot, campaignId);
   const boundedLimit = Math.max(1, Math.min(25, Number(limit) || 12));
   const boundedConcurrency = Math.max(1, Math.min(6, Number(concurrency) || 4));
   const snapshot = await db.collection('outboundTargets')
@@ -698,7 +716,7 @@ export async function approveCampaignResearchBatch(db, campaignId, {
 } = {}) {
   const campaignSnapshot = await db.doc(`outboundCampaigns/${campaignId}`).get();
   if (!campaignSnapshot.exists) throw new Error('Campaign not found');
-  const campaign = { id: campaignId, ...campaignSnapshot.data() };
+  const campaign = readCampaign(campaignSnapshot, campaignId);
   const boundedLimit = Math.max(1, Math.min(200, Number(limit) || 200));
   const snapshot = await db.collection('outboundTargets')
     .where('campaignId', '==', campaignId)
@@ -885,7 +903,7 @@ export async function findActiveDialerSession(db, userUid, { hybridOnly = false 
 export async function startDialerSession(db, { campaignId, userUid, mode, concurrency = 1, now = new Date() }) {
   const campaignSnapshot = await db.doc(`outboundCampaigns/${campaignId}`).get();
   if (!campaignSnapshot.exists) throw new Error('Campaign not found');
-  const campaign = { id: campaignId, ...campaignSnapshot.data() };
+  const campaign = readCampaign(campaignSnapshot, campaignId);
 
   if (campaign.status === 'paused' || campaign.status === 'cancelled') {
     throw new Error(`Campaign is ${campaign.status}`);
@@ -960,7 +978,7 @@ export async function dialNext(db, sessionId, {
 
   const campaignSnapshot = await db.doc(`outboundCampaigns/${session.campaignId}`).get();
   if (!campaignSnapshot.exists) throw new Error('Campaign not found');
-  const campaign = { id: session.campaignId, ...campaignSnapshot.data() };
+  const campaign = readCampaign(campaignSnapshot, session.campaignId);
   // Checked before the status so a halted campaign reports why it stopped
   // rather than the generic pause the breaker wrote on its way past.
   if (campaignSafetyLockEngaged(campaign)) {
@@ -1205,7 +1223,7 @@ export async function runAICampaignSlice(db, campaignId, {
 } = {}) {
   const campaignSnapshot = await db.doc(`outboundCampaigns/${campaignId}`).get();
   if (!campaignSnapshot.exists) throw new Error('Campaign not found');
-  const campaign = { id: campaignId, ...campaignSnapshot.data() };
+  const campaign = readCampaign(campaignSnapshot, campaignId);
   if (campaignSafetyLockEngaged(campaign)) return { started: [], reason: 'campaign_safety_lock' };
   if (campaign.status !== 'running') return { started: [], reason: `campaign_${campaign.status}` };
   if (campaign.mode !== 'ai') return { started: [], reason: 'not_an_ai_campaign' };

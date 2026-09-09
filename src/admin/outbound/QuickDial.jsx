@@ -13,6 +13,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { outbound, toDate, useAction, useLiveCalls, useLiveDoc, useSessionHeartbeat } from './data';
+import { playDialerCue, primeDialerCue, readDialerSoundPreference, writeDialerSoundPreference } from './dialer-cue';
 import { formatPhone } from './SourceBadge';
 import { hybridVoiceState, joinHybridCall, leaveHybridVoice, prepareHybridVoice, setHybridVoiceMuted } from './voice-client';
 
@@ -32,6 +33,15 @@ const BLOCKER_COPY = {
   session_ended: 'That dialing session has ended. Start dialing again.'
 };
 
+/** Keep implementation failures out of the operator-facing dialer. */
+function startErrorMessage(error) {
+  const message = String(error?.message || '');
+  if (/accountId[\s\S]*(?:undefined|not a valid Firestore document)|(?:undefined|not a valid Firestore document)[\s\S]*accountId/i.test(message)) {
+    return 'This calling list is missing its account assignment, so dialing could not start. No call was placed. Open Advanced, save the campaign, then try again.';
+  }
+  return message || 'Dialing could not start. No call was placed. Try again, or open Advanced to check the campaign.';
+}
+
 const REJECTION_COPY = {
   awaiting_approval: 'waiting for research approval',
   contact_missing: 'missing their contact record',
@@ -49,7 +59,15 @@ const REJECTION_COPY = {
 };
 
 /** Why the queue came back empty, in one sentence a person can act on. */
-function emptyQueueReason(result) {
+function displayTime(value) {
+  const [hours, minutes] = String(value || '').split(':').map(Number);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return '';
+  const suffix = hours >= 12 ? 'PM' : 'AM';
+  const hour = hours % 12 || 12;
+  return `${hour}:${String(minutes).padStart(2, '0')} ${suffix}`;
+}
+
+function emptyQueueReason(result, campaign) {
   const availability = result?.availability || {};
   const counts = availability.counts || {};
   const later = Number(counts.callLater) || 0;
@@ -58,7 +76,14 @@ function emptyQueueReason(result) {
     .slice(0, 2)
     .map(([reason, count]) => `${count} ${REJECTION_COPY[reason] || reason.replace(/_/g, ' ')}`);
 
-  if (top.length) return `Nobody can be called right now — ${top.join(', and ')}.`;
+  if (top.length) {
+    const start = displayTime(campaign?.localStartTime);
+    const end = displayTime(campaign?.localEndTime);
+    const window = Number(availability.rejectedByReason?.outside_calling_hours) > 0 && start && end
+      ? ` This list calls only from ${start} to ${end} in each prospect’s local time.`
+      : '';
+    return `Nobody can be called right now — ${top.join(', and ')}.${window}`;
+  }
   if (later > 0) return `${later} ${later === 1 ? 'person is' : 'people are'} scheduled for later, but none are due yet.`;
   return 'This list has nobody left to call. Add leads to the campaign to keep going.';
 }
@@ -172,11 +197,13 @@ export default function QuickDial({ campaignId, campaigns = [], onSelectCampaign
   const [blocker, setBlocker] = useState('');
   const [voiceError, setVoiceError] = useState('');
   const [muted, setMuted] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState(readDialerSoundPreference);
   // Which call a follow-up time is being picked for, so an outcome can never
   // land on the prospect who happened to be on screen when it was confirmed.
   const [followUp, setFollowUp] = useState({});
   const [now, setNow] = useState(Date.now());
   const joiningRef = useRef(false);
+  const lastCuedCallRef = useRef('');
   const action = useAction();
 
   const campaign = campaigns.find(entry => entry.id === campaignId) || null;
@@ -205,6 +232,15 @@ export default function QuickDial({ campaignId, campaigns = [], onSelectCampaign
   const onCall = controller === 'human' && Boolean(live);
   const running = session?.status === 'active';
   const dialing = running && Boolean(session?.autoDial?.enabled);
+  const waitingForTargets = dialing && !live && session?.autoDial?.state === 'waiting_for_targets';
+  const findingNext = dialing && !live && !waitingForTargets;
+  const ringing = Boolean(live) && !onCall;
+
+  useEffect(() => {
+    if (!live?.id || lastCuedCallRef.current === live.id) return;
+    lastCuedCallRef.current = live.id;
+    if (soundEnabled) playDialerCue();
+  }, [live?.id, soundEnabled]);
 
   useEffect(() => {
     if (!running && !call) return undefined;
@@ -267,7 +303,7 @@ export default function QuickDial({ campaignId, campaigns = [], onSelectCampaign
 
   const describeResult = useCallback(result => {
     if ((result?.started || []).length) return '';
-    if (result?.reason === 'no_eligible_targets') return emptyQueueReason(result);
+    if (result?.reason === 'no_eligible_targets') return emptyQueueReason(result, campaign);
     // The one blocker that is a deployment decision rather than a data problem,
     // so it says which decision instead of "no call was placed".
     if (result?.reason === 'external_dialing_disabled') {
@@ -276,30 +312,36 @@ export default function QuickDial({ campaignId, campaigns = [], onSelectCampaign
         : 'Outside calling is switched off for this deployment (OUTBOUND_EXTERNAL_DIALING). Nothing was dialed — an owner turns it on at deploy time.';
     }
     return BLOCKER_COPY[result?.reason] || 'No call was placed. Nothing was dialed.';
-  }, []);
+  }, [campaign]);
 
   const start = () => action.run(async () => {
-    setBlocker('');
-    setVoiceError('');
-    // This click is the browser gesture that is allowed to ask for the
-    // microphone. Asking later, when the server assigns an answered call,
-    // is too late.
-    await prepareHybridVoice();
-    const started = await outbound.startHybridSession(campaignId, {
-      operatingMode: 'human',
-      concurrency: 1,
-      agentProfileId: ''
-    });
-    if (!started?.sessionId) throw new Error('The dialer session did not start.');
-    setSessionId(started.sessionId);
-    const result = await outbound.dialHybrid(started.sessionId);
-    const why = describeResult(result);
-    if (why) setBlocker(why);
-    return result;
+    try {
+      setBlocker('');
+      setVoiceError('');
+      if (soundEnabled) await primeDialerCue();
+      // This click is the browser gesture that is allowed to ask for the
+      // microphone. Asking later, when the server assigns an answered call,
+      // is too late.
+      await prepareHybridVoice();
+      const started = await outbound.startHybridSession(campaignId, {
+        operatingMode: 'human',
+        concurrency: 1,
+        agentProfileId: ''
+      });
+      if (!started?.sessionId) throw new Error('The dialer session did not start.');
+      setSessionId(started.sessionId);
+      const result = await outbound.dialHybrid(started.sessionId);
+      const why = describeResult(result);
+      if (why) setBlocker(why);
+      return result;
+    } catch (error) {
+      throw new Error(startErrorMessage(error), { cause: error });
+    }
   }, '');
 
   const dialAgain = () => action.run(async () => {
     setBlocker('');
+    if (soundEnabled) await primeDialerCue();
     const result = await outbound.dialHybrid(sessionId);
     const why = describeResult(result);
     if (why) setBlocker(why);
@@ -345,6 +387,13 @@ export default function QuickDial({ campaignId, campaigns = [], onSelectCampaign
     catch (error) { setVoiceError(error?.message || 'Your microphone is not connected.'); }
   };
 
+  const toggleSound = async () => {
+    const next = !soundEnabled;
+    setSoundEnabled(next);
+    writeDialerSoundPreference(next);
+    if (next && await primeDialerCue()) playDialerCue();
+  };
+
   const counts = campaign?.counts || {};
   // Human-only sessions may dial the research-approval queue too, so the number
   // this screen promises is the number this screen can actually reach.
@@ -364,6 +413,13 @@ export default function QuickDial({ campaignId, campaigns = [], onSelectCampaign
       : startedAtMs ? Math.max(0, Math.floor((now - startedAtMs) / 1000)) : 0;
   const place = placeOf(call?.contactLocation);
   const theirTime = localTime(call?.contactLocation?.timezone);
+  const ringingSecondsLeft = ringing ? Math.max(0, 25 - seconds) : 0;
+  const statusLabel = onCall ? 'On a call'
+    : ringing ? 'Ringing'
+      : ended ? 'Wrap up'
+        : findingNext ? 'Checking list'
+          : waitingForTargets ? 'Waiting'
+            : running ? 'Ready' : 'Stopped';
 
   if (!campaignId) {
     return (
@@ -388,10 +444,18 @@ export default function QuickDial({ campaignId, campaigns = [], onSelectCampaign
           <dl className="quickdial-stats">
             <div><dt>To call</dt><dd>{toCall}</dd></div>
             <div><dt>Called</dt><dd>{done}</dd></div>
-            <div><dt>Status</dt><dd>{onCall ? 'On a call' : dialing ? 'Dialing' : running ? 'Ready' : 'Stopped'}</dd></div>
+            <div><dt>Status</dt><dd>{statusLabel}</dd></div>
           </dl>
         </div>
         <div className="quickdial-bar-actions">
+          <button
+            className={`btn-admin quickdial-sound ${soundEnabled ? 'is-on' : ''}`}
+            type="button"
+            aria-pressed={soundEnabled}
+            onClick={toggleSound}
+          >
+            {soundEnabled ? 'Sound on' : 'Sound off'}
+          </button>
           {running && (
             <button className="btn-admin danger" type="button" disabled={action.busy} onClick={stop}>
               Stop dialing
@@ -436,10 +500,17 @@ export default function QuickDial({ campaignId, campaigns = [], onSelectCampaign
         <div className={`quickdial-live ${onCall ? 'is-connected' : ''}`}>
           <div className="quickdial-person">
             <div className="quickdial-person-head">
-              <span className={`quickdial-state ${onCall ? 'is-live' : ''}`}>
+              <span
+                className={`quickdial-state ${onCall ? 'is-live' : ringing ? 'is-ringing' : findingNext ? 'is-searching' : waitingForTargets ? 'is-waiting' : ''}`}
+                role="status"
+                aria-live="polite"
+              >
+                <span className="quickdial-state-dot" aria-hidden="true" />
                 {onCall ? 'On call'
                   : ended ? 'Call ended — say how it went'
-                    : call ? 'Ringing' : 'Finding the next person'}
+                    : ringing ? 'Calling now'
+                      : findingNext ? 'Checking the list'
+                        : waitingForTargets ? 'Dialer on — no active call' : 'Ready'}
               </span>
               {call && <span className="quickdial-timer">{clock(seconds)}</span>}
             </div>
@@ -456,20 +527,30 @@ export default function QuickDial({ campaignId, campaigns = [], onSelectCampaign
                   ].filter(Boolean).join(' · ') || 'No other details on file'}
                 </p>
                 <p className="quickdial-phone">{formatPhone(call.phoneE164)}</p>
+                {ringing && (
+                  <p className="quickdial-call-progress" role="status">
+                    The carrier is ringing this number. {ringingSecondsLeft > 0
+                      ? `No answer will move to the next person in about ${ringingSecondsLeft} seconds.`
+                      : 'Waiting for the carrier to confirm the result, then the next person is called automatically.'}
+                  </p>
+                )}
+                {onCall && <p className="quickdial-call-progress is-connected">Connected — your microphone is live.</p>}
                 {call.callPlan?.summary && (
                   <p className="quickdial-brief">{call.callPlan.summary}</p>
                 )}
               </>
             ) : (
               <>
-                <h2>{dialing ? 'Placing the next call…' : 'Nothing dialing'}</h2>
+                <h2>{waitingForTargets ? 'No call is active' : findingNext ? 'Checking who can be called…' : 'Nothing dialing'}</h2>
                 <p className="quickdial-person-meta">
-                  {dialing
-                    ? 'The next person in the list is being called. They appear here the moment they answer.'
+                  {waitingForTargets
+                    ? (blocker || 'The dialer is on, but nobody in this list is eligible right now.')
+                    : findingNext
+                      ? 'The dialer is checking the list. A prospect appears here as soon as the carrier starts the call.'
                     : 'Press Call next to keep going.'}
                 </p>
                 <button className="btn-admin primary" type="button" disabled={action.busy} onClick={dialAgain}>
-                  Call next
+                  {waitingForTargets ? 'Check again' : 'Call next'}
                 </button>
               </>
             )}

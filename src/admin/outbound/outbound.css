@@ -746,6 +746,10 @@
   gap: var(--sp-5);
 }
 .bs-admin .quickdial-bar-actions { display: flex; gap: var(--sp-2); }
+.bs-admin .quickdial-sound.is-on {
+  color: var(--good);
+  border-color: color-mix(in srgb, var(--good) 45%, var(--line));
+}
 
 .bs-admin .quickdial-stats { display: flex; gap: var(--sp-6); margin: 0; }
 .bs-admin .quickdial-stats div { display: grid; gap: 2px; }
@@ -819,12 +823,30 @@
   color: var(--ink-3); font-size: 10.5px; font-weight: 750;
   letter-spacing: .08em; text-transform: uppercase;
 }
-.bs-admin .quickdial-state::before {
-  content: ''; width: 8px; height: 8px; border-radius: 50%;
-  background: var(--ink-3);
+.bs-admin .quickdial-state-dot {
+  position: relative;
+  width: 8px; height: 8px; border-radius: 50%;
+  background: currentColor;
+  flex: none;
 }
 .bs-admin .quickdial-state.is-live { color: var(--good); }
-.bs-admin .quickdial-state.is-live::before { background: var(--good); }
+.bs-admin .quickdial-state.is-ringing,
+.bs-admin .quickdial-state.is-searching { color: var(--brand-blue); }
+.bs-admin .quickdial-state.is-waiting { color: var(--warning); }
+.bs-admin .quickdial-state.is-live .quickdial-state-dot::after,
+.bs-admin .quickdial-state.is-ringing .quickdial-state-dot::after,
+.bs-admin .quickdial-state.is-searching .quickdial-state-dot::after {
+  content: '';
+  position: absolute;
+  inset: -5px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  animation: quickdialSignal calc(var(--dur-slow) * 4) linear infinite;
+}
+@keyframes quickdialSignal {
+  from { opacity: .75; transform: scale(.55); }
+  to { opacity: 0; transform: scale(1.35); }
+}
 .bs-admin .quickdial-timer {
   color: var(--ink); font-size: 22px; font-weight: 650;
   font-variant-numeric: tabular-nums;
@@ -841,6 +863,13 @@
   margin: var(--sp-4) 0 0; color: var(--ink);
   font-size: 25px; font-weight: 620; font-variant-numeric: tabular-nums;
 }
+.bs-admin .quickdial-call-progress {
+  margin: var(--sp-3) 0 0;
+  color: var(--brand-blue);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.bs-admin .quickdial-call-progress.is-connected { color: var(--good); }
 .bs-admin .quickdial-brief {
   margin: var(--sp-4) 0 0; padding-top: var(--sp-3);
   border-top: 1px solid var(--line);
@@ -936,3 +965,7 @@
   border-top: 0;
 }
 .bs-admin .quickdial-pending-wrap .quickdial-outcomes-label { color: var(--warning); }
+
+@media (prefers-reduced-motion: reduce) {
+  .bs-admin .quickdial-state-dot::after { animation: none !important; opacity: 0; }
+}
