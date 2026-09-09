@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { addBroadcastUnsubscribe, DEFAULT_EMAIL_TEMPLATES, buildLeadOutreachTemplate, buildMessage, renderTemplate } from './email.js';
+import { addBroadcastUnsubscribe, DEFAULT_EMAIL_TEMPLATES, buildLeadOutreachTemplate, buildMessage, normalizeEmailActions, renderTemplate } from './email.js';
 
 test('renders known variables in all message parts', () => {
   const result = renderTemplate({
@@ -133,4 +133,48 @@ test('lead follow-ups keep custom copy escaped and include the selected meeting 
   assert.match(message.HtmlBody, /https:\/\/meet\.google\.com\/abc-defg-hij/);
   assert.doesNotMatch(message.HtmlBody, /<script>/);
   assert.match(message.TextBody, /Discuss <script>alert\(1\)<\/script>/);
+});
+
+test('lead follow-ups render zero links cleanly', () => {
+  const message = buildMessage({ from: 'BiteSites <jensy@bitesites.org>', to: 'alex@example.com', template: buildLeadOutreachTemplate(), variables: { first_name: 'Alex', subject_line: 'Hello', headline: 'Hello', preheader: 'Hello', message: 'Just checking in.' } });
+  assert.doesNotMatch(message.HtmlBody, /<a class="email-button"/);
+  assert.doesNotMatch(message.TextBody, /https:\/\//);
+});
+
+test('lead follow-ups preserve one and multiple links in HTML and text', () => {
+  const actions = normalizeEmailActions([
+    { label: 'Complete the quick questionnaire', url: 'https://bitesites.org/questionnaire?token=abc', kind: 'questionnaire' },
+    { label: 'Choose a time', url: 'https://bitesites.org/book', kind: 'booking' },
+    { label: 'Proposal & scope', url: 'https://example.com/proposal?a=1&b=2', kind: 'custom' }
+  ]);
+  const message = buildMessage({ from: 'BiteSites <jensy@bitesites.org>', to: 'alex@example.com', template: buildLeadOutreachTemplate({ actions }), variables: { first_name: 'Alex', subject_line: 'Next steps', headline: 'Next steps', preheader: 'Next steps', message: 'Here are the links.' } });
+  for (const action of actions) {
+    assert.match(message.TextBody, new RegExp(action.url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  }
+  assert.match(message.HtmlBody, /Complete the quick questionnaire/);
+  assert.match(message.HtmlBody, /Choose a time/);
+  assert.match(message.HtmlBody, /background:#111111/);
+  assert.match(message.HtmlBody, /border:1px solid #b8b8b8/);
+  assert.match(message.HtmlBody, /Proposal &amp; scope/);
+});
+
+test('custom link labels are escaped and invalid URLs are rejected', () => {
+  const actions = normalizeEmailActions([{ label: '<img src=x onerror=alert(1)>', url: 'https://example.com', kind: 'custom' }]);
+  const template = buildLeadOutreachTemplate({ actions });
+  assert.doesNotMatch(template.html, /<img src=x/);
+  assert.match(template.html, /&lt;img/);
+  assert.throws(() => normalizeEmailActions([{ label: 'Bad', url: 'javascript:alert(1)' }]), /https/);
+  assert.throws(() => normalizeEmailActions([{ label: 'Bad', url: 'http:\/\/example.com' }]), /https/);
+  assert.throws(() => normalizeEmailActions([{ label: '{{message}}', url: 'https://example.com' }]), /placeholder/);
+});
+
+test('Google Meet and questionnaire actions coexist', () => {
+  const actions = normalizeEmailActions([
+    { label: 'Join Google Meet', url: 'https://meet.google.com/abc-defg-hij', kind: 'meeting' },
+    { label: 'Complete the quick questionnaire', url: 'https://bitesites.org/questionnaire?token=abc', kind: 'questionnaire' }
+  ]);
+  const message = buildMessage({ from: 'BiteSites <jensy@bitesites.org>', to: 'alex@example.com', template: buildLeadOutreachTemplate({ actions, withMeetingTime: true }), variables: { first_name: 'Alex', subject_line: 'Confirmed', headline: 'Confirmed', preheader: 'Confirmed', message: 'See you then.', meeting_time: 'Tuesday at 2 PM' } });
+  assert.match(message.TextBody, /Meeting time: Tuesday at 2 PM/);
+  assert.match(message.TextBody, /Join Google Meet/);
+  assert.match(message.TextBody, /Complete the quick questionnaire/);
 });

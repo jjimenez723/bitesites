@@ -24,6 +24,7 @@ import { FieldValue, getFirestore } from 'firebase-admin/firestore';
 
 import { clean } from './prospect-normalization.js';
 import { LEGACY_ACCOUNT_ID } from './accounts.js';
+import { bookingEmailLifecycle } from './lead-email-intent.js';
 import {
   commitBooking,
   createGoogleCalendarClient,
@@ -189,6 +190,7 @@ async function createBookingLead(db, { attendee, notes, appointment, pagePath })
     services: [],
     preferredContactMethod: attendee.phone && !attendee.email ? 'phone' : 'email',
     source: 'booking_page',
+    emailLifecycle: bookingEmailLifecycle(),
     status: 'new',
     accountId: PUBLIC_ACCOUNT_ID,
     createdAt: FieldValue.serverTimestamp(),

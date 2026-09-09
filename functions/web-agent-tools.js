@@ -32,6 +32,7 @@ import {
   loadCalendarSettings, syncAppointmentToGoogle
 } from './booking-calendar.js';
 import { OFFER_TRACKS } from './offer-tracks.js';
+import { inboundInquiryEmailLifecycle } from './lead-email-intent.js';
 
 export const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i;
 
@@ -208,6 +209,7 @@ export async function upsertLead(db, sessionRef, captured, extra = {}, agent) {
       services: [],
       preferredContactMethod: patch.phone && !patch.email ? 'phone' : 'email',
       source: agent.source,
+      emailLifecycle: inboundInquiryEmailLifecycle(agent.source === 'byte_voice' ? 'byte_web' : 'bit_chat'),
       status: 'new',
       createdAt: FieldValue.serverTimestamp(),
       pagePath: text(session.path, 300) || '/',

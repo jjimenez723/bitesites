@@ -1,5 +1,4 @@
-// Every enquiry, whichever way it arrived — the intake form, Bit's chat, or a
-// call with Byte — with triage.
+// Every lead, whether inbound or outbound, with triage.
 //
 // Status is the only field this screen writes. firestore.rules holds createdAt
 // and email immutable on update, so triage can never quietly rewrite who a lead
@@ -51,6 +50,19 @@ const URGENCY_LABELS = {
   asap: 'ASAP', '2_4_weeks': '2–4 weeks', '1_2_months': '1–2 months',
   flexible: 'Flexible', other: 'Other'
 };
+
+const QUESTIONNAIRE_LABELS = {
+  website: 'Website / redesign', voice_ai: 'Voice AI / receptionist', automation: 'Business automation',
+  lead_generation: 'Lead generation', crm_followup: 'CRM / follow-up', custom: 'Something custom', not_sure: 'Not sure yet',
+  not_enough_leads: 'Not enough leads', low_conversion: "Leads aren't converting", missed_calls: 'Missed calls',
+  slow_followup: 'Slow follow-up', weak_website: "Website doesn't represent us", manual_work: 'Too much manual work',
+  credibility: 'Better online credibility', disconnected_systems: 'Disconnected systems', other: 'Other',
+  booked_appointments: 'More booked appointments', qualified_leads: 'More qualified leads', fewer_missed_calls: 'Fewer missed calls',
+  professional_website: 'Professional website', automate_work: 'Automate repetitive work', better_conversion: 'Improve conversion',
+  scale_team: 'Scale without adding staff', asap: 'ASAP', within_month: 'Within a month',
+  one_to_three_months: '1–3 months', exploring: 'Just exploring'
+};
+const answerList = value => (Array.isArray(value) ? value : []).map(item => QUESTIONNAIRE_LABELS[item] || item).join(', ');
 
 const when = (value, withTime = true) => {
   const date = toDate(value);
@@ -234,7 +246,35 @@ function ActivityHistory({ leadId, refreshKey }) {
     return () => { active = false; };
   }, [leadId, refreshKey]);
   if (!rows.length) return null;
-  return <div><div className="panel-section-label">Activity</div><div className="lead-activity">{rows.map(row => <div key={row.id}><span>{row.type === 'stage_change' ? `${row.fromStatus} → ${row.toStatus}` : row.type === 'email_sent' ? `Email sent · ${row.subject || 'Follow-up'}` : 'Commercial details updated'}</span><time>{when(row.at)}</time></div>)}</div></div>;
+  return <div><div className="panel-section-label">Activity</div><div className="lead-activity">{rows.map(row => <div key={row.id}><span>{row.type === 'stage_change' ? `${row.fromStatus} → ${row.toStatus}` : row.type === 'email_sent' ? `Email sent · ${row.subject || 'Follow-up'}` : row.type === 'questionnaire_completed' ? 'Questionnaire completed' : 'Commercial details updated'}</span><time>{when(row.at)}</time></div>)}</div></div>;
+}
+
+function QuestionnaireCard({ lead, onNotice }) {
+  const questionnaire = lead.questionnaire || {};
+  const completed = questionnaire.status === 'completed';
+  const sent = questionnaire.status === 'sent' || completed || questionnaire.sentAt;
+  const answers = questionnaire.answers || {};
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(questionnaire.url); onNotice('Questionnaire link copied.'); }
+    catch { onNotice('Could not copy automatically. Open the link and copy it from the address bar.'); }
+  };
+  return <section className={`lead-questionnaire ${completed ? 'complete' : sent ? 'sent' : ''}`}>
+    <div className="lead-questionnaire-head"><div><span className="panel-section-label">Prospect questionnaire</span><strong>{completed ? 'Questionnaire completed' : sent ? 'Questionnaire sent' : 'Questionnaire not sent'}</strong>{completed && <small>Completed {when(questionnaire.completedAt)}</small>}</div><span className="lead-questionnaire-state">{completed ? '✓' : sent ? '↗' : '—'}</span></div>
+    <div className="lead-questionnaire-actions">
+      {questionnaire.url && <><button className="btn-admin" type="button" onClick={copy}>Copy link</button><a className="btn-admin" href={questionnaire.url} target="_blank" rel="noreferrer">Open questionnaire ↗</a></>}
+      {!completed && <Link className="btn-admin primary" to={`/admin/email?lead=${encodeURIComponent(lead.id)}&questionnaire=1`}>Email questionnaire</Link>}
+    </div>
+    {completed && <div className="lead-questionnaire-answers">
+      <DetailRows rows={[
+        ['Helping with', answerList(answers.helpWith)], ['Business', answers.businessName], ['What they do', answers.businessSummary],
+        ['Current friction', answerList(answers.obstacles)], ['Their context', answers.obstacleDetails],
+        ['A win looks like', answerList(answers.wins)], ['Outcome detail', answers.winDetails],
+        ['Timing', QUESTIONNAIRE_LABELS[answers.timing] || answers.timing], ['Budget', answers.budget?.replaceAll('_', ' ')],
+        ['Location', answers.location], ['Anything else', answers.anythingElse]
+      ]} />
+      {(answers.website || answers.links?.length) && <div className="lead-questionnaire-links">{answers.website && <a href={answers.website} target="_blank" rel="noreferrer">Business website ↗</a>}{(answers.links || []).map((link, index) => <a key={`${link.url}-${index}`} href={link.url} target="_blank" rel="noreferrer">{link.label} ↗</a>)}</div>}
+    </div>}
+  </section>;
 }
 
 export default function Leads() {
@@ -328,7 +368,7 @@ export default function Leads() {
         <div>
           <h1>Leads</h1>
           <p className="admin-topbar-sub">
-            {rows.length} most recent {rows.length === 1 ? 'enquiry' : 'enquiries'}
+            {rows.length} most recent {rows.length === 1 ? 'lead' : 'leads'}
           </p>
         </div>
         <div className="admin-topbar-spacer" />
@@ -388,7 +428,7 @@ export default function Leads() {
                     <th>Received by</th>
                     <th>Status</th>
                     <th>CRM</th>
-                    <th>Received</th>
+                    <th>Added</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -438,6 +478,7 @@ export default function Leads() {
           onClose={closeLead}
         >
           {open.email && <div className="lead-primary-action"><div><strong>Follow up with {firstWord(open.name) || 'this lead'}</strong><span>Send a confirmation, Meet link, or booking page.</span></div><Link className="btn-admin primary" to={`/admin/email?lead=${encodeURIComponent(open.id)}`}>Email lead</Link></div>}
+          <QuestionnaireCard lead={open} onNotice={setNotice} />
           <OutboundProvenance lead={open} />
           <div>
             <div className="panel-section-label">Status</div>

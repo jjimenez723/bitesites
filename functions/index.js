@@ -29,9 +29,16 @@ import {
   buildLeadOutreachTemplate,
   buildMessage,
   getEmailTemplate,
+  normalizeEmailActions,
   seedEmailTemplates,
   sendPostmark
 } from './email.js';
+import {
+  inboundInquiryEmailLifecycle,
+  leadCrmClassification,
+  outboundProspectEmailLifecycle,
+  shouldSendInquiryReceipt
+} from './lead-email-intent.js';
 import { aggregateFunnelData } from './aggregate-funnel.js';
 import { describeSlotForSpeech, loadCalendarSettings } from './booking-calendar.js';
 import { normalizeAccountScope } from './account-access.js';
@@ -213,7 +220,8 @@ const LEAD_SOURCE_CRM = {
 
 function buildNotes(lead) {
   const lines = [
-    `Source: ${LEAD_SOURCE_NOTES[lead.source] || LEAD_SOURCE_NOTES.intake_form}`,
+    `Source: ${LEAD_SOURCE_NOTES[lead.source] || lead.source || 'Unknown'}`,
+    `Contact classification: ${leadCrmClassification(lead)}`,
     `Services: ${(lead.services || []).map(s => SERVICE_LABELS[s] || s).join(', ')}`,
     `Business size: ${SIZE_LABELS[lead.businessSize] || lead.businessSize || '—'}`
   ];
@@ -243,9 +251,9 @@ function buildPayload(lead, leadId) {
     email: lead.email,
     phone: lead.phone || undefined,
     companyName: lead.businessName || undefined,
-    source: LEAD_SOURCE_CRM[lead.source] || LEAD_SOURCE_CRM.intake_form,
+    source: LEAD_SOURCE_CRM[lead.source] || (leadCrmClassification(lead) === 'inbound-inquiry' ? 'Website - inbound inquiry' : 'BiteSites - outbound prospect'),
     tags: [
-      'website-lead',
+      leadCrmClassification(lead) === 'inbound-inquiry' ? 'website-lead' : 'outbound-prospect',
       ...(lead.services || []).map(s => `service:${s}`),
       ...(lead.urgencyTag ? [`timeline:${lead.urgencyTag}`] : [])
     ],
@@ -898,6 +906,9 @@ export const recordVoiceCall = onRequest(
         services: parseServices(flat),
         preferredContactMethod: phone && !email ? 'phone' : 'email',
         source: 'byte_voice',
+        ...((siteCallId || (sid && sid !== 'server' && !sid.startsWith('ghl:'))) ? {
+          emailLifecycle: inboundInquiryEmailLifecycle('byte_web')
+        } : phone ? { emailLifecycle: inboundInquiryEmailLifecycle('byte_inbound') } : {}),
         status: 'new',
         createdAt: FieldValue.serverTimestamp(),
         pagePath: callDoc.get('path') || '/',
@@ -1242,6 +1253,9 @@ async function upsertVoiceLead(db, { call, callDocId }) {
         services: [],
         preferredContactMethod: call.phone && !call.email ? 'phone' : 'email',
         source: 'byte_voice',
+        ...(call.demo
+          ? { emailLifecycle: inboundInquiryEmailLifecycle('byte_web') }
+          : call.phone ? { emailLifecycle: inboundInquiryEmailLifecycle('byte_inbound') } : {}),
         status: 'new',
         // The call's own time, not now — otherwise an imported history all
         // lands on today and the list sorts into nonsense.
@@ -1717,7 +1731,7 @@ export const sendLeadLifecycleEmails = onDocumentCreated(
     // a meeting, and `sendMeetingBookedEmails` is sending them the day, time and
     // reference. A second mail inviting them to "schedule a consultation" reads
     // as though the booking did not take.
-    if (lead.email && !['outbound', 'booking_page'].includes(lead.source)) {
+    if (lead.email && shouldSendInquiryReceipt(lead)) {
       tasks.push(sendLifecycleEmail({
         db, templateId: 'lead_received', to: lead.email,
         variables: {
@@ -2162,12 +2176,24 @@ export const sendLeadEmail = onCall(
     if (!subject || !message) {
       throw new HttpsError('invalid-argument', 'A subject and message are required.');
     }
-    if (actionType !== 'none') {
-      let parsed;
-      try { parsed = new URL(actionUrl); } catch { /* handled below */ }
-      if (!parsed || parsed.protocol !== 'https:') {
+    let actions;
+    try { actions = normalizeEmailActions(request.data?.actions || []); }
+    catch (error) { throw new HttpsError('invalid-argument', error.message); }
+    // Backward compatibility for callers that still send the original single
+    // action fields. New callers send the independent `actions` collection.
+    if (!actions.length && actionType !== 'none') {
+      try {
+        actions = normalizeEmailActions([{
+          label: actionType === 'confirmed' ? 'Join Google Meet' : 'Choose a time',
+          url: actionUrl,
+          kind: actionType === 'confirmed' ? 'meeting' : 'booking'
+        }]);
+      } catch {
         throw new HttpsError('invalid-argument', 'The meeting or booking link must be a secure https:// URL.');
       }
+    }
+    if (actionType === 'confirmed' && !actions.some(action => action.kind === 'meeting')) {
+      throw new HttpsError('invalid-argument', 'Confirmed meeting emails require a Google Meet link.');
     }
     if (actionType === 'confirmed' && !meetingTime) {
       throw new HttpsError('invalid-argument', 'Add the agreed meeting time before sending.');
@@ -2191,7 +2217,7 @@ export const sendLeadEmail = onCall(
         ? 'The booking page will show the currently available times.'
         : '';
     const template = buildLeadOutreachTemplate({
-      withAction: actionType !== 'none',
+      actions,
       withMeetingTime: actionType === 'confirmed'
     });
     const env = emailEnvironment();
@@ -2217,7 +2243,7 @@ export const sendLeadEmail = onCall(
 
       await recordDelivery(db, {
         templateId: 'lead-follow-up', kind: 'lead-follow-up', recipientCount: 1,
-        recipientKey: emailKey(email), leadId: leadId || null, actionType,
+        recipientKey: emailKey(email), leadId: leadId || null, actionType, actions,
         sentBy: request.auth.uid, status: 'sent', postmark: [result.MessageID].filter(Boolean)
       });
 
@@ -2254,7 +2280,8 @@ export const sendLeadEmail = onCall(
             if (isNewLead) {
               const createdStatus = nextStatus || 'contacted';
               batch.set(leadRef, {
-                name: firstNameValue, email, businessName, source: 'cold_call',
+                name: firstNameValue, email, businessName, source: 'outbound',
+                emailLifecycle: outboundProspectEmailLifecycle('admin_followup'),
                 services: [], preferredContactMethod: 'email', createdAt: FieldValue.serverTimestamp(),
                 updatedAt: FieldValue.serverTimestamp(), firstResponseAt: FieldValue.serverTimestamp(),
                 status: createdStatus, statusChangedAt: FieldValue.serverTimestamp(),
@@ -2267,11 +2294,20 @@ export const sendLeadEmail = onCall(
               batch.update(leadRef, update);
             }
             batch.create(leadRef.collection('activities').doc(), {
-              type: 'email_sent', subject, actionType,
+              type: 'email_sent', subject, actionType, actions,
               ...(meetingDate ? { meetingAt: Timestamp.fromDate(meetingDate) } : {}),
               at: FieldValue.serverTimestamp(), sentBy: request.auth.uid
             });
             await batch.commit();
+            const questionnaireAction = actions.find(action => action.kind === 'questionnaire');
+            if (questionnaireAction) {
+              await leadRef.update({
+                'questionnaire.status': 'sent',
+                'questionnaire.sentAt': FieldValue.serverTimestamp(),
+                'questionnaire.sentBy': request.auth.uid,
+                updatedAt: FieldValue.serverTimestamp()
+              });
+            }
           }
         } catch (error) {
           console.error('[email] lead follow-up activity could not be recorded:', error.message);
@@ -2669,6 +2705,12 @@ export {
   runAICampaigns,
   outboundNightlyMaintenance
 } from './outbound-api.js';
+
+export {
+  createQuestionnaireSession,
+  getQuestionnaireSession,
+  submitQuestionnaire
+} from './questionnaire.js';
 // Role management — the only place a role may change from the browser
 // ---------------------------------------------------------------------------
 //

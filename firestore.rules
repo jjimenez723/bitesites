@@ -112,7 +112,7 @@ service cloud.firestore {
         'businessSize', 'urgencyTag', 'services', 'preferredContactMethod',
         'projectDetails', 'customAnswers', 'source', 'status', 'createdAt',
         'pagePath', 'referrer', 'userAgent', 'conversationId',
-        'sid', 'vid', 'siteVersion', 'attribution'
+        'sid', 'vid', 'siteVersion', 'attribution', 'emailLifecycle'
       ];
     }
 
@@ -198,6 +198,12 @@ service cloud.firestore {
         // with the Admin SDK, which bypasses these rules — leaving it out here
         // means a visitor cannot forge a lead that looks like a booked call.
         && data.source in ['intake_form', 'bit_chat']
+        && data.emailLifecycle is map
+        && data.emailLifecycle.keys().hasAll(['contactType', 'initiatedBy', 'channel'])
+        && data.emailLifecycle.keys().hasOnly(['contactType', 'initiatedBy', 'channel'])
+        && data.emailLifecycle.contactType == 'inbound_inquiry'
+        && data.emailLifecycle.initiatedBy == 'recipient'
+        && data.emailLifecycle.channel == data.source
 
         && data.services is list
         && data.services.size() >= 1
@@ -243,6 +249,19 @@ service cloud.firestore {
         allow read, create: if isAdmin();
         allow update, delete: if false;
       }
+    }
+
+    // Public questionnaire access is only through App-Check-protected Cloud
+    // Functions holding an opaque token. No browser can enumerate sessions,
+    // recover lead associations, or write an answer directly.
+    match /questionnaireSessions/{sessionId} {
+      allow read: if isAdmin();
+      allow create, update, delete: if false;
+    }
+
+    match /questionnaireResponses/{responseId} {
+      allow read: if isAdmin();
+      allow create, update, delete: if false;
     }
 
     // ----------------------------------------------------------------- events

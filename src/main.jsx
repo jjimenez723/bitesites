@@ -9,6 +9,7 @@ import Feedback from './pages/Feedback';
 import EmailPreferences from './pages/EmailPreferences';
 import ThankYou from './pages/ThankYou';
 import Book from './pages/Book';
+import Questionnaire from './pages/Questionnaire';
 import { BitMascot } from './components/BitMascot';
 import { InteractiveNebulaShader } from './components/InteractiveNebulaShader';
 import { MeshFieldBackdrop } from './components/MeshFieldBackdrop';
@@ -1750,6 +1751,7 @@ createRoot(document.getElementById('root')).render(
       <Route path="/email-preferences" element={<EmailPreferences />} />
       <Route path="/thank-you" element={<ThankYou />} />
       <Route path="/book" element={<Book />} />
+      <Route path="/questionnaire" element={<Questionnaire />} />
       <Route
         path="/admin/*"
         element={<Suspense fallback={<div className="admin-boot">Loading dashboard…</div>}><AdminApp /></Suspense>}

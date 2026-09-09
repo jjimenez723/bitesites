@@ -45,6 +45,7 @@ const validLead = () => ({
   services: ['web_development'],
   preferredContactMethod: 'email',
   source: 'intake_form',
+  emailLifecycle: { contactType: 'inbound_inquiry', initiatedBy: 'recipient', channel: 'intake_form' },
   status: 'new',
   createdAt: serverTimestamp()
 });
@@ -97,6 +98,8 @@ await testEnv.withSecurityRulesDisabled(async context => {
     createdAt: new Date(),
     voice: { callId: 'call1', providerCallId: 'ghl-1', durationSec: 95 }
   });
+  await setDoc(doc(db, 'questionnaireSessions', 'session_hash'), { leadId: 'seeded_lead', status: 'ready' });
+  await setDoc(doc(db, 'questionnaireResponses', 'response_hash'), { leadId: 'seeded_lead', answers: {} });
   await setDoc(doc(db, 'projects', 'proj1'), {
     name: 'Site build',
     clientUids: ['client_ok']
@@ -268,6 +271,21 @@ await it('admin can triage a phone-only Byte lead', () =>
 
 await it('visitor cannot forge a lead that looks like a booked call', () =>
   assertFails(addDoc(collection(anon, 'leads'), { ...validLead(), source: 'byte_voice' })));
+
+describe('questionnaires — opaque function boundary');
+await it('public callers cannot read questionnaire sessions or responses', async () => {
+  await assertFails(getDoc(doc(anon, 'questionnaireSessions', 'session_hash')));
+  await assertFails(getDoc(doc(visitor, 'questionnaireResponses', 'response_hash')));
+});
+await it('public callers cannot write questionnaire sessions or responses', async () => {
+  await assertFails(setDoc(doc(anon, 'questionnaireSessions', 'forged'), { leadId: 'seeded_lead' }));
+  await assertFails(setDoc(doc(visitor, 'questionnaireResponses', 'forged'), { answers: { admin: true } }));
+});
+await it('admins can inspect questionnaire records but cannot forge them client-side', async () => {
+  await assertSucceeds(getDoc(doc(adminByDoc, 'questionnaireSessions', 'session_hash')));
+  await assertSucceeds(getDoc(doc(adminByDoc, 'questionnaireResponses', 'response_hash')));
+  await assertFails(setDoc(doc(adminByDoc, 'questionnaireResponses', 'forged'), { answers: {} }));
+});
 
 describe('roles — privilege escalation is impossible');
 await it('user cannot grant themselves a role', () =>

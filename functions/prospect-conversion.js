@@ -18,6 +18,7 @@
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { normalizeEmail, normalizePhone, clean, deterministicId } from './prospect-normalization.js';
 import { recordContactActivity } from './outbound-contacts.js';
+import { outboundProspectEmailLifecycle } from './lead-email-intent.js';
 
 /** What counts as meaningful engagement. An attempt is deliberately absent. */
 export const CONVERSION_TRIGGERS = [
@@ -216,6 +217,7 @@ export async function promoteProspect(db, prospectId, {
       // from website-conversion maths (§10). Note this bypasses the public lead
       // validation rules by design — it is an Admin SDK write.
       source: 'outbound',
+      emailLifecycle: outboundProspectEmailLifecycle('prospect_promotion'),
       // Manual qualification is an internal tracking decision, not proof that
       // anybody spoke. Only a verified platform conversation or explicitly
       // declared external contact earns the contacted stage.

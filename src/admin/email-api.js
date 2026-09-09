@@ -9,3 +9,4 @@ export const saveTemplate = async template => (await call('saveEmailTemplate')(t
 export const deleteTemplate = async id => (await call('deleteEmailTemplate')({ id })).data;
 export const sendTemplateEmail = async data => (await call('sendAdminEmail')(data)).data;
 export const sendLeadEmail = async data => (await call('sendLeadEmail')(data)).data;
+export const createQuestionnaireSession = async leadId => (await call('createQuestionnaireSession')({ leadId })).data;

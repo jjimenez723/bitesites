@@ -8,7 +8,7 @@ export const EMAIL_BRAND = {
   logoUrl: 'https://bitesites.org/apple-touch-icon.png'
 };
 
-const EMAIL_TEMPLATE_VERSION = 5;
+const EMAIL_TEMPLATE_VERSION = 6;
 const fontStack = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
 
 const shell = ({ preheader, title, body, cta, footer }) => {
@@ -45,7 +45,54 @@ const shell = ({ preheader, title, body, cta, footer }) => {
 // lifecycle mail, while keeping the admin's note as escaped plain text. The
 // white-space style preserves paragraphs without allowing arbitrary HTML into
 // a message sent from the dashboard.
-export function buildLeadOutreachTemplate({ withAction = false, withMeetingTime = false } = {}) {
+const escapeHtml = value => String(value ?? '')
+  .replaceAll('&', '&amp;')
+  .replaceAll('<', '&lt;')
+  .replaceAll('>', '&gt;')
+  .replaceAll('"', '&quot;')
+  .replaceAll("'", '&#039;');
+
+export function normalizeEmailActions(input, { max = 8 } = {}) {
+  if (input == null) return [];
+  if (!Array.isArray(input)) throw new Error('Links must be a list.');
+  if (input.length > max) throw new Error(`Add no more than ${max} links.`);
+  return input.map((item, index) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) throw new Error(`Link ${index + 1} is invalid.`);
+    const label = typeof item.label === 'string' ? item.label.trim() : '';
+    const url = typeof item.url === 'string' ? item.url.trim() : '';
+    if (!label || label.length > 80) throw new Error(`Link ${index + 1} needs a label of 80 characters or fewer.`);
+    if (/{{|}}/.test(label)) throw new Error(`Link ${index + 1} label cannot contain template placeholders.`);
+    if (url.length > 2000) throw new Error(`Link ${index + 1} is too long.`);
+    let parsed;
+    try { parsed = new URL(url); } catch { /* reported below */ }
+    if (!parsed || parsed.protocol !== 'https:' || parsed.username || parsed.password) {
+      throw new Error(`Link ${index + 1} must be a secure https:// URL.`);
+    }
+    return {
+      label,
+      url: parsed.toString(),
+      kind: ['questionnaire', 'booking', 'website', 'meeting', 'custom'].includes(item.kind) ? item.kind : 'custom'
+    };
+  });
+}
+
+const outreachActionsHtml = actions => {
+  if (!actions.length) return '';
+  return actions.map((action, index) => {
+    const label = escapeHtml(action.label);
+    const url = escapeHtml(action.url);
+    if (index === 0) {
+      return `<table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin-top:28px;"><tr><td style="border-radius:8px;background:#111111;"><a class="email-button" href="${url}" style="display:inline-block;padding:13px 20px;border:1px solid #111111;border-radius:8px;color:#ffffff;font-family:${fontStack};font-size:15px;line-height:20px;font-weight:700;text-decoration:none;">${label}</a></td></tr></table>`;
+    }
+    if (index === 1) {
+      return `<table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin-top:12px;"><tr><td style="border-radius:8px;background:#ffffff;"><a class="email-button" href="${url}" style="display:inline-block;padding:12px 19px;border:1px solid #b8b8b8;border-radius:8px;color:#222222;font-family:${fontStack};font-size:15px;line-height:20px;font-weight:700;text-decoration:none;">${label}</a></td></tr></table>`;
+    }
+    return `<p style="margin:${index === 2 ? '20px' : '9px'} 0 0;color:#555555;font-size:14px;line-height:21px;"><a href="${url}" style="color:#333333;text-decoration:underline;">${label}</a></p>`;
+  }).join('');
+};
+
+export function buildLeadOutreachTemplate({ actions = [], withAction = false, withMeetingTime = false } = {}) {
+  const normalizedActions = actions.length ? normalizeEmailActions(actions) : [];
   const meeting = withMeetingTime
     ? '<p style="margin:20px 0 0;padding:14px 16px;border:1px solid #e5e5e5;border-radius:10px;background:#fafafa;"><span style="display:block;color:#777777;font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;">Meeting time</span><strong style="display:block;margin-top:3px;color:#222222;font-size:15px;">{{meeting_time}}</strong></p>'
     : '';
@@ -56,11 +103,13 @@ export function buildLeadOutreachTemplate({ withAction = false, withMeetingTime 
     html: shell({
       preheader: '{{preheader}}',
       title: '{{headline}}',
-      body: `<p style="margin:0 0 16px;">Hi {{first_name}},</p><div style="margin:0;white-space:pre-line;">{{message}}</div>${meeting}`,
-      cta: withAction ? { href: '{{action_url}}', label: '{{action_label}}', note: '{{action_note}}' } : null,
+      body: `<p style="margin:0 0 16px;">Hi {{first_name}},</p><div style="margin:0;white-space:pre-line;">{{message}}</div>${meeting}${outreachActionsHtml(normalizedActions)}`,
+      cta: withAction && !normalizedActions.length
+        ? { href: '{{action_url}}', label: '{{action_label}}', note: '{{action_note}}' }
+        : null,
       footer: 'This is a personal follow-up from your BiteSites conversation. Reply to this email if you have any questions.'
     }),
-    text: `Hi {{first_name}},\n\n{{message}}${withMeetingTime ? '\n\nMeeting time: {{meeting_time}}' : ''}${withAction ? '\n\n{{action_label}}: {{action_url}}\n\n{{action_note}}' : ''}\n\nReply to this email if you have any questions.`
+    text: `Hi {{first_name}},\n\n{{message}}${withMeetingTime ? '\n\nMeeting time: {{meeting_time}}' : ''}${normalizedActions.length ? `\n\n${normalizedActions.map(action => `${action.label}: ${action.url}`).join('\n')}` : withAction ? '\n\n{{action_label}}: {{action_url}}\n\n{{action_note}}' : ''}\n\nReply to this email if you have any questions.`
   };
 }
 
@@ -267,13 +316,6 @@ export const DEFAULT_EMAIL_TEMPLATES = {
     text: 'Hi {{first_name}},\n\n{{headline}}\n\n{{message}}\n\n{{cta_label}}: {{cta_url}}\n\nManage email preferences: {{preference_url}}'
   }
 };
-
-const escapeHtml = value => String(value ?? '')
-  .replaceAll('&', '&amp;')
-  .replaceAll('<', '&lt;')
-  .replaceAll('>', '&gt;')
-  .replaceAll('"', '&quot;')
-  .replaceAll("'", '&#039;');
 
 export function renderTemplate(template, variables = {}) {
   const replace = (source, html) => String(source || '').replace(

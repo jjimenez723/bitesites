@@ -59,6 +59,11 @@ export function buildLead(input, source) {
     services,
     preferredContactMethod,
     source,
+    emailLifecycle: {
+      contactType: 'inbound_inquiry',
+      initiatedBy: 'recipient',
+      channel: source
+    },
     status: 'new'
     // createdAt is stamped in submitLead, once the Firestore SDK is loaded.
   };

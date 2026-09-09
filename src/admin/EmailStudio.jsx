@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useLeads, useUsers } from './data';
-import { deleteTemplate, listTemplates, saveTemplate, sendLeadEmail, sendTemplateEmail } from './email-api';
+import { createQuestionnaireSession, deleteTemplate, listTemplates, saveTemplate, sendLeadEmail, sendTemplateEmail } from './email-api';
 
 const blankTemplate = () => ({
   id: '', name: 'New email', description: '', category: 'broadcast',
@@ -219,6 +219,7 @@ function DeliveryType({ value, onChange }) {
 // because this lands in an email, and taken from the current origin so a
 // staging console does not send people to production.
 const BOOKING_URL = `${window.location.origin}/book`;
+const WEBSITE_URL = 'https://bitesites.org/';
 
 const firstWord = value => String(value || '').trim().split(/\s+/)[0] || '';
 
@@ -231,7 +232,7 @@ const starterCopy = (type, firstName, businessName) => {
   };
   if (type === 'follow_up') return {
     subject: `Following up on our conversation${businessName ? ` about ${businessName}` : ''}`,
-    message: `Thanks again for taking the time to speak with me${business}. I’m looking forward to continuing the conversation and talking through the next steps.`
+    message: `Great speaking with you today${business}. I wanted to send over a few useful links and get a little context before we talk again.\n\nThe quick questionnaire only takes a couple of minutes, and it’ll help us come into the next conversation with more useful ideas${businessName ? ` for ${businessName}` : ''}.\n\nIf anything comes up before then, just reply here.\n\n— BiteSites`
   };
   return { subject: '', message: '' };
 };
@@ -260,23 +261,26 @@ const googleCalendarUrl = (meetingLocal, subject) => {
   return `https://calendar.google.com/calendar/render?${params}`;
 };
 
-function LeadEmailComposer({ initialLeadId, onOpenAutomations }) {
+function LeadEmailComposer({ initialLeadId, initialQuestionnaire = false, onOpenAutomations }) {
   const { rows: leads, loading, refresh } = useLeads();
   const [selectedLeadId, setSelectedLeadId] = useState(initialLeadId || '');
   const [firstName, setFirstName] = useState('');
   const [email, setEmail] = useState('');
   const [businessName, setBusinessName] = useState('');
-  const [starter, setStarter] = useState('confirmation');
-  const initialCopy = starterCopy('confirmation', '', '');
+  const [starter, setStarter] = useState('follow_up');
+  const initialCopy = starterCopy('follow_up', '', '');
   const [subject, setSubject] = useState(initialCopy.subject);
   const [message, setMessage] = useState(initialCopy.message);
   const [actionType, setActionType] = useState('none');
   const [meetingLocal, setMeetingLocal] = useState('');
   const [meetUrl, setMeetUrl] = useState('');
   const [bookingUrl, setBookingUrl] = useState(BOOKING_URL);
+  const [actions, setActions] = useState([]);
+  const [linkBusy, setLinkBusy] = useState('');
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState({ kind: '', text: '' });
   const initializedLead = useRef(false);
+  const initializedQuestionnaire = useRef(false);
 
   const chooseLead = id => {
     setSelectedLeadId(id);
@@ -286,6 +290,7 @@ function LeadEmailComposer({ initialLeadId, onOpenAutomations }) {
     setFirstName(nextFirstName);
     setEmail(lead.email || '');
     setBusinessName(lead.businessName || '');
+    setActions([]);
     const copy = starterCopy(starter, nextFirstName, lead.businessName || '');
     setSubject(copy.subject);
     setMessage(copy.message);
@@ -321,10 +326,51 @@ function LeadEmailComposer({ initialLeadId, onOpenAutomations }) {
   };
 
   const meetingTime = displayMeetingTime(meetingLocal);
-  const actionUrl = actionType === 'confirmed' ? meetUrl : actionType === 'self_schedule' ? bookingUrl : '';
+  const effectiveActions = actionType === 'confirmed' && meetUrl
+    ? [{ label: 'Join Google Meet', url: meetUrl, kind: 'meeting' }, ...actions.filter(action => action.kind !== 'meeting')]
+    : actions.filter(action => action.kind !== 'meeting');
   const canSend = email && subject.trim() && message.trim()
-    && (actionType === 'none' || actionUrl.startsWith('https://'))
-    && (actionType !== 'confirmed' || meetingTime);
+    && effectiveActions.length <= 8
+    && effectiveActions.every(action => action.label.trim() && action.url.startsWith('https://'))
+    && (actionType !== 'confirmed' || (meetingTime && meetUrl.startsWith('https://')));
+
+  const togglePreset = async kind => {
+    const found = actions.find(action => action.kind === kind);
+    if (found) { setActions(current => current.filter(action => action.kind !== kind)); return; }
+    if (kind === 'questionnaire') {
+      if (!selectedLeadId) { setNotice({ kind: 'error', text: 'Choose a saved lead before adding their secure questionnaire.' }); return; }
+      setLinkBusy(kind);
+      try {
+        const lead = leads.find(item => item.id === selectedLeadId);
+        const reusable = lead?.questionnaire?.url
+          && lead.questionnaire.status !== 'completed'
+          && (!lead.questionnaire.expiresAt?.toMillis || lead.questionnaire.expiresAt.toMillis() > Date.now());
+        const result = reusable ? { url: lead.questionnaire.url } : await createQuestionnaireSession(selectedLeadId);
+        setActions(current => [...current, { label: 'Complete the quick questionnaire', url: result.url, kind }]);
+      } catch (error) { setNotice({ kind: 'error', text: error?.message || 'Could not create the questionnaire link.' }); }
+      finally { setLinkBusy(''); }
+      return;
+    }
+    const preset = kind === 'booking'
+      ? { label: 'Choose a time', url: bookingUrl, kind }
+      : { label: 'Visit BiteSites', url: WEBSITE_URL, kind };
+    setActions(current => [...current, preset]);
+  };
+  const updateAction = (index, key, value) => setActions(current => current.map((action, item) => item === index ? { ...action, [key]: value } : action));
+  const moveAction = (index, direction) => setActions(current => {
+    const target = index + direction;
+    if (target < 0 || target >= current.length) return current;
+    const next = [...current];
+    [next[index], next[target]] = [next[target], next[index]];
+    return next;
+  });
+
+  useEffect(() => {
+    if (!initialQuestionnaire || initializedQuestionnaire.current || !selectedLeadId || !email) return;
+    initializedQuestionnaire.current = true;
+    chooseStarter('follow_up');
+    togglePreset('questionnaire');
+  }, [initialQuestionnaire, selectedLeadId, email]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const send = async () => {
     if (!canSend) return;
@@ -334,7 +380,7 @@ function LeadEmailComposer({ initialLeadId, onOpenAutomations }) {
       await sendLeadEmail({
         leadId: selectedLeadId, email, firstName: firstName || firstWord(email.split('@')[0]),
         businessName, subject: subject.trim(), headline: subject.trim(), message: message.trim(),
-        actionType, actionUrl, meetingTime,
+        actionType, actionUrl: actionType === 'confirmed' ? meetUrl : '', actions: effectiveActions, meetingTime,
         meetingAt: actionType === 'confirmed' && meetingLocal ? new Date(meetingLocal).toISOString() : ''
       });
       await refresh();
@@ -348,7 +394,7 @@ function LeadEmailComposer({ initialLeadId, onOpenAutomations }) {
 
   return <>
     <header className="admin-topbar">
-      <div><h1>Lead email</h1><p className="admin-topbar-sub">Send a personal follow-up, meeting confirmation, or booking link.</p></div>
+      <div><h1>Lead email</h1><p className="admin-topbar-sub">Send a personal note with every useful next step in one email.</p></div>
       <div className="admin-topbar-spacer" />
       <button className="btn-admin" type="button" onClick={onOpenAutomations}>Automated emails</button>
       <button className="btn-admin primary" type="button" disabled={busy || !canSend} onClick={send}>{busy ? 'Sending…' : 'Send email'}</button>
@@ -364,7 +410,7 @@ function LeadEmailComposer({ initialLeadId, onOpenAutomations }) {
               <label className="full"><span>Lead</span><select value={selectedLeadId} onChange={event => chooseLead(event.target.value)}><option value="">New or unlisted contact</option>{leads.map(lead => <option key={lead.id} value={lead.id}>{lead.name || lead.email || lead.phone || 'Unnamed lead'}{lead.businessName ? ` — ${lead.businessName}` : ''}</option>)}</select>{loading && <small>Loading leads…</small>}</label>
               <label><span>First name</span><input value={firstName} onChange={event => updateRecipientDetail('firstName', event.target.value)} placeholder="Alex" /></label>
               <label><span>Business</span><input value={businessName} onChange={event => updateRecipientDetail('businessName', event.target.value)} placeholder="Acme Studio" /></label>
-              <label className="full"><span>Email</span><input type="email" value={email} onChange={event => { setEmail(event.target.value); if (selectedLeadId) setSelectedLeadId(''); }} placeholder="alex@business.com" /></label>
+              <label className="full"><span>Email</span><input type="email" value={email} onChange={event => { setEmail(event.target.value); if (selectedLeadId) { setSelectedLeadId(''); setActions(current => current.filter(action => action.kind !== 'questionnaire')); } }} placeholder="alex@business.com" /></label>
             </div>
           </section>
 
@@ -384,12 +430,11 @@ function LeadEmailComposer({ initialLeadId, onOpenAutomations }) {
           </section>
 
           <section className="lead-email-section">
-            <div className="lead-email-section-head"><span>3</span><div><h3>Add a meeting action</h3><p>Confirm the time you agreed on, let them choose, or send only the note.</p></div></div>
+            <div className="lead-email-section-head"><span>3</span><div><h3>Meeting details</h3><p>Add an agreed time and Meet link when the meeting is already confirmed.</p></div></div>
             <div className="lead-email-actions">
               {[
-                ['none', 'No meeting link', 'Send the message as-is.'],
-                ['confirmed', 'Time already agreed', 'Include the exact time and Google Meet link.'],
-                ['self_schedule', 'Let them choose', 'Send your Google booking page.']
+                ['none', 'No confirmed meeting', 'Add useful links below.'],
+                ['confirmed', 'Time already agreed', 'Include the exact time and Google Meet link.']
               ].map(([value, label, description]) => <button key={value} type="button" className={actionType === value ? 'selected' : ''} onClick={() => setActionType(value)}><strong>{label}</strong><small>{description}</small></button>)}
             </div>
 
@@ -398,7 +443,22 @@ function LeadEmailComposer({ initialLeadId, onOpenAutomations }) {
               <label><span>Google Meet link</span><input type="url" value={meetUrl} onChange={event => setMeetUrl(event.target.value)} placeholder="https://meet.google.com/…" /></label>
               <div className="full meeting-helper"><div><strong>{meetingTime || 'Choose the agreed time above'}</strong><small>The recipient will see the time in your current timezone.</small></div><a className="btn-admin" href={googleCalendarUrl(meetingLocal, subject)} target="_blank" rel="noreferrer">Open Google Calendar ↗</a></div>
             </div>}
-            {actionType === 'self_schedule' && <div className="lead-email-fields meeting-fields"><label className="full"><span>Booking page</span><input type="url" value={bookingUrl} onChange={event => setBookingUrl(event.target.value)} /></label></div>}
+          </section>
+
+          <section className="lead-email-section">
+            <div className="lead-email-section-head"><span>4</span><div><h3>Links / actions</h3><p>Add, edit, and order everything the recipient should have.</p></div></div>
+            <div className="lead-link-presets">
+              <button type="button" className={actions.some(action => action.kind === 'questionnaire') ? 'selected' : ''} disabled={linkBusy === 'questionnaire'} onClick={() => togglePreset('questionnaire')}><strong>Questionnaire</strong><small>{linkBusy === 'questionnaire' ? 'Creating secure link…' : '2–3 minute discovery'}</small></button>
+              <button type="button" className={actions.some(action => action.kind === 'booking') ? 'selected' : ''} onClick={() => togglePreset('booking')}><strong>Booking</strong><small>Choose a time</small></button>
+              <button type="button" className={actions.some(action => action.kind === 'website') ? 'selected' : ''} onClick={() => togglePreset('website')}><strong>Website</strong><small>Visit BiteSites</small></button>
+            </div>
+            <div className="lead-links-editor">{actions.map((action, index) => <div className="lead-link-row" key={`${action.kind}-${index}`}>
+              <span className="lead-link-order"><button type="button" disabled={!index} onClick={() => moveAction(index, -1)} aria-label={`Move ${action.label || 'link'} up`}>↑</button><button type="button" disabled={index === actions.length - 1} onClick={() => moveAction(index, 1)} aria-label={`Move ${action.label || 'link'} down`}>↓</button></span>
+              <label><span>Label</span><input value={action.label} maxLength="80" onChange={event => updateAction(index, 'label', event.target.value)} /></label>
+              <label><span>URL</span><input type="url" value={action.url} onChange={event => { updateAction(index, 'url', event.target.value); if (action.kind === 'booking') setBookingUrl(event.target.value); }} /></label>
+              <button className="lead-link-remove" type="button" onClick={() => setActions(current => current.filter((_, item) => item !== index))} aria-label={`Remove ${action.label || 'link'}`}>×</button>
+            </div>)}</div>
+            {actions.length < (actionType === 'confirmed' ? 7 : 8) && <button className="btn-admin lead-add-link" type="button" onClick={() => setActions(current => [...current, { label: 'View resource', url: 'https://', kind: 'custom' }])}>+ Add link</button>}
           </section>
         </main>
 
@@ -412,7 +472,9 @@ function LeadEmailComposer({ initialLeadId, onOpenAutomations }) {
               <p>Hi {firstName || 'there'},</p>
               <p className="preview-message">{message || 'Your message will appear here.'}</p>
               {actionType === 'confirmed' && meetingTime && <div className="preview-meeting"><small>Meeting time</small><strong>{meetingTime}</strong></div>}
-              {actionType !== 'none' && <span className="preview-button">{actionType === 'confirmed' ? 'Join Google Meet' : 'Choose a meeting time'}</span>}
+              {effectiveActions.map((action, index) => index < 2
+                ? <span key={`${action.kind}-${index}`} className={`preview-button ${index === 1 ? 'secondary' : ''}`}>{action.label || 'Link label'}</span>
+                : <span key={`${action.kind}-${index}`} className="preview-text-link">{action.label || 'Link label'} ↗</span>)}
             </div>
             <p className="preview-footer">This is a personal follow-up from your BiteSites conversation. Reply to this email if you have any questions.</p>
           </div>
@@ -714,5 +776,5 @@ export default function EmailStudio() {
   };
   return view === 'automations'
     ? <TemplateLibrary onOpenComposer={() => switchView('compose')} />
-    : <LeadEmailComposer initialLeadId={params.get('lead') || ''} onOpenAutomations={() => switchView('automations')} />;
+    : <LeadEmailComposer initialLeadId={params.get('lead') || ''} initialQuestionnaire={params.get('questionnaire') === '1'} onOpenAutomations={() => switchView('automations')} />;
 }
