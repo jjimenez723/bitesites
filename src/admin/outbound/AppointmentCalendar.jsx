@@ -453,6 +453,7 @@ function AppointmentDetail({ appointment, timezone, busy, onCancel, onOutcome, o
 
         <dl className="cal-detail-rows">
           <div><dt>Status</dt><dd>{STATUS_LABELS[appointment.status] || appointment.status}</dd></div>
+          {appointment.hostName ? <div><dt>Host</dt><dd>{appointment.hostName}</dd></div> : null}
           <div><dt>Booked by</dt><dd>{appointment.source === 'ai_call' ? 'Voice agent' : 'A rep'}</dd></div>
           {attendee.name && attendee.company ? <div><dt>Contact</dt><dd>{attendee.name}</dd></div> : null}
           {attendee.email ? <div><dt>Email</dt><dd>{attendee.email}</dd></div> : null}

@@ -245,6 +245,8 @@ export function normalizeCalendarSettings(input = {}, { accountId = LEGACY_ACCOU
       .slice(0, 200),
     meetingTitle: clean(source.meetingTitle, 200) || defaults.meetingTitle,
     hostName: clean(source.hostName, 120) || defaults.hostName,
+    hostId: clean(source.hostId, 80),
+    hostEmail: clean(source.hostEmail, 200).toLowerCase(),
     // Same "absent is not empty" rule as the calendar id below: an operator who
     // clears the location has removed it deliberately.
     location: 'location' in source ? clean(source.location, 300) : defaults.location,
@@ -309,8 +311,8 @@ export function normalizeBusyCalendarIds(input) {
  * re-validated against live availability at hold time. They carry no authority
  * of their own — a forged one simply fails the conflict check.
  */
-export function encodeSlotId(startMs, durationMinutes) {
-  return `slot_${Buffer.from(`${Math.round(startMs)}:${Math.round(durationMinutes)}`, 'utf8')
+export function encodeSlotId(startMs, durationMinutes, hostId = '') {
+  return `slot_${Buffer.from(`${Math.round(startMs)}:${Math.round(durationMinutes)}${hostId ? `:${hostId}` : ''}`, 'utf8')
     .toString('base64url')}`;
 }
 
@@ -323,12 +325,13 @@ export function decodeSlotId(slotId) {
   } catch {
     return null;
   }
-  const match = /^(\d{10,16}):(\d{1,3})$/.exec(decoded);
+  const match = /^(\d{10,16}):(\d{1,3})(?::([a-z0-9-]{1,80}))?$/.exec(decoded);
   if (!match) return null;
   const startMs = Number(match[1]);
   const durationMinutes = Number(match[2]);
   if (!Number.isFinite(startMs) || !Number.isFinite(durationMinutes) || durationMinutes <= 0) return null;
-  return { startMs, durationMinutes, endMs: startMs + durationMinutes * MINUTE_MS };
+  return { startMs, durationMinutes, endMs: startMs + durationMinutes * MINUTE_MS,
+    ...(match[3] ? { hostId: match[3] } : {}) };
 }
 
 // ------------------------------------------------------------- availability
@@ -398,7 +401,7 @@ export function computeAvailableSlots({
           if (start < windowStart || start >= windowEnd) continue;
           if (countOverlaps(intervals, start, start + slotMs) >= config.capacity) continue;
           slots.push({
-            slotId: encodeSlotId(start, config.slotMinutes),
+            slotId: encodeSlotId(start, config.slotMinutes, config.hostId),
             startMs: start,
             endMs: start + slotMs,
             startIso: new Date(start).toISOString(),
@@ -524,7 +527,12 @@ export function resolveRequestedWindow(text, { nowMs = Date.now(), settings } = 
 
 // ------------------------------------------------------------ firestore side
 
-export async function loadCalendarSettings(db, accountId = LEGACY_ACCOUNT_ID) {
+export const DEFAULT_BOOKING_HOST_ID = 'jensy-jimenez';
+
+export const calendarHostId = (accountId, hostId) => clean(hostId, 80)
+  || (accountId === LEGACY_ACCOUNT_ID ? DEFAULT_BOOKING_HOST_ID : '');
+
+export async function loadCalendarSettings(db, accountId = LEGACY_ACCOUNT_ID, hostId = '') {
   const account = requireAccountId(accountId, { field: 'calendar.accountId' });
   let snapshot = await db.doc(`calendarSettings/${account}`).get();
   // BiteSites used calendarSettings/default before calendars were entity-aware.
@@ -532,7 +540,33 @@ export async function loadCalendarSettings(db, accountId = LEGACY_ACCOUNT_ID) {
   if (!snapshot.exists && account === LEGACY_ACCOUNT_ID) {
     snapshot = await db.doc('calendarSettings/default').get();
   }
-  return normalizeCalendarSettings(snapshot.exists ? snapshot.data() : {}, { accountId: account });
+  const source = snapshot.exists ? snapshot.data() : {};
+  const selected = calendarHostId(account, hostId);
+  const isDefault = selected === calendarHostId(account, '');
+  const profile = isDefault ? {} : source.bookingHosts?.[selected];
+  if (!isDefault && (!profile || profile.enabled !== true || !profile.googleCalendarId)) {
+    throw new Error('That host’s calendar is not connected yet. Please choose another host.');
+  }
+  const settings = normalizeCalendarSettings({
+    ...source, ...profile, hostId: selected,
+    ...(!isDefault ? { busyCalendarIds: profile.busyCalendarIds || [], hostEmail: profile.hostEmail || '' } : {})
+  }, { accountId: account });
+  if (account === LEGACY_ACCOUNT_ID && isDefault && settings.hostName === 'BiteSites specialist') {
+    settings.hostName = 'Jensy Jimenez';
+  }
+  return settings;
+}
+
+/** Only public names and IDs leave the server; calendar addresses stay private. */
+export async function loadPublicBookingHosts(db) {
+  const snapshot = await db.doc(`calendarSettings/${LEGACY_ACCOUNT_ID}`).get();
+  const profiles = snapshot.data()?.bookingHosts || {};
+  return [
+    { id: DEFAULT_BOOKING_HOST_ID, name: 'Jensy Jimenez', available: true },
+    { id: 'jonathan-arroyo', name: 'Jonathan Arroyo',
+      available: profiles['jonathan-arroyo']?.enabled === true
+        && Boolean(profiles['jonathan-arroyo']?.googleCalendarId) }
+  ];
 }
 
 const toMillis = value => {
@@ -633,7 +667,7 @@ export async function preflightGoogleAdmission({
  * rows in memory. Expired holds are treated as free.
  */
 export async function loadBlockingAppointments(db, {
-  windowStartMs, windowEndMs, nowMs = Date.now(), accountId = LEGACY_ACCOUNT_ID
+  windowStartMs, windowEndMs, nowMs = Date.now(), accountId = LEGACY_ACCOUNT_ID, hostId = ''
 }, tx = null) {
   const account = requireAccountId(accountId, { field: 'calendar.accountId' });
   const query = db.collection('appointments')
@@ -646,6 +680,7 @@ export async function loadBlockingAppointments(db, {
     .map(doc => ({ id: doc.id, ...doc.data() }))
     .filter(appointment => {
       if (readAccountId(appointment.accountId, { fallback: LEGACY_ACCOUNT_ID }) !== account) return false;
+      if (calendarHostId(account, appointment.hostId) !== calendarHostId(account, hostId)) return false;
       if (!BLOCKING_STATES.has(appointment.status)) return false;
       if (appointment.status === 'held' && toMillis(appointment.holdExpiresAt) <= nowMs) return false;
       const startMs = toMillis(appointment.startAt);
@@ -667,26 +702,30 @@ export async function loadBlockingAppointments(db, {
  */
 export async function findAvailability(db, {
   requestedWindow = '', fromMs = 0, toMs = 0, nowMs = Date.now(), limit = 3, google = null,
-  accountId = LEGACY_ACCOUNT_ID,
+  accountId = LEGACY_ACCOUNT_ID, hostId = '', strictGoogle = false,
   // A voice agent offers three times, so 50 is a generous guard there. The
   // public booking page paints a whole month at once and raises it.
   maxLimit = 50
 } = {}) {
   const account = requireAccountId(accountId, { field: 'calendar.accountId' });
-  const settings = await loadCalendarSettings(db, account);
+  const settings = await loadCalendarSettings(db, account, hostId);
   const resolved = fromMs && toMs
     ? { fromMs, toMs }
     : resolveRequestedWindow(requestedWindow, { nowMs, settings });
 
   const searchEnd = Math.min(resolved.toMs, nowMs + settings.horizonDays * DAY_MS);
   const appointments = await loadBlockingAppointments(db, {
-    windowStartMs: resolved.fromMs, windowEndMs: searchEnd, nowMs, accountId: account
+    windowStartMs: resolved.fromMs, windowEndMs: searchEnd, nowMs, accountId: account, hostId: settings.hostId
   });
   const busy = appointments.map(entry => ({ startMs: entry.startMs, endMs: entry.endMs }));
 
+  if (strictGoogle && googleAdmissionRequired(settings) && !google) {
+    throw new Error('Calendar unavailable. Please try again shortly.');
+  }
   if (google && settings.googleSyncEnabled) {
     const googleBusy = await google.freeBusy(resolved.fromMs, searchEnd)
       .catch(error => {
+        if (strictGoogle) throw new Error('Calendar unavailable. Please try again shortly.');
         console.warn('[calendar] Google free/busy unavailable', error?.message);
         return [];
       });
@@ -731,21 +770,29 @@ export async function findAvailability(db, {
  */
 export async function holdSlot(db, {
   slotId, callId = '', campaignId = '', contactId = '', contactType = '',
-  offerTrack = '', heldBy = 'ai', nowMs = Date.now(), accountId = LEGACY_ACCOUNT_ID
+  offerTrack = '', heldBy = 'ai', nowMs = Date.now(), accountId = LEGACY_ACCOUNT_ID, hostId = ''
 } = {}) {
   const account = requireAccountId(accountId, { field: 'calendar.accountId' });
   const slot = decodeSlotId(slotId);
   if (!slot) return { ok: false, error: 'invalid_slot' };
 
-  const settings = await loadCalendarSettings(db, account);
+  if (hostId && calendarHostId(account, slot.hostId) !== calendarHostId(account, hostId)) {
+    return { ok: false, error: 'host_mismatch' };
+  }
+  const settings = await loadCalendarSettings(db, account, slot.hostId || hostId);
   if (slot.startMs < nowMs + settings.leadTimeMinutes * MINUTE_MS) {
     return { ok: false, error: 'slot_too_soon' };
+  }
+  const offered = computeAvailableSlots({ settings, busy: [], fromMs: slot.startMs,
+    toMs: slot.endMs, nowMs, limit: 1 });
+  if (slot.durationMinutes !== settings.slotMinutes || !offered.some(entry => entry.startMs === slot.startMs)) {
+    return { ok: false, error: 'invalid_slot' };
   }
 
   const ref = db.collection('appointments').doc();
   const result = await db.runTransaction(async tx => {
     const blocking = await loadBlockingAppointments(
-      db, { windowStartMs: slot.startMs, windowEndMs: slot.endMs, nowMs, accountId: account }, tx
+      db, { windowStartMs: slot.startMs, windowEndMs: slot.endMs, nowMs, accountId: account, hostId: settings.hostId }, tx
     );
     if (countOverlaps(blocking, slot.startMs, slot.endMs) >= settings.capacity) {
       return { ok: false, error: 'slot_taken' };
@@ -753,6 +800,9 @@ export async function holdSlot(db, {
     tx.set(ref, {
       status: 'held',
       accountId: account,
+      hostId: settings.hostId,
+      hostName: settings.hostName,
+      hostEmail: settings.hostEmail,
       startAt: Timestamp.fromMillis(slot.startMs),
       endAt: Timestamp.fromMillis(slot.endMs),
       durationMinutes: slot.durationMinutes,
@@ -837,7 +887,10 @@ export async function commitBooking(db, {
   if (toMillis(heldAppointment.holdExpiresAt) <= nowMs) return { ok: false, error: 'hold_expired' };
 
   const accountId = readAccountId(heldAppointment.accountId, { fallback: LEGACY_ACCOUNT_ID });
-  const settings = suppliedSettings || await loadCalendarSettings(db, accountId);
+  const settings = suppliedSettings || await loadCalendarSettings(db, accountId, heldAppointment.hostId);
+  if (calendarHostId(accountId, settings.hostId) !== calendarHostId(accountId, heldAppointment.hostId)) {
+    return { ok: false, error: 'host_mismatch' };
+  }
   const admission = await preflightGoogleAdmission({
     google, settings,
     startMs: toMillis(heldAppointment.startAt),
@@ -1004,7 +1057,10 @@ export async function rescheduleAppointment(db, {
   const appointmentAccount = readAccountId(current.get('accountId'), { fallback: LEGACY_ACCOUNT_ID });
   const requestedAccount = accountId ? requireAccountId(accountId, { field: 'calendar.accountId' }) : appointmentAccount;
   if (requestedAccount !== appointmentAccount) return { ok: false, error: 'account_mismatch' };
-  const settings = await loadCalendarSettings(db, appointmentAccount);
+  if (calendarHostId(appointmentAccount, slot.hostId) !== calendarHostId(appointmentAccount, current.get('hostId'))) {
+    return { ok: false, error: 'host_mismatch' };
+  }
+  const settings = await loadCalendarSettings(db, appointmentAccount, current.get('hostId'));
 
   const result = await db.runTransaction(async tx => {
     const snapshot = await tx.get(ref);
@@ -1016,7 +1072,8 @@ export async function rescheduleAppointment(db, {
         windowStartMs: slot.startMs,
         windowEndMs: slot.endMs,
         nowMs,
-        accountId: appointmentAccount
+        accountId: appointmentAccount,
+        hostId: settings.hostId
       }, tx
     )).filter(entry => entry.id !== id);
     if (countOverlaps(blocking, slot.startMs, slot.endMs) >= settings.capacity) {
@@ -1237,6 +1294,7 @@ export function buildGoogleEvent(appointment, settings, { conference = true } = 
     attendee.name ? `Contact: ${attendee.name}` : '',
     attendee.phone ? `Phone: ${attendee.phone}` : '',
     attendee.email ? `Email: ${attendee.email}` : '',
+    appointment.hostName ? `Host: ${appointment.hostName}` : '',
     appointment.offerTrack ? `Interest: ${appointment.offerTrack}` : '',
     appointment.notes ? `Notes: ${appointment.notes}` : '',
     appointment.callId ? `Call: ${appointment.callId}` : ''
@@ -1249,7 +1307,7 @@ export function buildGoogleEvent(appointment, settings, { conference = true } = 
 
   return {
     id: googleEventIdForAppointment(appointment.id),
-    summary: `${settings.meetingTitle} — ${who}`,
+    summary: `${settings.meetingTitle}${appointment.hostName ? ` with ${appointment.hostName}` : ''} — ${who}`,
     description: lines.join('\n'),
     ...(location ? { location } : {}),
     start: { dateTime: new Date(toMillis(appointment.startAt)).toISOString(), timeZone: settings.timezone },
@@ -1264,7 +1322,9 @@ export function buildGoogleEvent(appointment, settings, { conference = true } = 
       attendees: [{
         email: clean(attendee.email, 200).toLowerCase(),
         ...(clean(attendee.name, 160) ? { displayName: clean(attendee.name, 160) } : {})
-      }]
+      }, ...(EMAIL_PATTERN.test(appointment.hostEmail || '')
+        && appointment.hostEmail.toLowerCase() !== attendee.email.toLowerCase()
+        ? [{ email: appointment.hostEmail.toLowerCase(), displayName: appointment.hostName || '' }] : [])]
     } : {}),
     // A consultation is a video call, so the event carries its own Meet link.
     // `requestId` is the appointment id rather than a random value: Google
@@ -1445,7 +1505,11 @@ export async function syncAppointmentToGoogle(db, appointmentId, { client, setti
   const existingEventId = clean(appointment.googleEventId, 300);
 
   try {
-    const config = settings || await loadCalendarSettings(db, accountId);
+    const config = settings || await loadCalendarSettings(db, accountId, appointment.hostId);
+    if (calendarHostId(accountId, config.hostId) !== calendarHostId(accountId, appointment.hostId)
+      || (client.calendarId && client.calendarId !== config.googleCalendarId)) {
+      throw new Error('The calendar client does not match the appointment host.');
+    }
     if (appointment.status === 'cancelled') {
       const options = googleSyncOptions(appointment);
       await client.deleteEvent(existingEventId, options);
@@ -1510,11 +1574,10 @@ export async function syncAppointmentToGoogle(db, appointmentId, { client, setti
 
 /** Retry sweep for appointments Google rejected or never received. */
 export async function retryPendingGoogleSync(db, {
-  client, limit = 25, accountId = LEGACY_ACCOUNT_ID
+  client, clientForHost = null, limit = 25, accountId = LEGACY_ACCOUNT_ID
 } = {}) {
-  if (!client) return { attempted: 0 };
+  if (!client && !clientForHost) return { attempted: 0 };
   const account = requireAccountId(accountId, { field: 'calendar.accountId' });
-  const settings = await loadCalendarSettings(db, account);
   const snapshot = await db.collection('appointments')
     .where('googleSyncState', 'in', ['pending', 'failed'])
     .limit(limit)
@@ -1526,8 +1589,15 @@ export async function retryPendingGoogleSync(db, {
     if (readAccountId(doc.get('accountId'), { fallback: LEGACY_ACCOUNT_ID }) !== account) continue;
     if (!['booked', 'cancelled'].includes(doc.get('status'))) continue;
     attempted += 1;
-    const result = await syncAppointmentToGoogle(db, doc.id, { client, settings });
-    if (result.ok) synced += 1;
+    try {
+      const hostId = doc.get('hostId') || '';
+      const settings = await loadCalendarSettings(db, account, hostId);
+      const hostClient = clientForHost ? await clientForHost(hostId) : client;
+      const result = await syncAppointmentToGoogle(db, doc.id, { client: hostClient, settings });
+      if (result.ok) synced += 1;
+    } catch (error) {
+      console.warn('[calendar] host sync unavailable', doc.id, error?.message);
+    }
   }
   return { attempted, synced };
 }

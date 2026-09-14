@@ -64,8 +64,8 @@ function requireCalendarAccount(context, request) {
   catch (error) { throw new HttpsError('permission-denied', clean(error.message, 300)); }
 }
 
-async function calendarClient(db, accountId) {
-  const settings = await loadCalendarSettings(db, accountId).catch(() => null);
+async function calendarClient(db, accountId, hostId = '') {
+  const settings = await loadCalendarSettings(db, accountId, hostId).catch(() => null);
   if (!settings || settings.googleSyncEnabled === false) return null;
   return createGoogleCalendarClient({
     credentialsJson: secretValue(GOOGLE_CALENDAR_CREDENTIALS),
@@ -83,12 +83,14 @@ export const getCalendarAvailability = onCall(callOptions, async request => {
   const accountId = requireCalendarAccount(context, request);
   const fromMs = Number(request.data?.fromMs) || 0;
   const toMs = Number(request.data?.toMs) || 0;
+  const hostId = clean(request.data?.hostId, 80);
   const result = await findAvailability(db, {
     requestedWindow: clean(request.data?.requestedWindow, 120),
     fromMs, toMs,
     accountId,
+    hostId,
     limit: Math.max(1, Math.min(50, Number(request.data?.limit) || 12)),
-    google: await calendarClient(db, accountId).catch(() => null)
+    google: await calendarClient(db, accountId, hostId).catch(() => null)
   });
   return {
     ok: true,
@@ -158,8 +160,10 @@ export const bookAppointment = onCall(callOptions, async request => {
       held.error === 'slot_taken' ? 'That time was just taken.' : 'That slot is not bookable.');
   }
 
-  const settings = await loadCalendarSettings(db, accountId);
-  const google = await calendarClient(db, accountId).catch(() => null);
+  const heldAppointment = await db.doc(`appointments/${held.holdId}`).get();
+  const hostId = heldAppointment.get('hostId') || '';
+  const settings = await loadCalendarSettings(db, accountId, hostId);
+  const google = await calendarClient(db, accountId, hostId).catch(() => null);
 
   const booked = await commitBooking(db, {
     holdId: held.holdId,
@@ -198,8 +202,9 @@ export const rescheduleAppointmentCall = onCall(callOptions, async request => {
     throw new HttpsError(result.error === 'slot_taken' ? 'already-exists' : 'failed-precondition',
       result.error === 'slot_taken' ? 'That time was just taken.' : 'That appointment could not be moved.');
   }
+  const updated = await db.doc(`appointments/${result.appointmentId}`).get();
   await syncAppointmentToGoogle(db, result.appointmentId, {
-    client: await calendarClient(db, accountId).catch(() => null)
+    client: await calendarClient(db, accountId, updated.get('hostId')).catch(() => null)
   })
     .catch(() => {});
   return result;
@@ -223,7 +228,7 @@ export const cancelAppointmentCall = onCall(callOptions, async request => {
   });
   if (!result.ok) throw new HttpsError('failed-precondition', 'That appointment could not be cancelled.');
   await syncAppointmentToGoogle(db, result.appointmentId, {
-    client: await calendarClient(db, accountId).catch(() => null)
+    client: await calendarClient(db, accountId, existing.get('hostId')).catch(() => null)
   })
     .catch(() => {});
   return result;
@@ -274,9 +279,10 @@ export const calendarMaintenance = onSchedule(
 
     const totals = { attempted: 0, synced: 0 };
     for (const accountId of ACCOUNT_IDS) {
-      const client = await calendarClient(db, accountId).catch(() => null);
-      if (!client) continue;
-      const result = await retryPendingGoogleSync(db, { client, accountId }).catch(error => {
+      const result = await retryPendingGoogleSync(db, {
+        accountId,
+        clientForHost: hostId => calendarClient(db, accountId, hostId).catch(() => null)
+      }).catch(error => {
         console.warn('[calendar] sync retry failed', accountId, error?.message);
         return { attempted: 0, synced: 0 };
       });

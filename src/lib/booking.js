@@ -15,8 +15,8 @@ const callable = async (name, data) => {
   return result.data;
 };
 
-export const loadBookingSlots = ({ fromMs, toMs }) =>
-  callable('getPublicBookingSlots', { fromMs, toMs });
+export const loadBookingSlots = ({ fromMs, toMs, hostId }) =>
+  callable('getPublicBookingSlots', { fromMs, toMs, hostId });
 
 export const bookConsultation = payload =>
   callable('bookPublicAppointment', { ...payload, pagePath: window.location.pathname });

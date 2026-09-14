@@ -68,6 +68,19 @@
 
 .book-picker { padding: 30px; }
 
+.book-hosts { border: 0; padding: 0; margin: 0 0 24px; min-width: 0; }
+.book-hosts legend { font-size: 15px; font-weight: 700; }
+.book-hosts > p { color: #65656b; font-size: 12px; margin: 8px 0 12px; }
+.book-host-options { display: flex; flex-wrap: wrap; gap: 10px; }
+.book-host { display: flex; align-items: center; gap: 8px; flex: 1 1 170px;
+  padding: 13px 12px; border: 1px solid #dededf; border-radius: 10px;
+  font-size: 13px; font-weight: 600; cursor: pointer; }
+.book-host.selected { border-color: #7c3aed; background: #f5f0ff; }
+.book-host:focus-within { outline: 2px solid #7c3aed; outline-offset: 2px; }
+.book-host input { accent-color: #7c3aed; margin: 0; }
+.book-host small { display: block; margin-top: 4px; font-size: 11px; font-weight: 400; }
+.book-host.unavailable { color: #65656b; cursor: default; }
+
 .book-month {
   display: flex; align-items: center; justify-content: space-between;
   gap: 12px; margin-bottom: 14px;

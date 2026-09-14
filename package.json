@@ -72,6 +72,8 @@
     "start": "node server.js",
     "preview": "vite preview",
     "test:calendar": "node --test functions/booking-calendar.test.mjs",
+    "test:booking-hosts": "firebase emulators:exec --only firestore --project demo-bitesites \"node functions/booking-hosts.test.mjs\"",
+    "test:booking-browser": "node scripts/test-booking-browser.mjs",
     "test:accounts": "node --test functions/accounts.test.mjs",
     "test:account-access": "node --test functions/account-access.test.mjs",
     "test:sideband-poll": "node --test functions/hybrid-sideband-poll.test.mjs",

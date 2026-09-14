@@ -31,6 +31,9 @@ import {
   findAvailability,
   holdSlot,
   loadCalendarSettings,
+  loadPublicBookingHosts,
+  DEFAULT_BOOKING_HOST_ID,
+  decodeSlotId,
   syncAppointmentToGoogle
 } from './booking-calendar.js';
 
@@ -66,6 +69,16 @@ async function calendarClient(db, settings) {
     impersonate: settings.googleImpersonate,
     busyCalendarIds: settings.busyCalendarIds
   });
+}
+
+async function publicHost(db, requestedId) {
+  const hosts = await loadPublicBookingHosts(db);
+  const hostId = clean(requestedId, 80) || DEFAULT_BOOKING_HOST_ID;
+  const host = hosts.find(entry => entry.id === hostId);
+  if (!host) throw new HttpsError('invalid-argument', 'Choose a meeting host.');
+  if (!host.available) throw new HttpsError('failed-precondition', 'That host’s calendar is not connected yet. Please choose another host.');
+  const settings = await loadCalendarSettings(db, PUBLIC_ACCOUNT_ID, hostId);
+  return { hosts, hostId, settings };
 }
 
 function clientIp(request) {
@@ -131,7 +144,7 @@ function dateKeyIn(startMs, timeZone) {
 export const getPublicBookingSlots = onCall(options, async request => {
   const db = getFirestore();
   const nowMs = Date.now();
-  const settings = await loadCalendarSettings(db, PUBLIC_ACCOUNT_ID);
+  const { hosts, hostId, settings } = await publicHost(db, request.data?.hostId);
 
   const requestedFrom = Number(request.data?.fromMs) || 0;
   const requestedTo = Number(request.data?.toMs) || 0;
@@ -141,12 +154,17 @@ export const getPublicBookingSlots = onCall(options, async request => {
 
   const result = await findAvailability(db, {
     accountId: PUBLIC_ACCOUNT_ID,
+    hostId,
+    strictGoogle: true,
     fromMs,
     toMs,
     nowMs,
     limit: 600,
     maxLimit: 600,
     google: await calendarClient(db, settings).catch(() => null)
+  }).catch(error => {
+    console.warn('[public-booking] availability failed', hostId, error?.message);
+    return { slots: [], availabilityError: 'We could not check this calendar. Try again or choose another host.' };
   });
 
   const days = new Map();
@@ -164,6 +182,9 @@ export const getPublicBookingSlots = onCall(options, async request => {
     durationMinutes: settings.slotMinutes,
     meetingTitle: settings.meetingTitle,
     hostName: settings.hostName,
+    hostId,
+    hosts,
+    availabilityError: result.availabilityError || '',
     horizonEndMs: horizonEnd,
     window: { fromMs, toMs },
     days: [...days.entries()].map(([date, slots]) => ({ date, slots }))
@@ -200,7 +221,9 @@ async function createBookingLead(db, { attendee, notes, appointment, pagePath })
     booking: {
       appointmentId: appointment.appointmentId,
       confirmationRef: appointment.confirmationRef,
-      startIso: appointment.startIso
+      startIso: appointment.startIso,
+      hostId: appointment.hostId,
+      hostName: appointment.hostName
     }
   });
   return leadRef.id;
@@ -233,6 +256,12 @@ export const bookPublicAppointment = onCall(options, async request => {
     throw new HttpsError('invalid-argument', 'That booking could not be completed.');
   }
 
+  const { hostId, settings } = await publicHost(db, request.data?.hostId);
+  const decoded = decodeSlotId(slotId);
+  if (!decoded || (decoded.hostId || DEFAULT_BOOKING_HOST_ID) !== hostId) {
+    throw new HttpsError('invalid-argument', 'Choose a time for the selected host.');
+  }
+
   const ipHash = ipHashOf(clientIp(request));
   if (!await consumeQuota(db, ipHash, nowMs)) {
     throw new HttpsError('resource-exhausted',
@@ -240,7 +269,7 @@ export const bookPublicAppointment = onCall(options, async request => {
   }
 
   const held = await holdSlot(db, {
-    slotId, accountId: PUBLIC_ACCOUNT_ID, heldBy: 'manual', nowMs
+    slotId, accountId: PUBLIC_ACCOUNT_ID, hostId, heldBy: 'manual', nowMs
   });
   if (!held.ok) {
     throw new HttpsError(held.error === 'slot_taken' ? 'already-exists' : 'failed-precondition',
@@ -249,7 +278,6 @@ export const bookPublicAppointment = onCall(options, async request => {
         : 'That time is no longer bookable. Pick another.');
   }
 
-  const settings = await loadCalendarSettings(db, PUBLIC_ACCOUNT_ID);
   const google = await calendarClient(db, settings).catch(() => null);
 
   const booked = await commitBooking(db, {
@@ -276,7 +304,7 @@ export const bookPublicAppointment = onCall(options, async request => {
   const leadId = await createBookingLead(db, {
     attendee: { name, email, phone, company },
     notes,
-    appointment: booked,
+    appointment: { ...booked, hostId, hostName: settings.hostName },
     pagePath: clean(request.data?.pagePath, 300)
   }).catch(error => {
     console.error('[public-booking] lead write failed', error?.message);
@@ -300,6 +328,8 @@ export const bookPublicAppointment = onCall(options, async request => {
     spoken: booked.spoken,
     timezone: settings?.timezone || '',
     durationMinutes: settings?.slotMinutes || 0,
+    hostId,
+    hostName: settings.hostName,
     meetUrl: synced?.meetUrl || ''
   };
 });

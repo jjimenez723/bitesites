@@ -7,7 +7,7 @@
 //
 // Times come from the server already filtered by working hours, buffers, lead
 // time, existing meetings and the owner's other Google calendars. This file
-// renders them and nothing more; the slot id is the only thing it sends back.
+// renders them and sends the selected host and slot IDs back for validation.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -102,6 +102,9 @@ export default function Book() {
     timezone: '', durationMinutes: 0, meetingTitle: '', hostName: '', horizonEndMs: 0
   });
   const [days, setDays] = useState({});
+  const [hosts, setHosts] = useState([]);
+  const [hostId, setHostId] = useState('jensy-jimenez');
+  const requestVersion = useRef(0);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
 
@@ -115,14 +118,21 @@ export default function Book() {
   const detailsRef = useRef(null);
 
   const fetchMonth = useCallback((year, month) => {
+    const version = ++requestVersion.current;
     setLoading(true);
     setLoadError('');
+    setDays({});
+    setSlot(null);
     const { fromMs, toMs } = monthWindow(year, month);
-    return loadBookingSlots({ fromMs, toMs })
+    return loadBookingSlots({ fromMs, toMs, hostId })
       .then(data => {
+        if (version !== requestVersion.current) return null;
         const next = {};
         for (const entry of data?.days || []) next[entry.date] = entry.slots;
         setDays(next);
+        setSelectedDate(current => next[current]?.length ? current : Object.keys(next).sort()[0] || '');
+        setHosts(data?.hosts || []);
+        setLoadError(data?.availabilityError || '');
         setMeta({
           timezone: data?.timezone || '',
           durationMinutes: data?.durationMinutes || 0,
@@ -133,25 +143,35 @@ export default function Book() {
         return next;
       })
       .catch(error => {
+        if (version !== requestVersion.current) return null;
         setLoadError(bookingErrorMessage(error, 'We could not load available times. Please try again.'));
         setDays({});
         return {};
       })
-      .finally(() => setLoading(false));
-  }, []);
+      .finally(() => { if (version === requestVersion.current) setLoading(false); });
+  }, [hostId]);
 
   // Land on the first day that actually has something, which is usually not
   // today — a visitor should not have to hunt across a grid for it.
   useEffect(() => {
-    fetchMonth(cursor.year, cursor.month).then(next => {
-      const first = Object.keys(next).sort()[0];
-      if (first) setSelectedDate(first);
-    });
+    fetchMonth(cursor.year, cursor.month);
+    return () => { requestVersion.current += 1; };
   }, [cursor, fetchMonth]);
 
   const times = selectedDate ? days[selectedDate] || [] : [];
 
+  const pickHost = id => {
+    requestVersion.current += 1;
+    setHostId(id);
+    setSlot(null);
+    setSelectedDate('');
+    setDays({});
+    setLoading(true);
+    setFormError('');
+  };
+
   const shiftMonth = delta => {
+    if (busy) return;
     setSlot(null);
     setSelectedDate('');
     setCursor(current => {
@@ -161,12 +181,14 @@ export default function Book() {
   };
 
   const pickDate = key => {
+    if (busy) return;
     setSelectedDate(key);
     setSlot(null);
     setFormError('');
   };
 
   const pickTime = entry => {
+    if (busy) return;
     setSlot(entry);
     setFormError('');
     // The form is below the fold on a phone; move to it rather than leave the
@@ -180,11 +202,11 @@ export default function Book() {
 
   const submit = async event => {
     event.preventDefault();
-    if (!slot || busy) return;
+    if (!slot || busy || loading) return;
     setBusy(true);
     setFormError('');
     try {
-      const result = await bookConsultation({ slotId: slot.slotId, ...form });
+      const result = await bookConsultation({ slotId: slot.slotId, hostId, ...form });
       setConfirmed({ ...result, startMs: slot.startMs });
     } catch (error) {
       setFormError(bookingErrorMessage(error, 'We could not complete that booking. Please try again.'));
@@ -223,6 +245,7 @@ export default function Book() {
             calendar invite. There is nothing to prepare.
           </p>
           <dl className="book-receipt">
+            <div><dt>With</dt><dd>{confirmed.hostName || meta.hostName}</dd></div>
             <div><dt>When</dt><dd>
               {longDate(new Intl.DateTimeFormat('en-CA', {
                 timeZone: meta.timezone || undefined, year: 'numeric', month: '2-digit', day: '2-digit'
@@ -263,21 +286,39 @@ export default function Book() {
           </ul>
           <p className="book-lede">
             Tell us what you are trying to solve and we will bring a recommendation, not a pitch deck.
-            No prep needed — {meta.hostName ? `a ${meta.hostName}` : 'a specialist'} meets you on Google Meet
+            No prep needed — {hosts.find(host => host.id === hostId)?.name || meta.hostName || 'a specialist'} meets you on Google Meet
             at the time you pick. The link is in your confirmation email and on the calendar invite.
           </p>
         </aside>
 
         <div className="book-picker">
-          <header className="book-month">
-            <button type="button" onClick={() => shiftMonth(-1)} disabled={!canGoBack || loading}
+          {hosts.length > 1 ? (
+            <fieldset className="book-hosts" disabled={busy}>
+              <legend>Who would you like to meet?</legend>
+              <p>Choose Jensy or Jonathan to see their available times.</p>
+              <div className="book-host-options">
+                {hosts.map(host => (
+                  <label key={host.id} className={`book-host${hostId === host.id ? ' selected' : ''}${!host.available ? ' unavailable' : ''}`}>
+                    <input type="radio" name="host" value={host.id} checked={hostId === host.id}
+                      disabled={!host.available} onChange={() => pickHost(host.id)} />
+                    <span>{host.name}{!host.available ? <small>Calendar being connected</small> : null}</span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+          ) : null}
+          <div className="book-month">
+            <button type="button" onClick={() => shiftMonth(-1)} disabled={!canGoBack || loading || busy}
               aria-label="Previous month">‹</button>
             <strong>{monthLabel(cursor.year, cursor.month)}</strong>
-            <button type="button" onClick={() => shiftMonth(1)} disabled={loading || beyondHorizon}
+            <button type="button" onClick={() => shiftMonth(1)} disabled={loading || beyondHorizon || busy}
               aria-label="Next month">›</button>
-          </header>
+          </div>
 
-          {loadError ? <p className="book-error" role="status">{loadError}</p> : null}
+          {loadError ? <p className="book-error" role="status">{loadError}{' '}
+            <button type="button" className="book-back" disabled={loading}
+              onClick={() => fetchMonth(cursor.year, cursor.month)}>Try again</button>
+          </p> : null}
 
           <MonthGrid
             year={cursor.year}
@@ -292,7 +333,7 @@ export default function Book() {
               ? (
                 <p className="book-hint">
                   {horizonText
-                    ? `We are booking through ${horizonText}. Nothing is open in this month — try the previous one, or email jensy@bitesites.org and we will make room.`
+                    ? `No times with ${hosts.find(host => host.id === hostId)?.name || meta.hostName || 'this host'} in this month. Try another host or month. We are booking through ${horizonText}.`
                     : 'Nothing open this month.'}
                 </p>
               )

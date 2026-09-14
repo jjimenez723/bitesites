@@ -1864,7 +1864,7 @@ export const sendMeetingBookedEmails = onDocumentWritten(
     });
     if (!claim) return;
 
-    const settings = await loadCalendarSettings(db, after.accountId).catch(() => null);
+    const settings = await loadCalendarSettings(db, after.accountId, after.hostId).catch(() => null);
     const startMs = after.startAt?.toMillis?.() || 0;
     const meetingTime = startMs
       ? describeSlotForSpeech(startMs, after.timezone || settings?.timezone || 'America/New_York')
@@ -1876,7 +1876,7 @@ export const sendMeetingBookedEmails = onDocumentWritten(
         variables: {
           first_name: str(after.attendee?.name, 120).split(/\s+/)[0] || 'there',
           meeting_title: settings?.meetingTitle || 'BiteSites strategy call',
-          host_name: settings?.hostName || 'BiteSites specialist',
+          host_name: after.hostName || settings?.hostName || 'BiteSites specialist',
           meeting_time: meetingTime,
           meet_url: claim.meetUrl,
           confirmation_ref: str(after.confirmationRef, 40) || '—'
