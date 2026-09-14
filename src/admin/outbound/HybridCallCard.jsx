@@ -1,8 +1,10 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { outbound, toDate, useAction } from './data';
 import { formatPhone, formatDuration } from './SourceBadge';
 import LiveTranscript from './LiveTranscript';
 import { hybridVoiceState, joinHybridCall, leaveHybridVoice } from './voice-client';
+import { useHybridVoice } from './use-hybrid-voice';
+import CallAudioStatus from './CallAudioStatus';
 
 const CONTROLLER_LABELS = {
   human: 'YOU',
@@ -20,10 +22,10 @@ function liveSeconds(call, now) {
 
 export default function HybridCallCard({ call, session, target, onDisposition, onEnter }) {
   const action = useAction();
+  const voice = useHybridVoice();
   const [now, setNow] = useState(Date.now());
   const [listening, setListening] = useState(false);
   const [voiceError, setVoiceError] = useState('');
-  const joiningRef = useRef(false);
   const controller = call?.control?.controller || 'unassigned';
   const terminal = ['completed', 'cancelled', 'failed'].includes(call?.status);
   const humanRequested = call?.handoff?.requestedBy === 'prospect'
@@ -53,19 +55,18 @@ export default function HybridCallCard({ call, session, target, onDisposition, o
     const shouldJoinInitialHuman = controller === 'human' && repOwnsCall;
     const shouldJoinHandoff = controller === 'transitioning'
       && call?.handoff?.state === 'joining_human' && repOwnsCall;
-    if ((!shouldJoinInitialHuman && !shouldJoinHandoff) || terminal || joiningRef.current) return;
+    if ((!shouldJoinInitialHuman && !shouldJoinHandoff) || terminal) return;
 
     const voice = hybridVoiceState();
     if (voice.connected && voice.callId === call.id && voice.mode === 'human') return;
 
-    joiningRef.current = true;
     setVoiceError('');
     joinHybridCall(call.id, 'human')
       .catch(error => {
+        if (hybridVoiceState().callId !== call.id) return;
         console.error('[hybrid-voice] automatic human join failed', error);
         setVoiceError(error?.message || 'Could not connect your browser audio to this call.');
-      })
-      .finally(() => { joiningRef.current = false; });
+      });
   }, [call.id, call?.handoff?.state, controller, session?.rep?.activeCallId, terminal]);
 
   useEffect(() => {
@@ -144,8 +145,12 @@ export default function HybridCallCard({ call, session, target, onDisposition, o
 
       {controller === 'ai' && <LiveTranscript callId={call.id} compact />}
       {controller === 'human' && (
-        <p className="admin-note hybrid-you-note">You are speaking with this prospect.</p>
+        <p className="admin-note hybrid-you-note">{voice.connected && voice.callId === call.id
+          ? (voice.muted ? 'Connected. Your microphone is muted.' : 'Your audio is connected to this prospect.')
+          : 'Call assigned to you. Waiting for your audio connection.'}</p>
       )}
+      {!terminal && session?.rep?.activeCallId === call.id && controller === 'human' && <CallAudioStatus callId={call.id} />}
+      {!terminal && listening && <CallAudioStatus callId={call.id} mode="listen" />}
       {controller === 'transitioning' && (
         <p className="admin-note">
           {call?.handoff?.state === 'joining_human'

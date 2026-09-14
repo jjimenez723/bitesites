@@ -8,6 +8,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useLiveCalls, useTargets } from './data';
 import HybridCallCard from './HybridCallCard';
 import LiveCallWorkspace from './LiveCallWorkspace';
+import { readDialerSoundPreference, startDialerRingback } from './dialer-cue';
 
 const terminal = call => ['completed', 'cancelled', 'failed'].includes(call?.status);
 
@@ -36,6 +37,11 @@ export default function ActiveCallPanel({ session, onDisposition }) {
   const aiCount = active.filter(call => call?.control?.controller === 'ai').length;
   const humanCount = active.filter(call => call?.control?.controller === 'human' || call?.control?.controller === 'transitioning').length;
   const workspaceCall = calls.rows.find(call => call.id === workspaceCallId) || null;
+  const ringing = active.some(call => call.status === 'ringing' && !call.answeredAt)
+    && humanCount === 0 && session?.operatingMode !== 'ai';
+  useEffect(() => {
+    if (ringing && readDialerSoundPreference()) return startDialerRingback();
+  }, [ringing]);
 
   // A dedicated workspace opens only when the human becomes part of the call.
   // AI-only calls remain compact until the rep deliberately opens/monitors one.

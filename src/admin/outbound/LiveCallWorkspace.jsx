@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { outbound, toDate, useAction } from './data';
 import { formatDuration, formatPhone } from './SourceBadge';
 import LiveTranscript from './LiveTranscript';
+import { useHybridVoice } from './use-hybrid-voice';
+import CallAudioStatus from './CallAudioStatus';
 import {
   hybridVoiceState, joinHybridCall, leaveHybridVoice, setHybridVoiceMuted
 } from './voice-client';
@@ -49,6 +51,8 @@ export default function LiveCallWorkspace({
   participationMode = 'owner', demo = false, demoTurns = null
 }) {
   const action = useAction();
+  const voice = useHybridVoice();
+  const audioConnected = demo || (voice.connected && voice.callId === call.id);
   const [now, setNow] = useState(Date.now());
   const [tab, setTab] = useState('guide');
   const [muted, setMuted] = useState(() => hybridVoiceState().muted);
@@ -71,7 +75,6 @@ export default function LiveCallWorkspace({
   const [transferToUid, setTransferToUid] = useState('');
   const [transferNote, setTransferNote] = useState('');
   const [coachCue, setCoachCue] = useState('');
-  const autoJoin = useRef(false);
   const transferDialogRef = useRef(null);
   const wrapDialogRef = useRef(null);
 
@@ -90,6 +93,13 @@ export default function LiveCallWorkspace({
   const displayName = call.displayName || call.companyName || call.contactName || 'Outbound call';
   const phone = call.phoneE164 || target?.phoneE164 || '';
   const duration = formatDuration(secondsSince(call.connectedAt || call.answeredAt || call.startedAt, now, call.durationSec));
+
+  useEffect(() => {
+    if (voice.callId === call.id) {
+      setMuted(voice.muted);
+      setVoiceError(voice.error);
+    }
+  }, [call.id, voice]);
 
   useEffect(() => {
     if (terminal) { setShowWrapUp(true); return undefined; }
@@ -148,14 +158,14 @@ export default function LiveCallWorkspace({
   }, [showTransfer, showWrapUp]);
 
   useEffect(() => {
-    if (demo || assisting || coaching || !humanAudible || terminal || autoJoin.current) return;
+    if (demo || assisting || coaching || !humanAudible || terminal) return;
     const current = hybridVoiceState();
     if (current.connected && current.callId === call.id && current.mode === 'human') return;
-    autoJoin.current = true;
     joinHybridCall(call.id, 'human')
       .then(() => { setMuted(false); setListening(false); })
-      .catch(error => setVoiceError(error?.message || 'Could not connect your microphone.'))
-      .finally(() => { autoJoin.current = false; });
+      .catch(error => {
+        if (hybridVoiceState().callId === call.id) setVoiceError(error?.message || 'Could not connect your microphone.');
+      });
   }, [assisting, call.id, coaching, demo, humanAudible, terminal]);
 
   useEffect(() => {
@@ -171,6 +181,7 @@ export default function LiveCallWorkspace({
 
   const progress = useMemo(() => {
     if (terminal) return ['Call ended', 'Wrap-up required'];
+    if (!audioConnected && (controller === 'human' || assisting || coaching || listening)) return ['Audio disconnected', voice.connecting ? 'Connecting your call audio…' : 'Reconnect audio to hear the call'];
     if (coaching) return ['Private supervisor monitor', 'The prospect and representative cannot hear you'];
     if (assisting && staffTransfer.state === 'accepted') return ['Warm handoff', `You and ${staffTransfer.fromName || 'the current rep'} are both audible`];
     if (assisting && staffTransfer.state === 'completed') return ['Handoff complete', 'You are now the call owner'];
@@ -178,7 +189,7 @@ export default function LiveCallWorkspace({
     if (controller === 'human') return ['Human-led conversation', muted ? 'Your microphone is muted' : 'The prospect can hear you'];
     if (controller === 'ai') return ['AI-led conversation', listening ? 'You can hear the call; the prospect cannot hear you' : 'Open monitor mode before taking over'];
     return [call.status === 'ringing' ? 'Ringing' : 'Connecting', 'No conversation is verified yet'];
-  }, [assisting, call.status, coaching, controller, listening, muted, staffTransfer.fromName, staffTransfer.state, terminal]);
+  }, [assisting, audioConnected, call.status, coaching, controller, listening, muted, staffTransfer.fromName, staffTransfer.state, terminal, voice.connecting]);
 
   const toggleMute = () => {
     try {
@@ -327,6 +338,9 @@ export default function LiveCallWorkspace({
         </button>
       </header>
 
+      {!demo && !terminal && (humanAudible || coaching || listening) && <CallAudioStatus
+          callId={call.id} mode={coaching ? 'coach' : assisting ? 'assist' : listening ? 'listen' : 'human'}
+        />}
       <main className="live-call-canvas">
         <aside className="live-context-panel" aria-label="Prospect context">
           <div className="live-contact-card">

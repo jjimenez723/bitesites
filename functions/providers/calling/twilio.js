@@ -29,6 +29,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { CallingProviderAdapter, callEvent } from './adapter.js';
 import { clean } from '../../prospect-normalization.js';
+import { twilioForm } from './twilio-form.js';
 
 const API_BASE = 'https://api.twilio.com/2010-04-01';
 
@@ -93,7 +94,7 @@ export class TwilioDialer extends CallingProviderAdapter {
           'Content-Type': 'application/x-www-form-urlencoded',
           Accept: 'application/json'
         },
-        body: new URLSearchParams(params).toString()
+        body: twilioForm(params)
       });
     } catch (error) {
       throw new TwilioError(`Could not reach Twilio: ${String(error?.message || error).slice(0, 200)}`);
@@ -119,7 +120,7 @@ export class TwilioDialer extends CallingProviderAdapter {
       AsyncAmd: 'true',
       Timeout: '25',
       TimeLimit: '600',
-      StatusCallbackEvent: 'initiated ringing answered completed',
+      StatusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'],
       StatusCallbackMethod: 'POST'
     };
     if (this.statusCallbackUrl) {

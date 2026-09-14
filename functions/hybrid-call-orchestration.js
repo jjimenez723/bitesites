@@ -122,6 +122,7 @@ export async function routeVerifiedHumanAnswer(db, sessionId, callId, {
 
     const session = sessionSnapshot.data();
     const call = callSnapshot.data();
+    if (['completed', 'cancelled', 'failed'].includes(call.status)) return { routed: false, reason: 'call_ended' };
     const current = control(call);
     if (current.controller !== 'unassigned') {
       return { routed: true, controller: current.controller, reason: 'already_routed', idempotent: true };

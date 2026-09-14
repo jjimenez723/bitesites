@@ -13,9 +13,10 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { outbound, toDate, useAction, useLiveCalls, useLiveDoc, useSessionHeartbeat } from './data';
-import { playDialerCue, primeDialerCue, readDialerSoundPreference, writeDialerSoundPreference } from './dialer-cue';
+import { playDialerCue, primeDialerCue, readDialerSoundPreference, writeDialerSoundPreference, startDialerRingback } from './dialer-cue';
 import { formatPhone } from './SourceBadge';
 import { hybridVoiceState, joinHybridCall, leaveHybridVoice, prepareHybridVoice, setHybridVoiceMuted } from './voice-client';
+import { useHybridVoice } from './use-hybrid-voice';
 
 const TERMINAL = ['completed', 'cancelled', 'failed'];
 const isTerminal = call => TERMINAL.includes(call?.status);
@@ -202,9 +203,9 @@ export default function QuickDial({ campaignId, campaigns = [], onSelectCampaign
   // land on the prospect who happened to be on screen when it was confirmed.
   const [followUp, setFollowUp] = useState({});
   const [now, setNow] = useState(Date.now());
-  const joiningRef = useRef(false);
   const lastCuedCallRef = useRef('');
   const action = useAction();
+  const voice = useHybridVoice();
 
   const campaign = campaigns.find(entry => entry.id === campaignId) || null;
   const { data: session } = useLiveDoc(sessionId ? `dialerSessions/${sessionId}` : '');
@@ -229,12 +230,24 @@ export default function QuickDial({ campaignId, campaigns = [], onSelectCampaign
   const call = live || wrapUp;
   const ended = !live && Boolean(wrapUp);
   const controller = call?.control?.controller || '';
-  const onCall = controller === 'human' && Boolean(live);
+  const assignedToRep = controller === 'human' && Boolean(live);
+  const onCall = assignedToRep && voice.connected && voice.callId === live.id;
   const running = session?.status === 'active';
   const dialing = running && Boolean(session?.autoDial?.enabled);
   const waitingForTargets = dialing && !live && session?.autoDial?.state === 'waiting_for_targets';
   const findingNext = dialing && !live && !waitingForTargets;
-  const ringing = Boolean(live) && !onCall;
+  const ringing = live?.status === 'ringing' && !live?.answeredAt && !assignedToRep;
+  const connecting = Boolean(live) && !ringing && !onCall;
+
+  useEffect(() => {
+    if (ringing && soundEnabled) return startDialerRingback();
+  }, [live?.id, ringing, soundEnabled]);
+
+  useEffect(() => {
+    if (voice.callId !== live?.id) return;
+    setMuted(voice.muted);
+    setVoiceError(voice.error);
+  }, [live?.id, voice]);
 
   useEffect(() => {
     if (!live?.id || lastCuedCallRef.current === live.id) return;
@@ -280,16 +293,16 @@ export default function QuickDial({ campaignId, campaigns = [], onSelectCampaign
   // The server decides who owns a call. Once it hands this one to the rep, put
   // their microphone in it — the browser is following that decision, not making it.
   useEffect(() => {
-    if (!live || !onCall || session?.rep?.activeCallId !== live.id || joiningRef.current) return;
+    if (!live || !assignedToRep || session?.rep?.activeCallId !== live.id) return;
     const voice = hybridVoiceState();
     if (voice.connected && voice.callId === live.id && voice.mode === 'human') return;
-    joiningRef.current = true;
     setVoiceError('');
     joinHybridCall(live.id, 'human')
       .then(() => setMuted(hybridVoiceState().muted))
-      .catch(error => setVoiceError(error?.message || 'Could not connect your microphone to this call.'))
-      .finally(() => { joiningRef.current = false; });
-  }, [live?.id, onCall, session?.rep?.activeCallId]);
+      .catch(error => {
+        if (hybridVoiceState().callId === live.id) setVoiceError(error?.message || 'Could not connect your microphone to this call.');
+      });
+  }, [live?.id, assignedToRep, session?.rep?.activeCallId]);
 
   // Leaving the audio is keyed on the live call ending, not on the card
   // changing — a wrap-up still on screen has no audio to hold, and clearing the
@@ -297,7 +310,7 @@ export default function QuickDial({ campaignId, campaigns = [], onSelectCampaign
   useEffect(() => {
     if (live) return;
     const voice = hybridVoiceState();
-    if (voice.connected) leaveHybridVoice();
+    if (voice.callId) leaveHybridVoice();
     setMuted(false);
   }, [live?.id]);
 
@@ -318,11 +331,10 @@ export default function QuickDial({ campaignId, campaigns = [], onSelectCampaign
     try {
       setBlocker('');
       setVoiceError('');
-      if (soundEnabled) await primeDialerCue();
       // This click is the browser gesture that is allowed to ask for the
       // microphone. Asking later, when the server assigns an answered call,
       // is too late.
-      await prepareHybridVoice();
+      await Promise.all([prepareHybridVoice(), soundEnabled ? primeDialerCue() : Promise.resolve()]);
       const started = await outbound.startHybridSession(campaignId, {
         operatingMode: 'human',
         concurrency: 1,
@@ -341,7 +353,7 @@ export default function QuickDial({ campaignId, campaigns = [], onSelectCampaign
 
   const dialAgain = () => action.run(async () => {
     setBlocker('');
-    if (soundEnabled) await primeDialerCue();
+    await Promise.all([prepareHybridVoice(), soundEnabled ? primeDialerCue() : Promise.resolve()]);
     const result = await outbound.dialHybrid(sessionId);
     const why = describeResult(result);
     if (why) setBlocker(why);
@@ -387,6 +399,14 @@ export default function QuickDial({ campaignId, campaigns = [], onSelectCampaign
     catch (error) { setVoiceError(error?.message || 'Your microphone is not connected.'); }
   };
 
+  const reconnectAudio = async () => {
+    setVoiceError('');
+    try {
+      await prepareHybridVoice();
+      await joinHybridCall(live.id, 'human');
+    } catch (error) { setVoiceError(error?.message || 'Could not reconnect audio.'); }
+  };
+
   const toggleSound = async () => {
     const next = !soundEnabled;
     setSoundEnabled(next);
@@ -416,6 +436,7 @@ export default function QuickDial({ campaignId, campaigns = [], onSelectCampaign
   const ringingSecondsLeft = ringing ? Math.max(0, 25 - seconds) : 0;
   const statusLabel = onCall ? 'On a call'
     : ringing ? 'Ringing'
+      : connecting ? 'Connecting'
       : ended ? 'Wrap up'
         : findingNext ? 'Checking list'
           : waitingForTargets ? 'Waiting'
@@ -508,7 +529,8 @@ export default function QuickDial({ campaignId, campaigns = [], onSelectCampaign
                 <span className="quickdial-state-dot" aria-hidden="true" />
                 {onCall ? 'On call'
                   : ended ? 'Call ended — say how it went'
-                    : ringing ? 'Calling now'
+                    : ringing ? 'Ringing'
+                      : connecting ? (assignedToRep ? 'Connecting your audio' : 'Calling now')
                       : findingNext ? 'Checking the list'
                         : waitingForTargets ? 'Dialer on — no active call' : 'Ready'}
               </span>
@@ -534,7 +556,13 @@ export default function QuickDial({ campaignId, campaigns = [], onSelectCampaign
                       : 'Waiting for the carrier to confirm the result, then the next person is called automatically.'}
                   </p>
                 )}
-                {onCall && <p className="quickdial-call-progress is-connected">Connected — your microphone is live.</p>}
+                {connecting && <p className="quickdial-call-progress" role="status">
+                  {assignedToRep ? (voiceError ? 'Your audio is disconnected. Reconnect to speak with the lead.' : 'The lead answered. Connecting your microphone…')
+                    : call.answeredBy === 'machine' ? 'Voicemail answered. Waiting for the call to finish.'
+                      : call.answeredAt ? 'The call was answered. Checking whether a person is on the line…'
+                        : 'Placing the call. Waiting for the carrier to confirm ringing…'}
+                </p>}
+                {onCall && <p className="quickdial-call-progress is-connected">{muted ? 'Connected — your microphone is muted.' : 'Connected — your microphone is live.'}</p>}
                 {call.callPlan?.summary && (
                   <p className="quickdial-brief">{call.callPlan.summary}</p>
                 )}
@@ -562,6 +590,9 @@ export default function QuickDial({ campaignId, campaigns = [], onSelectCampaign
             <div className="quickdial-controls">
               {!ended && (
                 <div className="quickdial-controls-row">
+                  {assignedToRep && !onCall && <button className="btn-admin primary" type="button" disabled={voice.connecting} onClick={reconnectAudio}>
+                    {voice.connecting ? 'Connecting audio…' : 'Reconnect audio'}
+                  </button>}
                   <button className={`btn-admin ${muted ? 'primary' : ''}`} type="button" disabled={!onCall} onClick={toggleMute}>
                     {muted ? 'Unmute' : 'Mute'}
                   </button>

@@ -9,6 +9,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { CallingProviderAdapter, callEvent } from './adapter.js';
 import { clean } from '../../prospect-normalization.js';
+import { twilioForm } from './twilio-form.js';
 
 const API_BASE = 'https://api.twilio.com/2010-04-01';
 
@@ -82,7 +83,7 @@ export class HybridTwilioDialer extends CallingProviderAdapter {
           'Content-Type': 'application/x-www-form-urlencoded',
           Accept: 'application/json'
         },
-        body: new URLSearchParams(params).toString()
+        body: twilioForm(params)
       });
     } catch (error) {
       throw new HybridTwilioError(`Could not reach Twilio: ${String(error?.message || error).slice(0, 200)}`);
@@ -141,7 +142,7 @@ export class HybridTwilioDialer extends CallingProviderAdapter {
         AsyncAmd: 'true',
         Timeout: '25',
         TimeLimit: '600',
-        StatusCallbackEvent: 'initiated ringing answered completed',
+        StatusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'],
         StatusCallbackMethod: 'POST'
       };
       if (callback) {
@@ -173,7 +174,7 @@ export class HybridTwilioDialer extends CallingProviderAdapter {
       Timeout: '25',
       TimeLimit: '600',
       StatusCallback: statusCallback,
-      StatusCallbackEvent: 'initiated ringing answered completed',
+      StatusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'],
       StatusCallbackMethod: 'POST'
     };
     return params;
@@ -266,15 +267,17 @@ export class HybridTwilioDialer extends CallingProviderAdapter {
     const amd = String(body.AnsweredBy || '').toLowerCase();
 
     let type = 'queued';
-    if (amd === 'human') type = 'human_answered';
-    else if (amd.startsWith('machine') || amd === 'fax') type = 'machine_answered';
-    else if (status === 'ringing') type = 'ringing';
-    else if (status === 'in-progress') type = 'answered';
-    else if (status === 'completed') type = 'completed';
+    // Completion callbacks may also contain AnsweredBy. They must end the
+    // call instead of routing the same answer again or reopening voicemail.
+    if (status === 'completed') type = 'completed';
     else if (status === 'busy') type = 'busy';
     else if (status === 'no-answer') type = 'no_answer';
     else if (status === 'canceled') type = 'cancelled';
     else if (status === 'failed') type = 'failed';
+    else if (amd === 'human') type = 'human_answered';
+    else if (amd.startsWith('machine') || amd === 'fax') type = 'machine_answered';
+    else if (status === 'ringing') type = 'ringing';
+    else if (status === 'in-progress') type = 'answered';
     else if (status === 'initiated' || status === 'queued') type = 'dialing';
 
     // Legacy outbound uses a non-empty status callback URL and historically

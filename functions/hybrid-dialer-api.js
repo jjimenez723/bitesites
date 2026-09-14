@@ -32,6 +32,7 @@ import { assertAccountAccess, assertDocumentAccountAccess, assertOutboundAccess,
 import { maintainHybridCapacity } from './hybrid-capacity.js';
 import { hybridOutboundEventsUrl } from './hybrid-urls.js';
 import { validHybridTwilioRequest } from './hybrid-twilio-signature.js';
+import { hybridCallProgress } from './hybrid-call-progress.js';
 import { aiMediaAttachDeadline, failClosedAIMediaAttachment, isAIMediaAttachPending } from './hybrid-media-failsafe.js';
 import { externalDialingAdmission } from './deployment-environment.js';
 
@@ -920,6 +921,9 @@ export const twilioHybridBrowserTwiML = onRequest({ secrets: [HYBRID_TWILIO_AUTH
   const snapshot = await db.doc(`calls/${callId}`).get();
   if (!snapshot.exists) { res.status(404).type('text/plain').send('call not found'); return; }
   const call = snapshot.data();
+  if (['completed', 'cancelled', 'failed'].includes(call.status)) {
+    res.status(200).type('text/xml').send('<Response><Hangup/></Response>'); return;
+  }
   const room = call?.media?.conferenceName || conferenceName(call.sessionId, call.targetId);
   const identity = clean(String(req.body?.From || '').replace(/^client:/, ''), 121);
   const sessionSnapshot = await db.doc(`dialerSessions/${call.sessionId}`).get();
@@ -938,8 +942,11 @@ export const twilioHybridBrowserTwiML = onRequest({ secrets: [HYBRID_TWILIO_AUTH
   const label = `${mode}-${clean(sessionSnapshot.get('userUid'), 80)}`.slice(0, 120);
   const participantLabel = mode === 'assist' ? `assist-${call.staffTransfer.toUid}`
     : mode === 'coach' ? `coach-${identityUid}` : label;
+  // Twilio uses the callback of the first conference participant. The browser
+  // can win that race, so it must supply the same callback as the prospect.
+  const callback = `${process.env.PUBLIC_APP_URL || `https://${req.get('host')}`}/api/twilio-conference-events?sessionId=${encodeURIComponent(call.sessionId)}&targetId=${encodeURIComponent(call.targetId)}`;
   res.status(200).type('text/xml').send(
-    `<?xml version="1.0" encoding="UTF-8"?><Response><Dial><Conference beep="false" muted="${['listen', 'coach'].includes(mode) ? 'true' : 'false'}" startConferenceOnEnter="true" endConferenceOnExit="false" participantLabel="${xml(participantLabel)}">${xml(room)}</Conference></Dial></Response>`
+    `<?xml version="1.0" encoding="UTF-8"?><Response><Dial><Conference beep="false" muted="${['listen', 'coach'].includes(mode) ? 'true' : 'false'}" startConferenceOnEnter="true" endConferenceOnExit="false" waitUrl="" participantLabel="${xml(participantLabel)}" statusCallback="${xml(callback)}" statusCallbackMethod="POST" statusCallbackEvent="start end join leave mute hold">${xml(room)}</Conference></Dial></Response>`
   );
 });
 
@@ -1015,13 +1022,20 @@ export const recordHybridCallEvent = onRequest({
   const call = await findCallByProviderSid(db, event.providerCallId);
   if (!call) { res.status(200).json({ ok: true, ignored: 'call_not_found' }); return; }
   const callRef = db.doc(`calls/${call.id}`);
+  if (['completed', 'cancelled', 'failed'].includes(call.status)) {
+    res.status(200).json({ ok: true, ignored: 'call_ended' }); return;
+  }
   const stamp = Timestamp.fromDate(event.at);
   const common = { updatedAt: FieldValue.serverTimestamp() };
   if (event.type === 'ringing') common.ringingAt = stamp;
   if (['answered', 'human_answered', 'machine_answered'].includes(event.type)) common.answeredAt = stamp;
   if (event.recordingUrl) common.recordingUrl = event.recordingUrl;
   if (Number.isFinite(event.durationSec)) common.durationSec = event.durationSec;
-  await callRef.set(common, { merge: true });
+  await db.runTransaction(async transaction => {
+    const current = await transaction.get(callRef);
+    if (['completed', 'cancelled', 'failed'].includes(current.get('status'))) return;
+    transaction.set(callRef, { ...common, ...hybridCallProgress(current.data(), event.type) }, { merge: true });
+  });
 
   if (event.type === 'human_answered') {
     const routed = await routeVerifiedHumanAnswer(db, call.sessionId, call.id, { targetId: call.targetId, now: event.at });
@@ -1120,7 +1134,7 @@ export const recordHybridCallEvent = onRequest({
   }
 
   if (event.type === 'machine_answered') {
-    await callRef.set({ answeredBy: 'machine', status: 'open' }, { merge: true });
+    await callRef.set({ answeredBy: 'machine' }, { merge: true });
     res.status(200).json({ ok: true, callId: call.id, machine: true }); return;
   }
 

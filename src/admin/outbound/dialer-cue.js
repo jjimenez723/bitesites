@@ -48,3 +48,45 @@ export function playDialerCue() {
   });
   return true;
 }
+
+// PSTN calls originate on the server, so their ringback is not carried by the
+// browser leg. Play a local ring only while a carrier ringing event is active.
+export function startDialerRingback() {
+  const audio = context();
+  if (!audio || audio.state !== 'running') return () => {};
+  const nodes = new Set();
+  const ring = () => {
+    const at = audio.currentTime;
+    const gain = audio.createGain();
+    gain.gain.setValueAtTime(0, at);
+    gain.gain.linearRampToValueAtTime(0.045, at + 0.02);
+    gain.gain.setValueAtTime(0.045, at + 1.98);
+    gain.gain.linearRampToValueAtTime(0, at + 2);
+    gain.connect(audio.destination);
+    let remaining = 2;
+    for (const frequency of [440, 480]) {
+      const oscillator = audio.createOscillator();
+      oscillator.frequency.value = frequency;
+      oscillator.connect(gain);
+      nodes.add(oscillator);
+      oscillator.onended = () => {
+        nodes.delete(oscillator);
+        oscillator.disconnect();
+        if (--remaining === 0) { nodes.delete(gain); gain.disconnect(); }
+      };
+      oscillator.start(at);
+      oscillator.stop(at + 2.01);
+    }
+    nodes.add(gain);
+  };
+  ring();
+  const timer = setInterval(ring, 6000);
+  return () => {
+    clearInterval(timer);
+    for (const node of nodes) {
+      try { node.stop?.(); } catch { /* Already stopped. */ }
+      node.disconnect();
+    }
+    nodes.clear();
+  };
+}

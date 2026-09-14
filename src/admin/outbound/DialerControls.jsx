@@ -10,6 +10,7 @@ import { Empty } from './SourceBadge';
 import ActiveCallPanel from './ActiveCallPanel';
 import CallPlanFlow from './CallPlanFlow';
 import { leaveHybridVoice, prepareHybridVoice } from './voice-client';
+import { primeDialerCue } from './dialer-cue';
 
 const ELIGIBILITY_LABELS = {
   awaiting_approval: 'waiting for research approval',
@@ -151,7 +152,7 @@ export default function DialerControls({ campaignId, campaigns = [], onSelectCam
     // This click is the browser user gesture that safely obtains microphone
     // permission. Once permission is granted, the server can asynchronously
     // assign the first answering prospect and the softphone can join it.
-    if ((session?.operatingMode || operatingMode) !== 'ai') await prepareHybridVoice();
+    if ((session?.operatingMode || operatingMode) !== 'ai') await Promise.all([prepareHybridVoice(), primeDialerCue()]);
     const result = await outbound.dialHybrid(sessionId);
     if (result?.reason === 'batch_in_progress') {
       throw new Error('Auto dialing is already active for this session.');
