@@ -13,29 +13,40 @@ page.on('pageerror',e=>{errors.push(e.message);console.log('Browser error:',e.me
 await page.route('**/*',async route=>{
  const u=new URL(route.request().url());
  if(u.hostname!=='127.0.0.1')return route.abort();
- if(u.pathname==='/__dialer-check')return route.fulfill({contentType:'text/html',body:`<html><body><div id="root"></div><script type="module">
+ if(u.pathname==='/__dialer-check')return route.fulfill({contentType:'text/html',body:`<html><head><link rel="stylesheet" href="/src/admin/outbound/outbound.css"></head><body class="bs-admin"><div id="root"></div><script type="module">
  import React from '/node_modules/.vite/deps/react.js';
  import ReactDOM from '/node_modules/.vite/deps/react-dom_client.js'; const {createRoot}=ReactDOM;
  import RefreshRuntime from '/@react-refresh';
  RefreshRuntime.injectIntoGlobalHook(window); window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>type=>type;window.__vite_plugin_react_preamble_installed__=true;
  const {default:QuickDial}=await import('/src/admin/outbound/QuickDial.jsx');
  const campaign={id:'campaign',name:'Test list',provider:'twilio',status:'running',counts:{ready:1}};
- createRoot(document.getElementById('root')).render(React.createElement(QuickDial,{campaignId:'campaign',campaigns:[campaign]}));
+ const root=createRoot(document.getElementById('root'));
+ root.render(React.createElement(QuickDial,{campaignId:'campaign',campaigns:[campaign]}));
+ window.showCallHistory=async()=>{
+   const {default:CallHistory}=await import('/src/admin/outbound/CallHistory.jsx');
+   const source=await (await fetch('/src/admin/outbound/CallHistory.jsx')).text();
+   const routerUrl=source.match(/from "([^"]+react-router-dom[^"]*)"/)[1];
+   const {MemoryRouter}=await import(routerUrl);
+   root.render(React.createElement(MemoryRouter,null,React.createElement(CallHistory,{campaignId:'campaign',campaigns:[campaign]})));
+ };
  </script></body></html>`});
  if(/^\/src\/admin\/outbound\/data(?:\.js)?$/.test(u.pathname))return route.fulfill({contentType:'application/javascript',body:`
  import React from '/node_modules/.vite/deps/react.js'; const {useState,useSyncExternalStore}=React;
- let snapshot={session:{status:'active',activeCallIds:['test-call'],rep:{activeCallId:''},autoDial:{enabled:true}},rows:[{id:'test-call',status:'dialing',companyName:'Test Lead',control:{controller:'unassigned'},startedAt:new Date()}]};
+ let snapshot={session:{status:'active',activeCallIds:['test-call'],rep:{activeCallId:''},autoDial:{enabled:true}},rows:[{id:'test-call',status:'dialing',companyName:'Test Lead',phoneE164:'+15005550006',contactName:'Sam Test',control:{controller:'unassigned'},startedAt:new Date()}]};
  const listeners=new Set();
  window.changeDialer=(patch)=>{snapshot={...snapshot,...patch};listeners.forEach(fn=>fn())};
- window.dialerSnapshot=()=>snapshot;
+ window.dialerSnapshot=()=>snapshot;window.noteWrites=[];
  const useSnapshot=()=>useSyncExternalStore(fn=>{listeners.add(fn);return()=>listeners.delete(fn)},()=>snapshot);
- export const outbound={getActiveHybridSession:async()=>({}),startHybridSession:async()=>({sessionId:'session'}),dialHybrid:async()=>({started:['test-call']})};
+ export const outbound={saveCallNotes:async(callId,notes)=>{window.noteWrites.push({callId,notes});window.changeDialer({rows:snapshot.rows.map(row=>row.id===callId?{...row,callNotes:notes}:row)})},getActiveHybridSession:async()=>({}),startHybridSession:async()=>({sessionId:'session'}),dialHybrid:async()=>({started:['test-call']})};
  export const toDate=v=>v?new Date(v):null;
- export function useLiveDoc(path){const s=useSnapshot();return {data:path?s.session:null}}
+ export function useLiveDoc(path){const s=useSnapshot();return {data:path?.startsWith('calls/')?s.rows.find(row=>row.id===path.split('/')[1]):path?s.session:null}}
+ export const LIST_CAP=200;
+ export function useOutboundCalls(){const s=useSnapshot();return {rows:s.rows,loading:false,capped:false,refresh:()=>{}}}
  export function useLiveCalls(ids){const s=useSnapshot();return {rows:ids.length?s.rows:[]}}
  export function useSessionHeartbeat(){}
  export function useAction(){const [busy,setBusy]=useState(false);const[error,setError]=useState('');return{busy,error,run:async fn=>{setBusy(true);try{return await fn()}catch(e){setError(e.message)}finally{setBusy(false)}}}}
  `});
+ if(u.pathname==='/src/admin/Transcript.jsx')return route.fulfill({contentType:'application/javascript',body:'export default function Transcript(){return null}'});
  if(/^\/src\/admin\/outbound\/voice-client(?:\.js)?$/.test(u.pathname))return route.fulfill({contentType:'application/javascript',body:`
  import {createVoiceSession} from '/src/admin/outbound/voice-session.js';
  window.fakeCalls=[];
@@ -62,8 +73,24 @@ try{
  await page.waitForFunction(()=>window.fakeCalls.length===2);
  await page.evaluate(()=>window.fakeCalls[1].emit('accept'));
  await page.getByText('Connected — your microphone is live.',{exact:true}).waitFor();
+ await page.getByRole('textbox',{name:'Call notes',exact:true}).fill('Spoke with Sam.\nInterested in a website refresh.');
+ await page.getByText('Saved to call history',{exact:true}).waitFor();
+ await page.waitForFunction(()=>window.noteWrites.some(row=>row.callId==='test-call'&&row.notes.includes('website refresh')));
+ await page.getByRole('textbox',{name:'Call notes',exact:true}).fill('Spoke with Sam.\nFollow up Friday.');
  await page.evaluate(()=>{const s=window.dialerSnapshot();window.changeDialer({rows:[{...s.rows[0],status:'completed',humanHandled:true}]})});
  await page.getByText('Call ended — say how it went',{exact:true}).waitFor();
+ await page.waitForFunction(()=>window.noteWrites.at(-1)?.notes==='Spoke with Sam.\nFollow up Friday.');
+ if(await page.getByRole('textbox',{name:'Call notes',exact:true}).inputValue()!=='Spoke with Sam.\nFollow up Friday.')throw new Error('Notes were lost after hangup');
+ await page.evaluate(()=>window.showCallHistory());
+ const historyRow=page.getByRole('row').filter({hasText:'Test Lead'});
+ await historyRow.waitFor();
+ if(!(await historyRow.innerText()).includes('(500) 555-0006'))throw new Error('History omitted the phone number');
+ if(!(await historyRow.innerText()).includes('Follow up Friday.'))throw new Error('History omitted saved notes');
+ await historyRow.click();
+ const detail=page.getByRole('dialog',{name:'Test Lead',exact:true});
+ await detail.waitFor();
+ const savedNotes=await detail.locator('.outbound-history-note-detail p').innerText();
+ if(savedNotes!=='Spoke with Sam.\nFollow up Friday.')throw new Error('Full notes did not retain line breaks');
  if(errors.length)throw new Error(errors.join('\n'));
- console.log('Browser passed: placing → carrier ringing → audio connecting → SDK failure → reconnect → accepted audio → ended/wrap-up. No external network calls.');
+ console.log('Browser passed: placing → carrier ringing → audio connecting → SDK failure → reconnect → accepted audio → autosaved notes → ended/wrap-up → business, phone, and full notes in History. No external network calls.');
 }finally{await browser.close(); await server.close()}

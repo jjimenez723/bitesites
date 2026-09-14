@@ -17,6 +17,7 @@ import { playDialerCue, primeDialerCue, readDialerSoundPreference, writeDialerSo
 import { formatPhone } from './SourceBadge';
 import { hybridVoiceState, joinHybridCall, leaveHybridVoice, prepareHybridVoice, setHybridVoiceMuted } from './voice-client';
 import { useHybridVoice } from './use-hybrid-voice';
+import CallNotesEditor from './CallNotesEditor';
 
 const TERMINAL = ['completed', 'cancelled', 'failed'];
 const isTerminal = call => TERMINAL.includes(call?.status);
@@ -588,6 +589,7 @@ export default function QuickDial({ campaignId, campaigns = [], onSelectCampaign
 
           {call && (
             <div className="quickdial-controls">
+              <CallNotesEditor key={call.id} call={call} />
               {!ended && (
                 <div className="quickdial-controls-row">
                   {assignedToRep && !onCall && <button className="btn-admin primary" type="button" disabled={voice.connecting} onClick={reconnectAudio}>
@@ -620,6 +622,7 @@ export default function QuickDial({ campaignId, campaigns = [], onSelectCampaign
               strip rather than being pushed off screen by the next prospect. */}
           {live && wrapUp && (
             <div className="quickdial-controls quickdial-pending-wrap">
+              <CallNotesEditor key={wrapUp.id} call={wrapUp} />
               {followUp.callId === wrapUp.id ? (
                 <FollowUpPrompt
                   label={followUp.disposition === 'booked_meeting' ? 'Meeting booked' : 'Call back'}

@@ -805,6 +805,67 @@
 }
 .bs-admin .quickdial-live > .quickdial-controls { grid-column: 1 / -1; }
 
+.bs-admin .outbound-call-notes {
+  display: grid;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-xl);
+  background: var(--surface-1);
+}
+.bs-admin .outbound-call-notes-head,
+.bs-admin .outbound-call-notes-hint {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.bs-admin .outbound-call-notes-head label { color: var(--ink); font-weight: 650; }
+.bs-admin .outbound-call-notes-head small,
+.bs-admin .outbound-call-notes-hint { color: var(--ink-3); font-size: 12px; }
+.bs-admin .outbound-call-notes textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 108px;
+  resize: vertical;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.6;
+}
+.bs-admin .outbound-call-notes textarea:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.bs-admin .outbound-history-contact { min-width: 170px; }
+.bs-admin .outbound-history-contact strong,
+.bs-admin .outbound-history-contact small { display: block; }
+.bs-admin .outbound-history-contact small { color: var(--ink-3); margin-top: 4px; }
+.bs-admin .outbound-history-notes { min-width: 190px; max-width: 290px; }
+.bs-admin .outbound-history-notes span {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  color: var(--ink-3);
+}
+.bs-admin .outbound-history-note-detail {
+  padding: 16px;
+  margin-bottom: 20px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-1);
+}
+.bs-admin .outbound-history-note-detail h3 { margin: 0 0 10px; font-size: 15px; }
+.bs-admin .outbound-history-note-detail p { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.7; }
+.bs-admin .outbound-history-note-detail small { color: var(--ink-3); }
+
 .bs-admin .quickdial-person {
   padding: var(--sp-6);
   border: 1px solid var(--line);

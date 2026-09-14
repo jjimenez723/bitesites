@@ -524,6 +524,28 @@ export const markHybridCallDoNotCall = onCall({ ...callOptions, secrets: HYBRID_
 });
 
 /** Record a rep disposition against any call in the rep's session. */
+/** Notes are saved independently of disposition and carrier call state. */
+export const saveHybridCallNotes = onCall(callOptions, async request => {
+  const { db, uid, access } = await requireDialer(request);
+  const callId = requireId(request.data?.callId, 'call id');
+  const notes = request.data?.notes;
+  if (typeof notes !== 'string' || notes.length > 2000) {
+    throw new HttpsError('invalid-argument', 'Call notes must be text of 2,000 characters or fewer.');
+  }
+  const snapshot = await db.doc(`calls/${callId}`).get();
+  if (!snapshot.exists) throw new HttpsError('not-found', 'Call not found.');
+  const call = snapshot.data();
+  if (call.direction !== 'outbound') throw new HttpsError('failed-precondition', 'Choose an outbound call.');
+  await requireCallOperator(db, call, uid, access);
+  await snapshot.ref.update({
+    callNotes: notes,
+    notesUpdatedAt: FieldValue.serverTimestamp(),
+    notesUpdatedBy: uid,
+    updatedAt: FieldValue.serverTimestamp()
+  });
+  return { ok: true };
+});
+
 export const submitHybridDisposition = onCall(callOptions, async request => {
   const { db, uid, email, access } = await requireDialer(request);
   const callId = requireId(request.data?.callId, 'call id');

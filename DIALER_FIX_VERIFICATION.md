@@ -48,6 +48,26 @@ the production browser TwiML endpoint for an already completed call returned
 the new `<Hangup/>` response without writing call data or placing a phone call.
 The operator's previous session was confirmed ended with auto dialing stopped.
 
+## Call notes and readable history
+
+History now shows the stored business/contact names, phone number, outcome,
+duration, and a notes preview. The detail panel shows full multiline notes and
+their save time alongside the existing call details.
+
+Quick Dial and the advanced live workspace share a call-scoped notes editor.
+Notes save independently of disposition, after a short typing pause and on
+blur/navigation, with a local draft backup and an explicit retry for failed
+saves. Saves for the same call are serialized. The authenticated
+`saveHybridCallNotes` callable checks account access and call ownership, accepts
+up to 2,000 characters, and also allows the operator to finish notes after the
+call or session ends. Notes do not replace the provider's summary or outcome.
+
+Validation: five draft lifecycle tests and the Firestore emulator notes test
+passed, including access rejection, multiline storage, and saving after hangup.
+The browser check covers typing during a connected call, autosaving, hangup,
+and finding the business, phone, and full notes in History. The production build
+also passed.
+
 References: [Twilio error 21626](https://www.twilio.com/docs/api/errors/21626),
 [SDK call acceptance](https://www.twilio.com/docs/voice/sdks/javascript/twiliocall),
 [conference callback ownership](https://www.twilio.com/docs/voice/twiml/conference).

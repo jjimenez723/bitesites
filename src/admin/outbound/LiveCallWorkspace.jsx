@@ -4,6 +4,7 @@ import { formatDuration, formatPhone } from './SourceBadge';
 import LiveTranscript from './LiveTranscript';
 import { useHybridVoice } from './use-hybrid-voice';
 import CallAudioStatus from './CallAudioStatus';
+import { useCallNotes, CallNotesField } from './CallNotesEditor';
 import {
   hybridVoiceState, joinHybridCall, leaveHybridVoice, setHybridVoiceMuted
 } from './voice-client';
@@ -58,8 +59,8 @@ export default function LiveCallWorkspace({
   const [muted, setMuted] = useState(() => hybridVoiceState().muted);
   const [listening, setListening] = useState(() => hybridVoiceState().callId === call.id && hybridVoiceState().mode === 'listen');
   const [outcome, setOutcome] = useState(call.disposition || '');
-  const storageKey = `bitesites-call-notes:${call.id}`;
-  const [notes, setNotes] = useState(() => localStorage.getItem(storageKey) || call.summary || '');
+  const notesDraft = useCallNotes(call, { demo });
+  const { text: notes, setText: setNotes } = notesDraft;
   const [followUpAt, setFollowUpAt] = useState('');
   const [partnerOutcomes, setPartnerOutcomes] = useState(() => {
     const saved = new Map((call.partnerOutcomes || []).map(row => [row.accountId, row]));
@@ -106,10 +107,6 @@ export default function LiveCallWorkspace({
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, [terminal]);
-
-  useEffect(() => {
-    localStorage.setItem(storageKey, notes);
-  }, [notes, storageKey]);
 
   useEffect(() => {
     const warn = event => {
@@ -289,6 +286,7 @@ export default function LiveCallWorkspace({
 
   const saveOutcome = async () => {
     if (!outcome) return;
+    if (!await notesDraft.flush()) return;
     let result;
     if (outcome === 'do_not_call') {
       result = await action.run(() => outbound.dncHybridCall(call.id), 'Do Not Call recorded.');
@@ -311,7 +309,6 @@ export default function LiveCallWorkspace({
       });
     }
     if (result) {
-      localStorage.removeItem(storageKey);
       setShowWrapUp(false);
       onClose?.();
     }
@@ -364,10 +361,7 @@ export default function LiveCallWorkspace({
             <div><strong>Source-safe guidance</strong><span>Only items marked Verified are safe to state as fact.</span></div>
           </div>
 
-          <label className="live-notes">
-            <span>Private notes <small>autosaved</small></span>
-            <textarea rows={8} value={notes} onChange={event => setNotes(event.target.value)} placeholder="Capture the prospect’s exact words, commitments, and next steps…" />
-          </label>
+          <CallNotesField draft={notesDraft} />
         </aside>
 
         <section className="live-conversation-panel" aria-label="Conversation">
@@ -528,7 +522,7 @@ export default function LiveCallWorkspace({
                 ))}
               </div>
             </section>
-            <label className="wrap-up-field"><span>Handoff summary</span><textarea rows={4} value={notes} onChange={event => setNotes(event.target.value)} placeholder="Summarize needs, objections, commitments, and the next action…" /></label>
+            <label className="wrap-up-field"><span>Handoff summary</span><textarea rows={4} maxLength={2000} value={notes} onChange={event => setNotes(event.target.value)} onBlur={() => { void notesDraft.flush(); }} placeholder="Summarize needs, objections, commitments, and the next action…" /></label>
             <div className="wrap-up-impact">
               <strong>What happens next</strong>
               <span>{['connected', 'qualified', 'booked_meeting'].includes(outcome) ? 'A call-linked lead can be created and the notification will identify this as a verified conversation.' : outcome === 'do_not_call' ? 'Future calls will be suppressed and the call will end.' : 'The attempt will be recorded without sending a misleading new-lead email.'}</span>

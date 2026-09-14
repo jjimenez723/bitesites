@@ -10,8 +10,8 @@ import { useSearchParams } from 'react-router-dom';
 import { useOutboundCalls, useLiveDoc, LIST_CAP } from './data';
 import { Panel, DetailRows } from '../Panel';
 import Transcript from '../Transcript';
-import { StatusPill, formatWhen, formatDuration, providerLabel, Empty, QueryState } from './SourceBadge';
-import { receivingAgent, receivingAgentLabel } from '../voice-attribution';
+import { StatusPill, formatWhen, formatDuration, formatPhone, providerLabel, Empty, QueryState } from './SourceBadge';
+import { receivingAgent } from '../voice-attribution';
 import { ACCOUNTS } from '../../../functions/accounts.js';
 import { activateRow } from '../row-activate';
 
@@ -19,6 +19,9 @@ const MODE_LABELS = {
   human: 'Human only', hybrid: 'Hybrid', ai: 'AI only',
   parallel: 'Parallel dial', power: 'Power dial'
 };
+
+const businessName = call => call.companyName || call.displayName || call.contactName || 'Business not recorded';
+const callNotes = call => call.callNotes ?? call.summary ?? '';
 
 /**
  * Who actually spoke on this call.
@@ -56,7 +59,7 @@ export default function CallHistory({ campaignId, campaigns = [], onSelectCampai
   const accountId = campaigns.find(entry => entry.id === campaignId)?.accountId || '';
   const { rows, loading, error, capped, refresh } = useOutboundCalls(campaignId || 'all', accountId);
   const directCall = useLiveDoc(openId ? `calls/${openId}` : '');
-  const open = rows.find(row => row.id === openId) || directCall.data || null;
+  const open = (directCall.data?.id === openId ? directCall.data : null) || rows.find(row => row.id === openId) || null;
   const openCall = id => {
     setOpenId(id);
     const updated = new URLSearchParams(searchParams);
@@ -76,7 +79,7 @@ export default function CallHistory({ campaignId, campaigns = [], onSelectCampai
         <div className="card-head">
           <div>
             <h3>Outbound call history</h3>
-            <p>Stored in the same collection as inbound voice AI calls, with a direction of “outbound”.</p>
+            <p>Review who you called, what happened, and the notes for your next conversation.</p>
           </div>
           <div className="card-head-actions">
             <select className="admin-select" value={campaignId || 'all'} onChange={event => onSelectCampaign?.(event.target.value === 'all' ? '' : event.target.value)}>
@@ -96,24 +99,23 @@ export default function CallHistory({ campaignId, campaigns = [], onSelectCampai
             <table className="admin-table">
               <thead>
                 <tr>
-                  <th>Started</th><th>Contact</th><th>Agent</th><th>Operator</th><th>Mode</th>
-                  <th>Provider</th><th>Status</th><th>Disposition</th>
-                  <th className="num">Duration</th><th className="num">Attempt</th><th>Recording</th>
+                  <th>Started</th><th>Business / contact</th><th>Phone</th>
+                  <th>Status</th><th>Outcome</th><th>Call notes</th>
+                  <th className="num">Duration</th><th>Recording</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map(row => (
                   <tr key={row.id} className={`clickable ${openId === row.id ? 'selected' : ''}`} {...activateRow(() => openCall(row.id))}>
                     <td className="cell-strong">{formatWhen(row.startedAt)}</td>
-                    <td className="cell-dim cell-wrap">{(row.prospectId || row.leadId || row.targetId || '').slice(0, 24)}</td>
-                    <td className="cell-dim cell-wrap">{receivingAgentLabel(row)}</td>
-                    <td className="cell-dim">{operatorLabel(row)}</td>
-                    <td className="cell-dim">{MODE_LABELS[row.dialerMode] || row.dialerMode || '—'}</td>
-                    <td className="cell-dim">{providerLabel(row.provider)}</td>
+                    <td className="cell-wrap outbound-history-contact"><strong>{businessName(row)}</strong>
+                      {row.contactName && row.contactName !== businessName(row) && <small>{row.contactName}</small>}
+                    </td>
+                    <td>{row.phoneE164 ? formatPhone(row.phoneE164) : 'Not recorded'}</td>
                     <td><StatusPill status={row.status} /></td>
-                    <td className="cell-dim">{row.disposition || '—'}</td>
+                    <td className="cell-dim">{row.disposition?.replace(/_/g, ' ') || '—'}</td>
+                    <td className="cell-wrap outbound-history-notes"><span>{callNotes(row) || 'No notes yet'}</span></td>
                     <td className="num">{formatDuration(row.durationSec)}</td>
-                    <td className="num">{row.attemptNumber || 1}</td>
                     <td className="cell-dim" onClick={event => event.stopPropagation()}>
                       {row.recordingUrl
                         ? <a href={row.recordingUrl} target="_blank" rel="noreferrer noopener">Listen</a>
@@ -129,12 +131,21 @@ export default function CallHistory({ campaignId, campaigns = [], onSelectCampai
 
       {open && (
         <Panel
-          title={`Outbound call · ${formatWhen(open.startedAt)}`}
-          subtitle={open.prospectId || open.leadId || open.targetId || ''}
+          title={businessName(open)}
+          subtitle={[open.phoneE164 ? formatPhone(open.phoneE164) : '', formatWhen(open.startedAt)].filter(Boolean).join(' · ')}
           onClose={closeCall}
         >
+          <section className="outbound-history-note-detail">
+            <h3>Call notes</h3>
+            <p>{callNotes(open) || 'No notes were added to this call.'}</p>
+            {open.notesUpdatedAt && <small>Last saved {formatWhen(open.notesUpdatedAt)}</small>}
+          </section>
           <DetailRows
             rows={[
+              ['Business', businessName(open)],
+              ['Contact', open.contactName],
+              ['Phone', open.phoneE164 ? formatPhone(open.phoneE164) : 'Not recorded'],
+              ['Website', open.website ? <a href={open.website} target="_blank" rel="noreferrer noopener">{open.website}</a> : ''],
               ['Status', <StatusPill status={open.status} />],
               ['Disposition', open.disposition],
               ['Agent', receivingAgent(open).agentName],
@@ -143,7 +154,7 @@ export default function CallHistory({ campaignId, campaigns = [], onSelectCampai
               ['Session mode', MODE_LABELS[open.dialerMode] || open.dialerMode],
               ['Provider', providerLabel(open.provider)],
               ['Provider call id', open.providerCallId],
-              ['Campaign', open.campaignId],
+              ['Campaign', campaigns.find(campaign => campaign.id === open.campaignId)?.name || open.campaignId],
               ['Target', open.targetId],
               ['Prospect', open.prospectId],
               ['Lead', open.leadId],
@@ -155,7 +166,6 @@ export default function CallHistory({ campaignId, campaigns = [], onSelectCampai
               ['Ended at', open.endedAt ? formatWhen(open.endedAt) : ''],
               ['Duration', formatDuration(open.durationSec)],
               ['Cancelled because', open.cancellationReason?.replace(/_/g, ' ')],
-              ['Notes', open.summary],
               ['Partner conversations', (open.partnerOutcomes || [])
                 .map(row => `${ACCOUNTS[row.accountId]?.label || row.accountId}: ${(row.outcome || '').replace(/_/g, ' ')}${row.notes ? ` — ${row.notes}` : ''}`)
                 .join('\n')],

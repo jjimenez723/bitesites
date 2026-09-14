@@ -250,7 +250,7 @@ export const useTargets = (campaignId, { states = null, accountId = '' } = {}) =
   }, [campaignId, accountId, (states || []).join(',')]);
 
 export const useOutboundCalls = (campaignId, accountId = '') =>
-  useOutboundQuery(() => {
+  useLiveOutboundQuery(() => {
     const clauses = campaignId && campaignId !== 'all'
       ? [where('campaignId', '==', campaignId)]
       : [where('direction', '==', 'outbound')];
@@ -424,6 +424,7 @@ export const outbound = {
   endHybridCall: callId => callable('endHybridCall', { callId }),
   dncHybridCall: callId => callable('markHybridCallDoNotCall', { callId }),
   hybridDisposition: payload => callable('submitHybridDisposition', payload),
+  saveCallNotes: (callId, notes) => callable('saveHybridCallNotes', { callId, notes }),
   setAutoTakeover: (sessionId, enabled) => callable('setHybridAutoTakeover', { sessionId, enabled }),
   requestTakeover: callId => callable('requestHybridTakeover', { callId }),
   beginListen: callId => callable('beginHybridListen', { callId }),
