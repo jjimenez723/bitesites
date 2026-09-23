@@ -13,6 +13,7 @@ import {
 } from '../../../functions/accounts.js';
 
 const OUTCOMES = [
+  ['interested', 'Interested', 'Add to Leads under Interested. No meeting time needed.'],
   ['connected', 'Conversation completed', 'A real conversation took place.'],
   ['qualified', 'Qualified opportunity', 'There is a credible need and fit.'],
   ['booked_meeting', 'Meeting booked', 'A specific follow-up meeting was agreed.'],
@@ -525,7 +526,7 @@ export default function LiveCallWorkspace({
             <label className="wrap-up-field"><span>Handoff summary</span><textarea rows={4} maxLength={2000} value={notes} onChange={event => setNotes(event.target.value)} onBlur={() => { void notesDraft.flush(); }} placeholder="Summarize needs, objections, commitments, and the next action…" /></label>
             <div className="wrap-up-impact">
               <strong>What happens next</strong>
-              <span>{['connected', 'qualified', 'booked_meeting'].includes(outcome) ? 'A call-linked lead can be created and the notification will identify this as a verified conversation.' : outcome === 'do_not_call' ? 'Future calls will be suppressed and the call will end.' : 'The attempt will be recorded without sending a misleading new-lead email.'}</span>
+              <span>{outcome === 'interested' ? 'This contact will be saved in Leads with the Interested status.' : ['connected', 'qualified', 'booked_meeting'].includes(outcome) ? 'A call-linked lead can be created and the notification will identify this as a verified conversation.' : outcome === 'do_not_call' ? 'Future calls will be suppressed and the call will end.' : 'The attempt will be recorded without sending a misleading new-lead email.'}</span>
             </div>
             <div className="wrap-up-actions"><button className="btn-admin primary" type="button" disabled={!outcome || action.busy || (needsFollowUp && !followUpAt)} onClick={saveOutcome}>{action.busy ? 'Saving…' : terminal ? 'Save outcome & finish' : 'Save outcome & end call'}</button>{!terminal && <button className="btn-admin" type="button" onClick={() => setShowWrapUp(false)}>Return to call</button>}</div>
           </div>

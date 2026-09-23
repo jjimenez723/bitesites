@@ -21,7 +21,7 @@ const FIELDS = [
 export default function CampaignMetrics({ campaign, calls = [] }) {
   const counts = campaign?.counts || {};
   const attempted = calls.length;
-  const connected = calls.filter(call => ['connected', 'booked_meeting', 'qualified'].includes(call.disposition)).length;
+  const connected = calls.filter(call => ['connected', 'interested', 'booked_meeting', 'qualified'].includes(call.disposition)).length;
   const cancelled = calls.filter(call => call.status === 'cancelled').length;
 
   const totalSeconds = calls.reduce((sum, call) => sum + (Number(call.durationSec) || 0), 0);

@@ -24,6 +24,9 @@ try {
   assert.equal(call.phoneE164, '+15005550006');
   await db.doc('calls/notes-call').update({ status: 'completed', disposition: 'completed' });
   await db.doc('dialerSessions/notes-session').update({ status: 'ended' });
+  await db.doc('calls/notes-empty-history').set({ direction: 'outbound', status: 'completed', sessionId: 'notes-session', accountId: 'bitesites' });
+  await save({ callId: 'notes-empty-history', notes: 'Added from history after the call.' });
+  assert.equal((await db.doc('calls/notes-empty-history').get()).get('callNotes'), 'Added from history after the call.');
   await save({ callId: 'notes-call', notes: `${notes}\nSend examples first.` });
   call = (await db.doc('calls/notes-call').get()).data();
   assert.equal(call.status, 'completed');

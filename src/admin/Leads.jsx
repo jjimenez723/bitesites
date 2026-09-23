@@ -12,7 +12,7 @@ import Transcript from './Transcript';
 import { receivingAgent, receivingAgentLabel } from './voice-attribution';
 import { activateRow } from './row-activate';
 
-const STATUSES = ['new', 'contacted', 'qualified', 'booked', 'proposal', 'won', 'lost'];
+const STATUSES = ['new', 'contacted', 'interested', 'qualified', 'booked', 'proposal', 'won', 'lost'];
 const firstWord = value => String(value || '').trim().split(/\s+/)[0] || '';
 
 // Byte's leads are written server-side by the recordVoiceCall webhook, so a
@@ -380,7 +380,7 @@ export default function Leads() {
             value={search}
             onChange={event => setSearch(event.target.value)}
           />
-          <select className="admin-select" value={filter} onChange={event => setFilter(event.target.value)}>
+          <select className="admin-select" aria-label="Lead status" value={filter} onChange={event => setFilter(event.target.value)}>
             <option value="all">All statuses</option>
             {STATUSES.map(status => (
               <option key={status} value={status}>

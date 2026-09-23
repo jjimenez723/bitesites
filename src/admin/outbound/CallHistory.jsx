@@ -10,6 +10,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useOutboundCalls, useLiveDoc, LIST_CAP } from './data';
 import { Panel, DetailRows } from '../Panel';
 import Transcript from '../Transcript';
+import CallNotesEditor from './CallNotesEditor';
 import { StatusPill, formatWhen, formatDuration, formatPhone, providerLabel, Empty, QueryState } from './SourceBadge';
 import { receivingAgent } from '../voice-attribution';
 import { ACCOUNTS } from '../../../functions/accounts.js';
@@ -136,8 +137,7 @@ export default function CallHistory({ campaignId, campaigns = [], onSelectCampai
           onClose={closeCall}
         >
           <section className="outbound-history-note-detail">
-            <h3>Call notes</h3>
-            <p>{callNotes(open) || 'No notes were added to this call.'}</p>
+            <CallNotesEditor key={open.id} call={open} />
             {open.notesUpdatedAt && <small>Last saved {formatWhen(open.notesUpdatedAt)}</small>}
           </section>
           <DetailRows

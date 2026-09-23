@@ -556,7 +556,7 @@ export const submitHybridDisposition = onCall(callOptions, async request => {
   const campaignSnapshot = await db.doc(`outboundCampaigns/${call.campaignId}`).get();
   const disposition = clean(request.data?.disposition, 40);
   const allowedDispositions = new Set([
-    'connected', 'qualified', 'booked_meeting', 'call_later', 'not_interested',
+    'connected', 'interested', 'qualified', 'booked_meeting', 'call_later', 'not_interested',
     'voicemail', 'no_answer', 'wrong_number', 'do_not_call'
   ]);
   if (!allowedDispositions.has(disposition)) throw new HttpsError('invalid-argument', 'Choose a valid call outcome.');
@@ -577,6 +577,10 @@ export const submitHybridDisposition = onCall(callOptions, async request => {
     actor: email || uid,
     requestedFollowUpAt: followUpAt
   });
+  if (!result.ok) {
+    throw new HttpsError('failed-precondition', result.reason === 'target_missing'
+      ? 'The target for this call could not be found.' : result.reason || 'Could not save this call outcome.');
+  }
   await db.doc(`calls/${callId}`).set({
     disposition,
     summary: clean(request.data?.notes, 2000),

@@ -162,6 +162,8 @@ function OutcomeRow({ label, busy, onPick }) {
     <div className="quickdial-outcomes">
       <span className="quickdial-outcomes-label">{label}</span>
       <button className="btn-admin primary" type="button" disabled={busy}
+        onClick={() => onPick('interested')}>Interested</button>
+      <button className="btn-admin" type="button" disabled={busy}
         onClick={() => onPick('booked_meeting')}>Booked a meeting</button>
       <button className="btn-admin" type="button" disabled={busy}
         onClick={() => onPick('call_later')}>Call back later</button>
@@ -387,7 +389,7 @@ export default function QuickDial({ campaignId, campaigns = [], onSelectCampaign
     return outbound.endHybridCall(target.id);
   }, '');
 
-  // Two of the five outcomes promise the prospect a specific time, so they open
+  // Two outcomes promise the prospect a specific time, so they open
   // the picker instead of committing.
   const pick = target => disposition => (
     ['booked_meeting', 'call_later'].includes(disposition)

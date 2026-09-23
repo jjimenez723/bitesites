@@ -190,9 +190,10 @@ export default function HybridCallCard({ call, session, target, onDisposition, o
 
       {controller === 'human' && !terminal && onDisposition && (
         <div className="hybrid-quick-dispositions">
+          <button className="btn-admin primary" type="button" onClick={() => onDisposition(call, 'interested')}>Interested</button>
           <button className="btn-admin" type="button" onClick={() => onDisposition(call, 'not_interested')}>Not interested</button>
           <button className="btn-admin" type="button" onClick={() => onDisposition(call, 'call_later')}>Call later</button>
-          <button className="btn-admin primary" type="button" onClick={() => onDisposition(call, 'booked_meeting')}>Booked meeting</button>
+          <button className="btn-admin" type="button" onClick={() => onDisposition(call, 'booked_meeting')}>Booked meeting</button>
         </div>
       )}
     </article>

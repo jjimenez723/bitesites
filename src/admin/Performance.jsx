@@ -3,7 +3,7 @@ import { useEvents, useLeads, useClientOutcomes, useSearchMetrics, useAnalyticsD
 import { StatTile, Funnel, RankList, compact, share } from './charts';
 
 const RANGES = [[7, '7d'], [30, '30d'], [90, '90d']];
-const STAGES = ['new', 'contacted', 'qualified', 'booked', 'proposal', 'won'];
+const STAGES = ['new', 'contacted', 'interested', 'qualified', 'booked', 'proposal', 'won'];
 const money = value => Number(value || 0).toLocaleString(undefined, {
   style: 'currency', currency: 'USD', maximumFractionDigits: 0
 });

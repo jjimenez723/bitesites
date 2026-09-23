@@ -569,6 +569,7 @@
 .pill i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
 .pill.new { color: #6da7ec; border-color: rgba(109, 167, 236, .3); }
 .pill.contacted { color: var(--s7); border-color: rgba(144, 133, 233, .3); }
+.pill.interested { color: #55d6b4; border-color: rgba(85, 214, 180, .3); }
 .pill.qualified { color: var(--warning); border-color: rgba(250, 178, 25, .3); }
 .pill.booked { color: #34c9eb; border-color: rgba(52, 201, 235, .3); }
 .pill.proposal { color: #ff8fc0; border-color: rgba(255, 94, 156, .35); }

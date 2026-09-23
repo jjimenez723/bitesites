@@ -1529,6 +1529,7 @@ const TERMINAL_EVENTS = new Set(['completed', 'voicemail', 'busy', 'no_answer', 
 
 const STATE_FOR_DISPOSITION = {
   connected: 'completed',
+  interested: 'completed',
   booked_meeting: 'completed',
   qualified: 'completed',
   not_interested: 'completed',
@@ -1729,7 +1730,7 @@ export async function applyDisposition(db, {
   // person actually engaged (§7, §10).
   let promotion = null;
   if (target.contactType === 'prospect' && target.prospectId
-      && ['connected', 'booked_meeting', 'qualified'].includes(disposition)) {
+      && ['connected', 'interested', 'booked_meeting', 'qualified'].includes(disposition)) {
     promotion = await promoteProspect(db, target.prospectId, {
       trigger: disposition === 'booked_meeting' ? 'meeting_booked' : 'call_answered',
       campaignId: target.campaignId,
@@ -1738,6 +1739,29 @@ export async function applyDisposition(db, {
       actor,
       now
     }).catch(error => ({ error: clean(error?.message, 200) }));
+  }
+
+  // This is an explicit rep-selected stage change. Reuse the promoted or
+  // existing lead, and leave its identity, owner and commercial details intact.
+  if (disposition === 'interested') {
+    const leadId = promotion?.leadId || target.leadId;
+    if (!leadId) return { ok: false, reason: promotion?.error || 'No lead could be saved for this call.' };
+    const leadRef = db.doc(`leads/${leadId}`);
+    await db.runTransaction(async transaction => {
+      const lead = await transaction.get(leadRef);
+      if (!lead.exists) throw new Error('The lead for this call could not be found.');
+      if (lead.get('status') === 'interested') return;
+      const stamp = Timestamp.fromDate(now);
+      transaction.update(leadRef, {
+        status: 'interested', statusChangedAt: stamp, updatedAt: stamp,
+        'stageTimestamps.interested': stamp,
+        ...(!lead.get('firstResponseAt') ? { firstResponseAt: stamp } : {})
+      });
+      transaction.set(db.collection(`leads/${leadId}/activities`).doc(), {
+        type: 'stage_change', fromStatus: lead.get('status') || 'new', toStatus: 'interested',
+        callId: clean(callId, 200), actor: clean(actor, 200), at: stamp
+      });
+    });
   }
 
   if (target.campaignId) await refreshCampaignCounts(db, target.campaignId);

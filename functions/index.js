@@ -502,7 +502,7 @@ function normalizeReceivingAgent({ agentId = '', agentName = '', businessName = 
 // Return path for CRM/calendar outcomes. The original lead sync sends `leadId`
 // to GoHighLevel; mapping it back here makes stage, appointment and revenue
 // updates deterministic instead of relying on fuzzy contact matching.
-const LIFECYCLE_STATUSES = new Set(['new', 'contacted', 'qualified', 'booked', 'proposal', 'won', 'lost']);
+const LIFECYCLE_STATUSES = new Set(['new', 'contacted', 'interested', 'qualified', 'booked', 'proposal', 'won', 'lost']);
 const APPOINTMENT_STATUSES = new Set(['none', 'booked', 'rescheduled', 'cancelled', 'attended', 'no_show']);
 const LOST_REASONS = new Set(['', 'price', 'timing', 'no_response', 'competitor', 'poor_fit', 'internal_solution', 'other']);
 const ECONOMIC_FIELDS = [

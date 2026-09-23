@@ -29,15 +29,21 @@ await page.route('**/*',async route=>{
    const {MemoryRouter}=await import(routerUrl);
    root.render(React.createElement(MemoryRouter,null,React.createElement(CallHistory,{campaignId:'campaign',campaigns:[campaign]})));
  };
+ window.showLeads=async()=>{
+   const {default:Leads}=await import('/src/admin/Leads.jsx');
+   const source=await (await fetch('/src/admin/Leads.jsx')).text();
+   const {MemoryRouter}=await import(source.match(/from "([^"]+react-router-dom[^"]*)"/)[1]);
+   root.render(React.createElement(MemoryRouter,null,React.createElement(Leads)));
+ };
  </script></body></html>`});
  if(/^\/src\/admin\/outbound\/data(?:\.js)?$/.test(u.pathname))return route.fulfill({contentType:'application/javascript',body:`
  import React from '/node_modules/.vite/deps/react.js'; const {useState,useSyncExternalStore}=React;
  let snapshot={session:{status:'active',activeCallIds:['test-call'],rep:{activeCallId:''},autoDial:{enabled:true}},rows:[{id:'test-call',status:'dialing',companyName:'Test Lead',phoneE164:'+15005550006',contactName:'Sam Test',control:{controller:'unassigned'},startedAt:new Date()}]};
  const listeners=new Set();
  window.changeDialer=(patch)=>{snapshot={...snapshot,...patch};listeners.forEach(fn=>fn())};
- window.dialerSnapshot=()=>snapshot;window.noteWrites=[];
+ window.dialerSnapshot=()=>snapshot;window.noteWrites=[];window.outcomeWrites=[];
  const useSnapshot=()=>useSyncExternalStore(fn=>{listeners.add(fn);return()=>listeners.delete(fn)},()=>snapshot);
- export const outbound={saveCallNotes:async(callId,notes)=>{window.noteWrites.push({callId,notes});window.changeDialer({rows:snapshot.rows.map(row=>row.id===callId?{...row,callNotes:notes}:row)})},getActiveHybridSession:async()=>({}),startHybridSession:async()=>({sessionId:'session'}),dialHybrid:async()=>({started:['test-call']})};
+ export const outbound={saveCallNotes:async(callId,notes)=>{window.noteWrites.push({callId,notes});window.changeDialer({rows:snapshot.rows.map(row=>row.id===callId?{...row,callNotes:notes}:row)})},hybridDisposition:async(payload)=>{window.outcomeWrites.push(payload);window.changeDialer({rows:snapshot.rows.map(row=>row.id===payload.callId?{...row,disposition:payload.disposition}:row)});return {ok:true}},endHybridCall:async(callId)=>{window.changeDialer({rows:snapshot.rows.map(row=>row.id===callId?{...row,status:'completed',humanHandled:true}:row)});return {ok:true}},getActiveHybridSession:async()=>({}),startHybridSession:async()=>({sessionId:'session'}),dialHybrid:async()=>({started:['test-call']})};
  export const toDate=v=>v?new Date(v):null;
  export function useLiveDoc(path){const s=useSnapshot();return {data:path?.startsWith('calls/')?s.rows.find(row=>row.id===path.split('/')[1]):path?s.session:null}}
  export const LIST_CAP=200;
@@ -45,6 +51,11 @@ await page.route('**/*',async route=>{
  export function useLiveCalls(ids){const s=useSnapshot();return {rows:ids.length?s.rows:[]}}
  export function useSessionHeartbeat(){}
  export function useAction(){const [busy,setBusy]=useState(false);const[error,setError]=useState('');return{busy,error,run:async fn=>{setBusy(true);try{return await fn()}catch(e){setError(e.message)}finally{setBusy(false)}}}}
+ `});
+ if(/^\/src\/admin\/data(?:\.js)?$/.test(u.pathname))return route.fulfill({contentType:'application/javascript',body:`
+ export const toDate=v=>v?new Date(v):null;
+ export const useLeads=()=>({rows:[{id:'interested-lead',name:'Interested Contact',status:'interested',source:'outbound'},{id:'new-lead',name:'New Contact',status:'new',source:'intake_form'}],loading:false,refresh:async()=>{}});
+ export const setLeadStatus=async()=>{},saveLeadCommercial=async()=>{},loadLeadActivities=async()=>[];
  `});
  if(u.pathname==='/src/admin/Transcript.jsx')return route.fulfill({contentType:'application/javascript',body:'export default function Transcript(){return null}'});
  if(/^\/src\/admin\/outbound\/voice-client(?:\.js)?$/.test(u.pathname))return route.fulfill({contentType:'application/javascript',body:`
@@ -81,6 +92,13 @@ try{
  await page.getByText('Call ended — say how it went',{exact:true}).waitFor();
  await page.waitForFunction(()=>window.noteWrites.at(-1)?.notes==='Spoke with Sam.\nFollow up Friday.');
  if(await page.getByRole('textbox',{name:'Call notes',exact:true}).inputValue()!=='Spoke with Sam.\nFollow up Friday.')throw new Error('Notes were lost after hangup');
+ await page.evaluate(()=>{const s=window.dialerSnapshot();window.changeDialer({
+   session:{...s.session,activeCallIds:['test-call','interested-call'],rep:{activeCallId:'interested-call'}},
+   rows:[...s.rows,{id:'interested-call',status:'connected',companyName:'Interested Business',control:{controller:'human'},startedAt:new Date()}]
+ })});
+ await page.locator('.quickdial-controls:not(.quickdial-pending-wrap)').getByRole('button',{name:'Interested',exact:true}).click();
+ await page.waitForFunction(()=>window.outcomeWrites.some(row=>row.callId==='interested-call'&&row.disposition==='interested'&&!row.followUpAt));
+ await page.waitForFunction(()=>window.dialerSnapshot().rows.find(row=>row.id==='interested-call').status==='completed');
  await page.evaluate(()=>window.showCallHistory());
  const historyRow=page.getByRole('row').filter({hasText:'Test Lead'});
  await historyRow.waitFor();
@@ -89,8 +107,31 @@ try{
  await historyRow.click();
  const detail=page.getByRole('dialog',{name:'Test Lead',exact:true});
  await detail.waitFor();
- const savedNotes=await detail.locator('.outbound-history-note-detail p').innerText();
+ const savedNotes=await detail.getByRole('textbox',{name:'Call notes',exact:true}).inputValue();
  if(savedNotes!=='Spoke with Sam.\nFollow up Friday.')throw new Error('Full notes did not retain line breaks');
+ await detail.getByRole('textbox',{name:'Call notes',exact:true}).fill(savedNotes+'\nSend examples before Friday.');
+ await page.getByText('Saved to call history',{exact:true}).waitFor();
+ await detail.getByRole('button',{name:'Close',exact:true}).click();
+ await historyRow.click();
+ if(!(await detail.getByRole('textbox',{name:'Call notes',exact:true}).inputValue()).includes('Send examples before Friday.'))throw new Error('History edits did not persist after reopening');
+ await detail.getByRole('button',{name:'Close',exact:true}).click();
+ await page.evaluate(()=>{const s=window.dialerSnapshot();window.changeDialer({rows:[...s.rows,{id:'empty-history-call',companyName:'No Notes Business',status:'completed',startedAt:new Date()}]})});
+ await page.getByRole('row').filter({hasText:'No Notes Business'}).click();
+ const emptyDetail=page.getByRole('dialog',{name:'No Notes Business',exact:true});
+ const emptyNotes=emptyDetail.getByRole('textbox',{name:'Call notes',exact:true});
+ if(await emptyNotes.inputValue()!=='')throw new Error('Another call\'s notes leaked into an empty call');
+ await emptyNotes.fill('Forgot to add this during the call.');
+ await emptyDetail.getByRole('button',{name:'Close',exact:true}).click();
+ await page.waitForFunction(()=>window.noteWrites.some(row=>row.callId==='empty-history-call'&&row.notes==='Forgot to add this during the call.'));
+ await page.getByRole('row').filter({hasText:'No Notes Business'}).click();
+ if(await emptyNotes.inputValue()!=='Forgot to add this during the call.')throw new Error('Notes added to an empty history call did not persist');
+ await emptyNotes.fill('');
+ await page.getByText('Saved to call history',{exact:true}).waitFor();
+ await page.waitForFunction(()=>window.noteWrites.at(-1)?.callId==='empty-history-call'&&window.noteWrites.at(-1)?.notes==='');
+ await page.evaluate(()=>window.showLeads());
+ await page.getByRole('combobox',{name:'Lead status',exact:true}).selectOption('interested');
+ await page.getByRole('row').filter({hasText:'Interested Contact'}).waitFor();
+ if(await page.getByRole('row').filter({hasText:'New Contact'}).count())throw new Error('Interested category includes unrelated leads');
  if(errors.length)throw new Error(errors.join('\n'));
- console.log('Browser passed: placing → carrier ringing → audio connecting → SDK failure → reconnect → accepted audio → autosaved notes → ended/wrap-up → business, phone, and full notes in History. No external network calls.');
+ console.log('Browser passed: audio/reconnect, live Interested outcome without meeting time, autosaved notes through hangup, editable/empty history notes, reopen/clear persistence, and Interested lead filtering. No external network calls.');
 }finally{await browser.close(); await server.close()}
