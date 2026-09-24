@@ -38,14 +38,14 @@ await page.route('**/*',async route=>{
  </script></body></html>`});
  if(/^\/src\/admin\/outbound\/data(?:\.js)?$/.test(u.pathname))return route.fulfill({contentType:'application/javascript',body:`
  import React from '/node_modules/.vite/deps/react.js'; const {useState,useSyncExternalStore}=React;
- let snapshot={session:{status:'active',activeCallIds:['test-call'],rep:{activeCallId:''},autoDial:{enabled:true}},rows:[{id:'test-call',status:'dialing',companyName:'Test Lead',phoneE164:'+15005550006',contactName:'Sam Test',control:{controller:'unassigned'},startedAt:new Date()}]};
+ let snapshot={session:{status:'active',activeCallIds:['test-call'],rep:{activeCallId:''},autoDial:{enabled:true}},rows:[{id:'test-call',status:'dialing',companyName:'Test Lead',phoneE164:'+15005550006',contactName:'Sam Test',leadId:'test-lead',control:{controller:'unassigned'},startedAt:new Date()}]};
  const listeners=new Set();
  window.changeDialer=(patch)=>{snapshot={...snapshot,...patch};listeners.forEach(fn=>fn())};
- window.dialerSnapshot=()=>snapshot;window.noteWrites=[];window.outcomeWrites=[];
+ window.dialerSnapshot=()=>snapshot;window.noteWrites=[];window.outcomeWrites=[];window.callbackWrites=[];
  const useSnapshot=()=>useSyncExternalStore(fn=>{listeners.add(fn);return()=>listeners.delete(fn)},()=>snapshot);
- export const outbound={saveCallNotes:async(callId,notes)=>{window.noteWrites.push({callId,notes});window.changeDialer({rows:snapshot.rows.map(row=>row.id===callId?{...row,callNotes:notes}:row)})},hybridDisposition:async(payload)=>{window.outcomeWrites.push(payload);window.changeDialer({rows:snapshot.rows.map(row=>row.id===payload.callId?{...row,disposition:payload.disposition}:row)});return {ok:true}},endHybridCall:async(callId)=>{window.changeDialer({rows:snapshot.rows.map(row=>row.id===callId?{...row,status:'completed',humanHandled:true}:row)});return {ok:true}},getActiveHybridSession:async()=>({}),startHybridSession:async()=>({sessionId:'session'}),dialHybrid:async()=>({started:['test-call']})};
+ export const outbound={scheduleCallback:async(callId,followUpAt)=>{if(window.failCallback)throw new Error('Could not schedule callback. Try again.');window.callbackWrites.push({callId,followUpAt});window.changeDialer({rows:snapshot.rows.map(row=>row.id===callId?{...row,callbackAt:followUpAt}:row)});return{ok:true}},saveCallNotes:async(callId,notes)=>{window.noteWrites.push({callId,notes});window.changeDialer({rows:snapshot.rows.map(row=>row.id===callId?{...row,callNotes:notes}:row)})},hybridDisposition:async(payload)=>{window.outcomeWrites.push(payload);window.changeDialer({rows:snapshot.rows.map(row=>row.id===payload.callId?{...row,disposition:payload.disposition}:row)});return {ok:true}},endHybridCall:async(callId)=>{window.changeDialer({rows:snapshot.rows.map(row=>row.id===callId?{...row,status:'completed',humanHandled:true}:row)});return {ok:true}},getActiveHybridSession:async()=>({}),startHybridSession:async()=>({sessionId:'session'}),dialHybrid:async()=>({started:['test-call']})};
  export const toDate=v=>v?new Date(v):null;
- export function useLiveDoc(path){const s=useSnapshot();return {data:path?.startsWith('calls/')?s.rows.find(row=>row.id===path.split('/')[1]):path?s.session:null}}
+ export function useLiveDoc(path){const s=useSnapshot();return {data:path?.startsWith('calls/')?s.rows.find(row=>row.id===path.split('/')[1]):path==='leads/test-lead'?{id:'test-lead',website:'example.test'}:path?.startsWith('dialerSessions/')?s.session:null,loading:false}}
  export const LIST_CAP=200;
  export function useOutboundCalls(){const s=useSnapshot();return {rows:s.rows,loading:false,capped:false,refresh:()=>{}}}
  export function useLiveCalls(ids){const s=useSnapshot();return {rows:ids.length?s.rows:[]}}
@@ -99,6 +99,12 @@ try{
  await page.locator('.quickdial-controls:not(.quickdial-pending-wrap)').getByRole('button',{name:'Interested',exact:true}).click();
  await page.waitForFunction(()=>window.outcomeWrites.some(row=>row.callId==='interested-call'&&row.disposition==='interested'&&!row.followUpAt));
  await page.waitForFunction(()=>window.dialerSnapshot().rows.find(row=>row.id==='interested-call').status==='completed');
+ await page.getByRole('button',{name:'Call back later',exact:true}).click();
+ await page.getByRole('button',{name:'Call back in 2 weeks',exact:true}).click();
+ const chosenCallback=await page.locator('input[type="datetime-local"]').inputValue();
+ if(!chosenCallback)throw new Error('Live callback preset did not fill the date');
+ await page.getByRole('button',{name:'Save & call next',exact:true}).click();
+ await page.waitForFunction(()=>window.outcomeWrites.some(row=>row.callId==='test-call'&&row.disposition==='call_later'&&row.followUpAt));
  await page.evaluate(()=>window.showCallHistory());
  const historyRow=page.getByRole('row').filter({hasText:'Test Lead'});
  await historyRow.waitFor();
@@ -107,6 +113,23 @@ try{
  await historyRow.click();
  const detail=page.getByRole('dialog',{name:'Test Lead',exact:true});
  await detail.waitFor();
+ if(await detail.getByRole('link',{name:'example.test',exact:true}).getAttribute('href')!=='https://example.test/')throw new Error('History did not recover the website from the contact');
+ await detail.getByRole('button',{name:'Interested',exact:true}).click();
+ await page.waitForFunction(()=>window.outcomeWrites.some(row=>row.callId==='test-call'&&row.disposition==='interested'));
+ for(const weeks of [1,2,3]){
+   const before=Date.now();
+   await detail.getByRole('button',{name:'Call back in '+weeks+(weeks===1?' week':' weeks'),exact:true}).click();
+   await page.waitForFunction(count=>window.callbackWrites.length===count,weeks);
+   const scheduled=await page.evaluate(()=>window.callbackWrites.at(-1));
+   const expected=new Date(before);expected.setDate(expected.getDate()+weeks*7);
+   if(scheduled.callId!=='test-call'||Math.abs(new Date(scheduled.followUpAt)-expected)>10000)throw new Error('History scheduled the wrong callback date or contact');
+   if(await page.evaluate(()=>window.dialerSnapshot().rows.find(row=>row.id==='test-call').disposition)!=='interested')throw new Error('Scheduling erased Interested');
+ }
+ await detail.getByText('Scheduled callback:',{exact:false}).waitFor();
+ await page.evaluate(()=>window.failCallback=true);
+ await detail.getByRole('button',{name:'Call back in 1 week',exact:true}).click();
+ await detail.getByRole('alert').filter({hasText:'Could not schedule callback'}).waitFor();
+ await page.evaluate(()=>window.failCallback=false);
  const savedNotes=await detail.getByRole('textbox',{name:'Call notes',exact:true}).inputValue();
  if(savedNotes!=='Spoke with Sam.\nFollow up Friday.')throw new Error('Full notes did not retain line breaks');
  await detail.getByRole('textbox',{name:'Call notes',exact:true}).fill(savedNotes+'\nSend examples before Friday.');
@@ -118,6 +141,7 @@ try{
  await page.evaluate(()=>{const s=window.dialerSnapshot();window.changeDialer({rows:[...s.rows,{id:'empty-history-call',companyName:'No Notes Business',status:'completed',startedAt:new Date()}]})});
  await page.getByRole('row').filter({hasText:'No Notes Business'}).click();
  const emptyDetail=page.getByRole('dialog',{name:'No Notes Business',exact:true});
+ await emptyDetail.getByText('No website',{exact:true}).waitFor();
  const emptyNotes=emptyDetail.getByRole('textbox',{name:'Call notes',exact:true});
  if(await emptyNotes.inputValue()!=='')throw new Error('Another call\'s notes leaked into an empty call');
  await emptyNotes.fill('Forgot to add this during the call.');
@@ -133,5 +157,5 @@ try{
  await page.getByRole('row').filter({hasText:'Interested Contact'}).waitFor();
  if(await page.getByRole('row').filter({hasText:'New Contact'}).count())throw new Error('Interested category includes unrelated leads');
  if(errors.length)throw new Error(errors.join('\n'));
- console.log('Browser passed: audio/reconnect, live Interested outcome without meeting time, autosaved notes through hangup, editable/empty history notes, reopen/clear persistence, and Interested lead filtering. No external network calls.');
+ console.log('Browser passed: audio/reconnect, live Interested outcome without meeting time, autosaved notes through hangup, editable/empty history notes, reopen/clear persistence, Interested lead filtering, history Interested/callback actions, callback error handling, website lookup and No website. No external network calls.');
 }finally{await browser.close(); await server.close()}

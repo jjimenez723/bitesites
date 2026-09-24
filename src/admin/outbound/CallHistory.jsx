@@ -7,10 +7,11 @@
 
 import React, { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { useOutboundCalls, useLiveDoc, LIST_CAP } from './data';
+import { outbound, useAction, useOutboundCalls, useLiveDoc, LIST_CAP } from './data';
 import { Panel, DetailRows } from '../Panel';
 import Transcript from '../Transcript';
 import CallNotesEditor from './CallNotesEditor';
+import CallbackPresets from './CallbackPresets';
 import { StatusPill, formatWhen, formatDuration, formatPhone, providerLabel, Empty, QueryState } from './SourceBadge';
 import { receivingAgent } from '../voice-attribution';
 import { ACCOUNTS } from '../../../functions/accounts.js';
@@ -52,6 +53,54 @@ function operatorLabel(call) {
     return call.answeredBy === 'human' ? 'Answered, unrouted' : 'Never connected';
   }
   return call.operator || '—';
+}
+
+function HistoryWebsite({ call }) {
+  const targetState = useLiveDoc(!call.website && call.targetId ? `outboundTargets/${call.targetId}` : '');
+  const target = targetState.data?.id === call.targetId ? targetState.data : null;
+  const leadId = target?.leadId || call.leadId;
+  const prospectId = target?.prospectId || call.prospectId || target?.convertedFromProspectId;
+  const contactPath = call.website ? '' : leadId ? `leads/${leadId}` : prospectId ? `prospects/${prospectId}` : '';
+  const contactState = useLiveDoc(contactPath);
+  const contact = contactState.data?.id === (leadId || prospectId) ? contactState.data : null;
+  const website = String(call.website || contact?.website || target?.website || '').trim();
+  if (website) {
+    try {
+      const url = new URL(/^[a-z][a-z\d+.-]*:/i.test(website) ? website : `https://${website.replace(/^\/\//, '')}`);
+      if (['http:', 'https:'].includes(url.protocol)) {
+        return <a href={url.href} target="_blank" rel="noreferrer noopener">{website}</a>;
+      }
+    } catch { /* Invalid URLs are not actionable links. */ }
+    return <span>{website}</span>;
+  }
+  if ((!call.website && call.targetId && targetState.loading) || (contactPath && contactState.loading)) return 'Loading website…';
+  if (targetState.error || contactState.error) return 'Website unavailable';
+  return 'No website';
+}
+
+function HistoryFollowUp({ call }) {
+  const action = useAction();
+  const [customDate, setCustomDate] = useState('');
+  const schedule = at => action.run(
+    () => outbound.scheduleCallback(call.id, at),
+    `Callback scheduled for ${new Date(at).toLocaleString()}.`
+  );
+  return <section className="outbound-history-followup" aria-label="Call follow-up">
+    <button className="btn-admin primary" type="button" disabled={action.busy}
+      aria-pressed={call.disposition === 'interested'}
+      onClick={() => action.run(() => outbound.hybridDisposition({ callId: call.id, disposition: 'interested' }), 'Added to Interested leads.')}>
+      Interested
+    </button>
+    <CallbackPresets disabled={action.busy} onSelect={schedule} />
+    <form onSubmit={event => { event.preventDefault(); if (customDate) void schedule(new Date(customDate).toISOString()); }}>
+      <label>Choose another callback time<input type="datetime-local" value={customDate} onChange={event => setCustomDate(event.target.value)} /></label>
+      <button className="btn-admin" type="submit" disabled={action.busy || !customDate}>Schedule callback</button>
+    </form>
+    {call.callbackAt && <p>Scheduled callback: {formatWhen(call.callbackAt)}</p>}
+    <small>Returns to this calling list on the selected date. Calls follow the campaign’s calling hours.</small>
+    {action.message && <p role="status">{action.message}</p>}
+    {action.error && <p className="admin-error" role="alert">{action.error}</p>}
+  </section>;
 }
 
 export default function CallHistory({ campaignId, campaigns = [], onSelectCampaign }) {
@@ -136,6 +185,7 @@ export default function CallHistory({ campaignId, campaigns = [], onSelectCampai
           subtitle={[open.phoneE164 ? formatPhone(open.phoneE164) : '', formatWhen(open.startedAt)].filter(Boolean).join(' · ')}
           onClose={closeCall}
         >
+          <HistoryFollowUp key={open.id} call={open} />
           <section className="outbound-history-note-detail">
             <CallNotesEditor key={open.id} call={open} />
             {open.notesUpdatedAt && <small>Last saved {formatWhen(open.notesUpdatedAt)}</small>}
@@ -145,7 +195,7 @@ export default function CallHistory({ campaignId, campaigns = [], onSelectCampai
               ['Business', businessName(open)],
               ['Contact', open.contactName],
               ['Phone', open.phoneE164 ? formatPhone(open.phoneE164) : 'Not recorded'],
-              ['Website', open.website ? <a href={open.website} target="_blank" rel="noreferrer noopener">{open.website}</a> : ''],
+              ['Website', <HistoryWebsite key={open.id} call={open} />],
               ['Status', <StatusPill status={open.status} />],
               ['Disposition', open.disposition],
               ['Agent', receivingAgent(open).agentName],

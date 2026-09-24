@@ -12,6 +12,7 @@
 // person at once — is invisible in the data afterwards.
 
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
+import { pendingCallback } from './callback-schedule.js';
 
 export const TARGET_STATES = [
   'pending', 'researching', 'awaiting_approval', 'ready', 'dialing', 'connected',
@@ -204,6 +205,7 @@ export async function claimTarget(db, targetId, sessionId, { now = new Date(), s
     if (!states.includes(target.state)) {
       return { claimed: false, reason: `state_${target.state}` };
     }
+    if (asDate(target.nextAttemptAt) > now) return { claimed: false, reason: 'not_due' };
 
     transaction.update(ref, {
       lockedBySessionId: sessionId,
@@ -219,7 +221,7 @@ export async function claimTarget(db, targetId, sessionId, { now = new Date(), s
 }
 
 /** Give a target back — on skip, on session end, or on stale-lock cleanup. */
-export async function releaseTarget(db, targetId, { state = 'ready', nextAttemptAt = null, extra = {} } = {}) {
+export async function releaseTarget(db, targetId, { state = 'ready', nextAttemptAt = null, extra = {}, now = new Date() } = {}) {
   const ref = db.doc(`outboundTargets/${targetId}`);
   const update = {
     lockedBySessionId: '',
@@ -230,20 +232,28 @@ export async function releaseTarget(db, targetId, { state = 'ready', nextAttempt
     ...extra
   };
 
-  // `ready` is the generic "hand it back unchanged" release used by provider
-  // failures, stale-lock sweeps and session shutdown. For a target a human-only
-  // session picked up out of the AI approval queue, unchanged is not `ready` —
-  // it is the queue it was waiting in, since nothing approved a plan in
-  // between. One read, and only on that path: a disposition names its own state
-  // and never reaches here.
-  if (state === 'ready') {
-    const snapshot = await ref.get();
-    const preClaim = snapshot.get('preClaimState');
-    if (RESEARCH_WAITING_STATES.includes(preClaim)) update.state = preClaim;
-  }
-
   if (nextAttemptAt) update.nextAttemptAt = Timestamp.fromDate(nextAttemptAt);
-  await ref.set(update, { merge: true });
+  await db.runTransaction(async transaction => {
+    const snapshot = await transaction.get(ref);
+    const current = snapshot.data() || {};
+    const changes = { ...update };
+    if (state === 'ready' && RESEARCH_WAITING_STATES.includes(current.preClaimState)) {
+      changes.state = current.preClaimState;
+    }
+    // Read inside the transaction: a delayed hang-up must not erase a callback
+    // that the rep just scheduled, even if both requests began together.
+    const callback = pendingCallback(current);
+    if (['do_not_call', 'invalid_number'].includes(state) || ['do_not_call', 'invalid_number'].includes(current.state)) {
+      if (['do_not_call', 'invalid_number'].includes(current.state)) changes.state = current.state;
+      changes.callback = FieldValue.delete();
+    } else if (callback && !Object.hasOwn(extra, 'callback') && extra.complianceStatus !== 'blocked') {
+      changes.state = state === 'ready' && callback.scheduledFor <= now ? 'ready' : 'call_later';
+      changes.nextAttemptAt = Timestamp.fromDate(new Date(Math.max(
+        callback.scheduledFor.getTime(), nextAttemptAt?.getTime() || 0
+      )));
+    }
+    transaction.set(ref, changes, { merge: true });
+  });
 }
 
 /**

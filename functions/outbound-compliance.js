@@ -14,6 +14,7 @@
 import { normalizePhone, resolveTimezone } from './prospect-normalization.js';
 import { getAccount } from './accounts.js';
 import { requiresExternalPreDialScreening } from './pre-dial-screening.js';
+import { pendingCallback } from './callback-schedule.js';
 
 export const DEFAULT_CALLING_WINDOW = {
   // Federal telemarketing practice in the US is 8am–9pm local. The default here
@@ -259,7 +260,9 @@ export function evaluateCompliance({
     Number.isFinite(targetMaxAttempts) ? targetMaxAttempts : operatingLimits.maxAttempts,
     operatingLimits.maxAttempts
   );
-  if (Number.isFinite(maxAttempts) && Number(target.attemptCount || 0) >= maxAttempts) {
+  const callback = pendingCallback(target);
+  if (callback && callback.scheduledFor > now) reasons.push('callback_not_due');
+  if (!callback && Number.isFinite(maxAttempts) && Number(target.attemptCount || 0) >= maxAttempts) {
     reasons.push('max_attempts_reached');
   }
 
@@ -337,6 +340,7 @@ export const COMPLIANCE_REASON_LABELS = {
   suppressed: 'On a campaign suppression list',
   invalid_number: 'Provider reported the number as invalid',
   max_attempts_reached: 'Maximum attempts reached',
+  callback_not_due: 'Scheduled callback is not due yet',
   retry_delay_not_elapsed: 'Minimum retry delay has not elapsed',
   unknown_timezone: 'Timezone unknown — local calling hours cannot be verified',
   invalid_calling_window: 'Campaign calling window is misconfigured',

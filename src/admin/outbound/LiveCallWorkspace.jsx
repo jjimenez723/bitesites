@@ -5,6 +5,7 @@ import LiveTranscript from './LiveTranscript';
 import { useHybridVoice } from './use-hybrid-voice';
 import CallAudioStatus from './CallAudioStatus';
 import { useCallNotes, CallNotesField } from './CallNotesEditor';
+import CallbackPresets, { localDateTimeValue } from './CallbackPresets';
 import {
   hybridVoiceState, joinHybridCall, leaveHybridVoice, setHybridVoiceMuted
 } from './voice-client';
@@ -301,7 +302,7 @@ export default function LiveCallWorkspace({
       }
       result = await onDisposition?.(call, outcome, {
         notes,
-        followUpAt,
+        followUpAt: followUpAt ? new Date(followUpAt).toISOString() : '',
         partnerOutcomes: PARTNER_ACCOUNT_IDS.map(accountId => ({
           accountId,
           outcome: partnerOutcomes[accountId]?.outcome || 'not_mentioned',
@@ -495,6 +496,7 @@ export default function LiveCallWorkspace({
               {OUTCOMES.map(([value, label, help]) => <button key={value} type="button" className={outcome === value ? 'is-selected' : ''} onClick={() => setOutcome(value)}><strong>{label}</strong><span>{help}</span></button>)}
             </div>
             {needsFollowUp && <label className="wrap-up-field"><span>{outcome === 'booked_meeting' ? 'Meeting time' : 'Callback time'}</span><input type="datetime-local" value={followUpAt} onChange={event => setFollowUpAt(event.target.value)} /></label>}
+            {outcome === 'call_later' && <CallbackPresets disabled={action.busy} onSelect={at => setFollowUpAt(localDateTimeValue(new Date(at)))} />}
             <section className="partner-wrap-up" aria-labelledby="partner-wrap-up-title">
               <div>
                 <strong id="partner-wrap-up-title">Partner introductions</strong>

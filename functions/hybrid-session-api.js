@@ -555,6 +555,8 @@ export const submitHybridDisposition = onCall(callOptions, async request => {
   await requireCallOperator(db, call, uid, access);
   const campaignSnapshot = await db.doc(`outboundCampaigns/${call.campaignId}`).get();
   const disposition = clean(request.data?.disposition, 40);
+  const scheduleOnly = request.data?.scheduleOnly === true;
+  if (scheduleOnly && disposition !== 'call_later') throw new HttpsError('invalid-argument', 'Choose a callback outcome.');
   const allowedDispositions = new Set([
     'connected', 'interested', 'qualified', 'booked_meeting', 'call_later', 'not_interested',
     'voicemail', 'no_answer', 'wrong_number', 'do_not_call'
@@ -566,6 +568,9 @@ export const submitHybridDisposition = onCall(callOptions, async request => {
   if (followUpAtRaw && Number.isNaN(followUpAt?.getTime())) throw new HttpsError('invalid-argument', 'Enter a valid follow-up time.');
   if (['booked_meeting', 'call_later'].includes(disposition) && !followUpAt) {
     throw new HttpsError('invalid-argument', 'This outcome requires a follow-up time.');
+  }
+  if (disposition === 'call_later' && followUpAt <= new Date()) {
+    throw new HttpsError('invalid-argument', 'Choose a callback time in the future.');
   }
   const result = await applyDisposition(db, {
     targetId: call.targetId,
@@ -582,22 +587,26 @@ export const submitHybridDisposition = onCall(callOptions, async request => {
       ? 'The target for this call could not be found.' : result.reason || 'Could not save this call outcome.');
   }
   await db.doc(`calls/${callId}`).set({
-    disposition,
-    summary: clean(request.data?.notes, 2000),
-    partnerOutcomes,
-    dispositionBy: email || uid,
-    wrapUp: {
-      status: 'completed',
-      completedAt: FieldValue.serverTimestamp(),
-      completedBy: email || uid,
-      ...(followUpAt ? { followUpAt } : {})
-    },
+    ...(!scheduleOnly ? {
+      disposition,
+      ...(typeof request.data?.notes === 'string' ? { summary: clean(request.data.notes, 2000) } : {}),
+      ...(Array.isArray(request.data?.partnerOutcomes) ? { partnerOutcomes } : {}),
+      dispositionBy: email || uid,
+      wrapUp: {
+        status: 'completed',
+        completedAt: FieldValue.serverTimestamp(),
+        completedBy: email || uid,
+        ...(followUpAt ? { followUpAt } : {})
+      }
+    } : {}),
+    ...(disposition === 'call_later' ? { callbackAt: followUpAt, callbackScheduledBy: uid } : {}),
     updatedAt: FieldValue.serverTimestamp()
   }, { merge: true });
-  const promotedLeadId = result?.promotion?.leadId;
+  const promotedLeadId = result?.leadId;
   if (followUpAt && promotedLeadId) {
     await db.doc(`leads/${promotedLeadId}`).set({
       nextActionAt: followUpAt,
+      nextFollowUpAt: followUpAt,
       nextActionType: disposition === 'booked_meeting' ? 'meeting' : 'callback',
       nextActionCallId: callId,
       updatedAt: FieldValue.serverTimestamp()

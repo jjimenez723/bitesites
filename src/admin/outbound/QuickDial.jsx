@@ -18,6 +18,7 @@ import { formatPhone } from './SourceBadge';
 import { hybridVoiceState, joinHybridCall, leaveHybridVoice, prepareHybridVoice, setHybridVoiceMuted } from './voice-client';
 import { useHybridVoice } from './use-hybrid-voice';
 import CallNotesEditor from './CallNotesEditor';
+import CallbackPresets, { localDateTimeValue } from './CallbackPresets';
 
 const TERMINAL = ['completed', 'cancelled', 'failed'];
 const isTerminal = call => TERMINAL.includes(call?.status);
@@ -178,10 +179,11 @@ function OutcomeRow({ label, busy, onPick }) {
 }
 
 /** The two outcomes that promise the prospect a specific time need one. */
-function FollowUpPrompt({ label, busy, onCancel, onConfirm }) {
+function FollowUpPrompt({ label, busy, onCancel, onConfirm, callback = false }) {
   const [value, setValue] = useState('');
   return (
     <div className="quickdial-followup">
+      {callback && <CallbackPresets disabled={busy} onSelect={at => setValue(localDateTimeValue(new Date(at)))} />}
       <label>
         <span>{label} — when?</span>
         <input type="datetime-local" value={value} onChange={event => setValue(event.target.value)} />
@@ -609,6 +611,7 @@ export default function QuickDial({ campaignId, campaigns = [], onSelectCampaign
               {followUp.callId === call.id ? (
                 <FollowUpPrompt
                   label={followUp.disposition === 'booked_meeting' ? 'Meeting booked' : 'Call back'}
+                  callback={followUp.disposition === 'call_later'}
                   busy={action.busy}
                   onCancel={() => setFollowUp({})}
                   onConfirm={at => finish(call, followUp.disposition, at)}
@@ -628,6 +631,7 @@ export default function QuickDial({ campaignId, campaigns = [], onSelectCampaign
               {followUp.callId === wrapUp.id ? (
                 <FollowUpPrompt
                   label={followUp.disposition === 'booked_meeting' ? 'Meeting booked' : 'Call back'}
+                  callback={followUp.disposition === 'call_later'}
                   busy={action.busy}
                   onCancel={() => setFollowUp({})}
                   onConfirm={at => finish(wrapUp, followUp.disposition, at)}

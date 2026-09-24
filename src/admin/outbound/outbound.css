@@ -865,6 +865,14 @@
 .bs-admin .outbound-history-note-detail h3 { margin: 0 0 10px; font-size: 15px; }
 .bs-admin .outbound-history-note-detail p { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.7; }
 .bs-admin .outbound-history-note-detail small { color: var(--ink-3); }
+.bs-admin .outbound-history-followup { display: grid; gap: 12px; margin-bottom: 20px; }
+.bs-admin .outbound-history-followup > .btn-admin { justify-self: start; }
+.bs-admin .outbound-callback-presets,
+.bs-admin .outbound-history-followup form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.bs-admin .outbound-history-followup label { display: grid; gap: 6px; }
+.bs-admin .outbound-history-followup input { padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); color: var(--ink); font: inherit; }
+.bs-admin .outbound-history-followup small { color: var(--ink-3); }
+.bs-admin .outbound-history-followup p { margin: 0; }
 
 .bs-admin .quickdial-person {
   padding: var(--sp-6);

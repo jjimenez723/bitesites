@@ -424,6 +424,9 @@ export const outbound = {
   endHybridCall: callId => callable('endHybridCall', { callId }),
   dncHybridCall: callId => callable('markHybridCallDoNotCall', { callId }),
   hybridDisposition: payload => callable('submitHybridDisposition', payload),
+  scheduleCallback: (callId, followUpAt) => callable('submitHybridDisposition', {
+    callId, disposition: 'call_later', followUpAt, scheduleOnly: true
+  }),
   saveCallNotes: (callId, notes) => callable('saveHybridCallNotes', { callId, notes }),
   setAutoTakeover: (sessionId, enabled) => callable('setHybridAutoTakeover', { sessionId, enabled }),
   requestTakeover: callId => callable('requestHybridTakeover', { callId }),

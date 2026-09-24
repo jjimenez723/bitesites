@@ -32,6 +32,7 @@ import {
   DIALABLE_STATES, HUMAN_LED_DIALABLE_STATES
 } from './outbound-contacts.js';
 import { promoteProspect } from './prospect-conversion.js';
+import { pendingCallback } from './callback-schedule.js';
 import {
   contactKey, loadResearch, saveResearch, researchContact, buildCallBrief,
   validateResearchEvidence, RESEARCH_EVIDENCE_POLICY_VERSION
@@ -1672,6 +1673,22 @@ export async function applyDisposition(db, {
   const target = { id, ...snapshot.data() };
 
   const state = STATE_FOR_DISPOSITION[disposition] || 'completed';
+  const requested = requestedFollowUpAt instanceof Date
+    ? requestedFollowUpAt : requestedFollowUpAt ? new Date(requestedFollowUpAt) : null;
+  const scheduledCallback = disposition === 'call_later' && requested && requested > now;
+  const contact = await loadContactForTarget(db, target);
+  if (scheduledCallback) {
+    if (!contact) return { ok: false, reason: 'The contact for this call could not be found.' };
+    if (target.state === 'do_not_call' || target.state === 'invalid_number'
+        || contact.contactability?.doNotCall || contact.doNotCall
+        || contact.lifecycle?.status === 'do_not_contact'
+        || await isSuppressed(db, contact.phoneE164 || target.phoneE164)) {
+      return { ok: false, reason: 'This contact cannot be scheduled for another call.' };
+    }
+    if (target.lastCallId !== callId && ['dialing', 'connected'].includes(target.state)) {
+      return { ok: false, reason: 'This contact is on another call. Schedule the callback after that call ends.' };
+    }
+  }
   const attemptCount = Number(target.attemptCount || 0);
   const operatingLimits = resolveCampaignOperatingLimits(campaign);
   const maxAttempts = Math.min(
@@ -1683,11 +1700,8 @@ export async function applyDisposition(db, {
 
   let nextAttemptAt = null;
   const retryable = ['call_later', 'no_answer', 'voicemail', 'busy'].includes(state);
-  if (retryable && !exhausted) {
-    const requested = requestedFollowUpAt instanceof Date
-      ? requestedFollowUpAt
-      : requestedFollowUpAt ? new Date(requestedFollowUpAt) : null;
-    if (state === 'call_later' && requested && !Number.isNaN(requested.getTime()) && requested > now) {
+  if (retryable && (!exhausted || scheduledCallback)) {
+    if (scheduledCallback) {
       // A rep-confirmed callback is a promise to the prospect, so it takes
       // precedence over the campaign's generic retry window.
       nextAttemptAt = requested;
@@ -1699,19 +1713,22 @@ export async function applyDisposition(db, {
 
   await releaseTarget(db, id, {
     // A retryable outcome with no attempts left is finished, not pending.
-    state: retryable && exhausted ? 'completed' : state,
+    state: retryable && exhausted && !scheduledCallback ? 'completed' : state,
     nextAttemptAt,
     extra: {
       lastDisposition: clean(disposition, 60),
       lastCallId: clean(callId, 200),
-      lastAttemptAt: Timestamp.fromDate(now),
+      ...(!scheduledCallback ? { lastAttemptAt: target.lastAttemptAt || Timestamp.fromDate(now) } : {}),
+      ...(scheduledCallback ? { callback: {
+        scheduledFor: Timestamp.fromDate(requested), attemptNumber: attemptCount + 1,
+        sourceCallId: clean(callId, 200), scheduledBy: clean(actor, 200), scheduledAt: Timestamp.fromDate(now)
+      } } : {}),
       requeueReason: retryable ? clean(disposition, 60) : '',
       ...(notes ? { notes: clean(notes, 2000) } : {}),
       ...(safePartnerOutcomes.length ? { partnerOutcomes: safePartnerOutcomes } : {})
     }
   });
 
-  const contact = await loadContactForTarget(db, target);
   if (contact) {
     await updateContactAfterAttempt(db, contact, { disposition, callId, campaignId: target.campaignId, at: now });
     if (safePartnerOutcomes.length) {
@@ -1765,7 +1782,7 @@ export async function applyDisposition(db, {
   }
 
   if (target.campaignId) await refreshCampaignCounts(db, target.campaignId);
-  return { ok: true, state, nextAttemptAt, promotion, partnerOutcomes: safePartnerOutcomes };
+  return { ok: true, state, nextAttemptAt, promotion, leadId: promotion?.leadId || target.leadId || '', partnerOutcomes: safePartnerOutcomes };
 }
 
 // -------------------------------------------------------- operator actions
@@ -1882,11 +1899,11 @@ export async function releaseDueTargets(db, { now = new Date(), limit = 300 } = 
       Number(target.maxAttempts || operatingLimits.maxAttempts),
       operatingLimits.maxAttempts
     );
-    if (Number(target.attemptCount || 0) >= effectiveMaxAttempts) {
+    if (!pendingCallback(target) && Number(target.attemptCount || 0) >= effectiveMaxAttempts) {
       await releaseTarget(db, entry.id, { state: 'completed' });
       continue;
     }
-    await releaseTarget(db, entry.id, { state: 'ready' });
+    await releaseTarget(db, entry.id, { state: 'ready', now });
     released += 1;
   }
   return released;
