@@ -2646,6 +2646,7 @@ export { syncFineLineCommissions } from './flg-commission-sync.js';
 export {
   // Configuration and capability reporting.
   getOutboundConfig,
+  runOutboundEligibilityAudit,
 
   // Lead discovery.
   createLeadDiscoveryJob,

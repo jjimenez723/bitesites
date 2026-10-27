@@ -55,6 +55,19 @@ usage:
 - Note the ceiling: 20 results per page, 3 pages (60 results) per text search.
   A job's `maximumResults` sits on top of that and cannot raise it.
 
+**Do not use this adapter for a broad persistent prospect build until its
+storage rights are resolved.** Google's current [Places policies](https://developers.google.com/maps/documentation/places/web-service/policies)
+say Places content may not be pre-fetched, cached, or stored beyond listed
+exceptions; Place IDs are exempt. This adapter's field mask stores names,
+addresses, phones, websites, ratings, and categories in Firestore, so its
+existing persistence model needs a current terms review before it is used to
+expand the CRM. The mask also includes Enterprise fields such as phone,
+website, and rating; Google's current [Text Search Enterprise pricing](https://developers.google.com/maps/billing-and-pricing/pricing)
+is $35 per 1,000 requests after the listed 1,000-request free usage cap, and
+Text Search returns at most 60 results per query. A national state-by-niche
+run can require thousands of queries and multiple requests per query. No
+expansion queries were run as part of this cleanup.
+
 ```bash
 firebase functions:secrets:set LEAD_SOURCE_API_KEY
 ```
@@ -94,8 +107,10 @@ way to start a call:
 - page size, page count, total records and per-request timeout are all bounded,
   and a capped read reports `truncated: true` rather than looking complete;
 - a contact from a location other than the configured one aborts the read
-  instead of being normalised — all three sellers share one sub-account, and
-  the tag is the only boundary between their books;
+  instead of being normalised. BiteSites is explicitly mapped to its own GHL
+  location; `GHL_LOCATION_ACCOUNT_ID` defaults to `bitesites`, and the callable
+  fails closed if another application account requests that location. A CRM
+  tag that explicitly names another account remains a mismatch;
 - **a CRM field claiming consent stays evidence.** `normalize()` deliberately
   emits no `consentBasis`, `consentGrantId`, consenting seller, consented
   number or grant time, so an imported row lands as `basis: 'not_recorded'`
@@ -103,14 +118,47 @@ way to start a call:
   source URL — do survive, so a reviewer can go and read the paperwork before
   issuing a real grant through the consent ledger.
 
+The BiteSites credential is a separate Private Integration scoped only to
+`contacts.readonly`; its token is in Firebase Secret Manager as
+`GHL_CONTACTS_READ_TOKEN`. The repo's `runOutboundEligibilityAudit` callable
+was missing from the Firebase export list and is now exported in code. The
+current production function list did not contain it, so it needs an authorized
+Functions deployment before the admin audit UI can call it.
+
+### Prospect data cleanup and GHL matches
+
+The Firestore collection is `bitesites-org/(default)/prospects` (12,695
+records). The taxonomy backfill adds a versioned `taxonomy` map with a
+canonical `stateCode`, original `sourceRegion`, normalized `primaryNicheId`,
+`nicheIds`, distinct `serviceTags`, and review reasons. Original
+`business.category`, `business.categories`, lifecycle, contactability, consent,
+tags, and campaign fields remain untouched. It changes `address.region` only
+when it is already a recognized state and only to uppercase.
+
 ```bash
-firebase functions:secrets:set GHL_CONTACTS_READ_TOKEN
+node scripts/backfill-prospect-taxonomy.mjs --project bitesites-org
+node scripts/backfill-prospect-taxonomy.mjs --project bitesites-org --execute
 ```
 
-Create it in GoHighLevel as a Private Integration with `contacts.readonly` and
-no write scopes. If it is ever granted `contacts.write`, the code above still
-refuses to use it — but the point of the separate token is that the refusal
-stops being the only thing standing in the way.
+`scripts/enrich-prospects-from-ghl.mjs` reads the BiteSites GHL location with
+the read-only token, then attaches only exact, unique phone/email matches in a
+separate `crmMatches` field. Every attached person has `role: 'unknown'` and
+`ownerVerified: false`; this is contact enrichment, not proof of ownership or
+calling permission. Unmatched and ambiguous records remain unattached.
+
+```bash
+node scripts/enrich-prospects-from-ghl.mjs --project bitesites-org
+node scripts/enrich-prospects-from-ghl.mjs --project bitesites-org --execute
+```
+
+The live read found 96 exact unique phone matches among 157 GHL contacts; all
+96 matched contacts have names, 61 contacts did not match, and none were
+ambiguous. Those 96 are stored as associated contacts, not verified owners.
+The prospect scan found 7,704 NJ and 4,365 NY records, 626 with no recognized
+state, 272 nonempty primary category labels, two missing primary categories,
+and 18 ambiguous primary labels. State and niche expansion beyond the current
+data is a separate discovery run; the scripts above only clean and enrich
+existing records.
 
 ### The migrated sources
 

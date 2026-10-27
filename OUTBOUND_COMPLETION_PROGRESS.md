@@ -161,6 +161,26 @@ the audit runs over Firestore scopes and refuses the CRM scope with a
 
 ---
 
+## Current-state correction — 2026-10-27
+
+The CRM setup has changed since Checkpoint 2:
+
+- A separate BiteSites GoHighLevel Private Integration was created with only
+  `contacts.readonly`; its credential is stored in Firebase Secret Manager as
+  a new `GHL_CONTACTS_READ_TOKEN` version. A live read of the BiteSites
+  location returned all 157 contacts without a tag filter.
+- The app's admin UI already called `runOutboundEligibilityAudit`, but Firebase
+  did not export that callable. The export is now present in source, and the
+  callable now maps the configured GHL location to the BiteSites account and
+  fails closed for other accounts.
+- The BiteSites GHL location is a distinct sub-account; the earlier statement
+  that all three GHL listings shared one location was wrong. Mappings for other
+  application accounts remain unverified. Location membership is used as the
+  BiteSites boundary; contradictory account tags remain a mismatch.
+- Current production Functions did not contain `runOutboundEligibilityAudit`
+  when checked. A Functions deployment is still required before the admin UI
+  can use the callable. No production deployment was run.
+
 ## Checkpoint 3 — the live-model path, built and guarded (milestone 6)
 
 **Changes:**

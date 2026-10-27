@@ -1,10 +1,9 @@
 // Which book of business a record belongs to, and what may touch it.
 //
-// BiteSites and its commission clients share one GoHighLevel sub-account, so
-// GHL itself draws no boundary between them. `accountId` is that boundary, and
-// this module is its only definition — pure and synchronous, like
-// `outbound-compliance.js`, so the campaign builder, the importer, the dialer
-// and the CRM ingest all reach the same verdict from the same inputs.
+// GoHighLevel may hold records in shared or dedicated locations. `accountId`
+// is the application's seller boundary, and this module is its only
+// definition — pure and synchronous, like `outbound-compliance.js`, so the
+// campaign builder, importer, dialer and CRM ingest reach the same verdict.
 //
 // The rule that shapes everything here: an account mismatch is never resolved
 // by picking a side. A prospect whose account cannot be established does not

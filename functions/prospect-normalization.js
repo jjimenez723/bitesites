@@ -430,6 +430,114 @@ export function normalizeCategories(value) {
   return [...seen];
 }
 
+// A small, explicit alias table for labels that are the same niche in the
+// migrated corpus. Unlisted values keep their normalized source id; broad or
+// low-confidence labels are reviewed rather than guessed into a more specific
+// niche. Marketing/service labels are tracked separately from business types.
+const NICHE_ALIASES = Object.freeze({
+  restaurants: 'restaurant',
+  contractors: 'contractor',
+  contractor: 'contractor',
+  general_contracting: 'general_contractor',
+  general_contracting_and_renovation: 'general_contractor',
+  general_contractor: 'general_contractor',
+  auto_repair: 'auto_repair',
+  car_repair: 'auto_repair',
+  plumbing: 'plumbing',
+  plumber: 'plumbing',
+  electrical: 'electrical',
+  electrician: 'electrical',
+  legal_services: 'legal_services',
+  lawyer: 'legal_services',
+  accounting: 'accounting_tax_bookkeeping',
+  accountant: 'accounting_tax_bookkeeping',
+  accounting_tax_bookkeeping: 'accounting_tax_bookkeeping',
+  tax_and_bookkeeping: 'accounting_tax_bookkeeping',
+  fitness_centre: 'fitness',
+  fitness_gyms: 'fitness',
+  fitness_and_gyms: 'fitness',
+  physical_therapy_rehab: 'physical_therapy',
+  physical_therapy_and_rehab: 'physical_therapy',
+  physiotherapist: 'physical_therapy',
+  car_wash: 'car_wash_detailing',
+  car_wash_detailing: 'car_wash_detailing',
+  car_wash_and_detailing: 'car_wash_detailing',
+  landscaper: 'landscaping',
+  salons: 'salon',
+  hairdresser: 'hair_salon',
+  dentist: 'dentistry',
+  dental_orthodontics: 'dentistry',
+  dental_and_orthodontics: 'dentistry',
+  hvac: 'hvac',
+  hvac_heating_and_air: 'hvac',
+  air_conditioning_contractor: 'hvac',
+  kitchen_bath_remodeling: 'remodeler',
+  kitchen_remodeler: 'remodeler',
+  bathroom_remodeler: 'remodeler',
+  remodeler: 'remodeler',
+  countertop_store: 'countertops',
+  countertops: 'countertops',
+  countertops_stone: 'countertops',
+  countertop_contractor: 'countertops',
+  granite_supplier: 'countertops',
+  roofing_contractor: 'roofing',
+  roofer: 'roofing'
+});
+
+const SERVICE_TAGS = Object.freeze({
+  web: 'web_presence',
+  reputation: 'online_reputation',
+  social: 'social_media',
+  seo: 'search_engine_optimization',
+  creative: 'creative_services',
+  ads: 'paid_advertising',
+  email: 'email_marketing',
+  branding: 'branding'
+});
+
+const AMBIGUOUS_PRIMARY_NICHES = new Set(['yes', 'general']);
+
+export function canonicalNiche(value) {
+  const id = normalizeCategory(value);
+  return NICHE_ALIASES[id] || id;
+}
+
+/**
+ * Split migrated category labels into business niches and service tags while
+ * preserving the source fields. Unknown niche ids stay queryable as-is.
+ */
+export function normalizeProspectTaxonomy({ primaryCategory = '', categories = [], region = '' } = {}) {
+  const primaryId = normalizeCategory(primaryCategory);
+  const categoryIds = normalizeCategories(categories);
+  // Keep the source string byte-for-byte (within the Firestore field bound).
+  // `stateCode` carries the cleaned canonical value beside it.
+  const sourceRegion = typeof region === 'string' ? region.slice(0, 60) : '';
+  const allIds = [...new Set([primaryId, ...categoryIds].filter(Boolean))];
+  const primaryIsServiceTag = Boolean(SERVICE_TAGS[primaryId]);
+  const primaryIsAmbiguous = AMBIGUOUS_PRIMARY_NICHES.has(primaryId);
+  const primaryNicheId = primaryIsServiceTag || primaryIsAmbiguous ? '' : canonicalNiche(primaryId);
+  const nicheIds = [...new Set(allIds
+    .filter(id => !SERVICE_TAGS[id] && !AMBIGUOUS_PRIMARY_NICHES.has(id))
+    .map(canonicalNiche)
+    .filter(Boolean))];
+  const serviceTags = [...new Set(allIds.map(id => SERVICE_TAGS[id]).filter(Boolean))];
+  const stateCode = normalizeRegion(region);
+  const reviewReasons = [];
+  if (!stateCode) reviewReasons.push('missing_state');
+  if (!primaryNicheId && !primaryIsAmbiguous) reviewReasons.push('missing_primary_niche');
+  if (primaryIsAmbiguous) reviewReasons.push('ambiguous_primary_niche');
+
+  return {
+    version: 1,
+    stateCode,
+    sourceRegion,
+    primaryNicheId,
+    nicheIds,
+    serviceTags,
+    reviewReasons: [...new Set(reviewReasons)]
+  };
+}
+
 // -------------------------------------------------------------- timestamps
 
 /**
@@ -606,6 +714,13 @@ export function buildProspect(raw = {}, { source = {}, importRunId = '', now = n
   const address = raw.address && typeof raw.address === 'object'
     ? normalizeAddress(raw.address)
     : parseAddressLine(raw.address ?? raw.location ?? '');
+  const taxonomy = normalizeProspectTaxonomy({
+    primaryCategory: raw.category ?? raw.industry ?? raw.field,
+    categories: raw.categories ?? raw.category ?? raw.industry,
+    region: raw.address && typeof raw.address === 'object'
+      ? raw.address.region ?? raw.address.state ?? raw.address.province ?? address.region
+      : raw.state ?? raw.region ?? address.region
+  });
 
   const timezone = resolveTimezone({ timezone: raw.timezone, region: address.region, phoneE164 });
   const lat = Number(raw.lat ?? raw.latitude);
@@ -649,6 +764,10 @@ export function buildProspect(raw = {}, { source = {}, importRunId = '', now = n
       rating: Number.isFinite(Number(raw.rating)) ? Number(raw.rating) : null,
       reviewCount: Number.isFinite(Number(raw.reviewCount)) ? Math.trunc(Number(raw.reviewCount)) : null
     },
+
+    // Derived and versioned separately from the original category fields so
+    // taxonomy cleanup never erases the source labels or lifecycle decisions.
+    taxonomy,
 
     source: {
       system: SOURCE_SYSTEMS.includes(source.system) ? source.system : 'scraper',
