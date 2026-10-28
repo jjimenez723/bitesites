@@ -248,6 +248,19 @@ For human-led calls, terminal webhooks hold the next refill until the rep saves
 an outcome. `interested` disables auto-dial and opens a rep-composed email to
 the lead's stored address; email suppression and campaign/session ownership
 are checked server-side. The rep explicitly sends or skips the message and
-resumes dialing. These campaign-assignment and follow-up changes are not
-deployed until the owner authorizes their release and the verification steps
-above are completed.
+resumes dialing. These campaign-assignment and follow-up changes were deployed
+on 2026-10-27 with owner authorization. Current production state and the later
+rep-training release are recorded in
+[OUTBOUND_OWNER_CHECKLIST.md](./OUTBOUND_OWNER_CHECKLIST.md).
+
+## 11. Rep sign-in correction — 2026-10-28
+
+`getRepTrainingStatus` failed with `ReferenceError: createHash is not defined`;
+its module now imports `createHash` from `node:crypto`. The rep portal's
+warm-transfer listener also used an account-wide calls query that could not
+prove assigned-campaign access under Firestore rules. Rep queries now filter by
+campaign IDs already returned by the rep-authorized campaign list. The matching
+`calls` composite index was created directly and reached READY; this preserved
+the existing live indexes not declared in the repository index file. The
+targeted release updated only `getRepTrainingStatus` and Hosting. Firestore
+rules and human-dialing functions were not redeployed.

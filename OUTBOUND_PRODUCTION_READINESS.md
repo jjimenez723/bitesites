@@ -144,11 +144,22 @@ campaign or training attempt/progress records. The app route, training bundle,
 and sideband health endpoint returned success after rollout. The release did
 not modify campaign, role, or training data.
 
+**Rep sign-in correction — deployed 2026-10-28:** `getRepTrainingStatus` was
+returning 500 because its progress-ID helper used `createHash` without importing
+it from `node:crypto`. The rep portal's always-mounted warm-transfer listener
+also queried calls by account without constraining campaign IDs, so Firestore
+correctly rejected it under the assigned-campaign read rules. The helper import
+is fixed and rep transfer subscriptions are constrained to campaign IDs from
+the rep-authorized campaign query. The new composite index is READY. Production
+verification confirmed the callable ACTIVE, the current Hosting bundle, and no
+post-deploy function errors. This targeted release did not change Firestore
+rules, rep/campaign/training data, or human-dialing gate settings.
+
 | Boundary | Current implementation / production state |
 |---|---|
 | Seller separation | Campaigns, profiles, knowledge, research, calls, targets, sessions, and appointments are seller-account bound. Stored role records override stale claims. |
 | Mandatory rep training and default campaign | **Deployed 2026-10-28.** Three fictional adult-prospect scenarios per seller are practiced in browser-only Realtime sessions. The browser submits the transcript for server-side scoring; the transcript is not retained or independently authenticated, so this is a practice gate, not an identity-proof exam. Reps may complete the course before a default exists; the server records the pass but grants no lead access until a manager selects a valid default campaign, which auto-assigns already-trained reps. Firestore rules and call/refill APIs enforce the pass and assigned-campaign scope. No production default or training record exists yet. |
-| Rep campaign access | **Deployed 2026-10-27 and tightened 2026-10-28.** Firestore reads, call history, warm transfers, appointments, session visibility, and dialing are limited to campaigns assigned to trained reps. |
+| Rep campaign access | **Deployed 2026-10-27 and tightened 2026-10-28.** Firestore reads, call history, warm transfers, appointments, session visibility, and dialing are limited to campaigns assigned to trained reps. Rep warm-transfer subscriptions are constrained by assigned campaign IDs. |
 | Human wrap-up | **Deployed 2026-10-27.** A terminal human-handled call holds capacity until the rep records an outcome. `interested` pauses auto-dial until the rep sends or skips a composed email to the lead's stored address and explicitly resumes. Authenticated production rehearsal remains outstanding. |
 | Consent | Imported consent-like fields are evidence candidates only. AI admission requires an active, server-issued, seller- and number-specific written-consent grant. Revocation and expiry fail closed. |
 | Recording | Disabled at campaign sanitization and carrier call creation. |

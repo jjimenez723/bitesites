@@ -152,21 +152,36 @@ export function useCallTurns(callId) {
 }
 
 /** Live warm-transfer requests addressed to the signed-in teammate. */
-export const useIncomingHybridTransfers = (uid, accountIds = [], allAccounts = false) =>
+export const useIncomingHybridTransfers = (
+  uid, accountIds = [], allAccounts = false, role = 'admin', campaignIds = []
+) =>
   useLiveOutboundQuery(() => {
-    if (!uid || (!allAccounts && !accountIds.length)) return null;
-    const accountClause = allAccounts ? [] : [where('accountId', 'in', accountIds.slice(0, 10))];
+    if (!uid) return null;
+    const assignedCampaignIds = [...new Set(campaignIds.filter(Boolean))].slice(0, 30);
+    // Rep call reads are campaign-scoped by Firestore rules. Keep the live
+    // warm-transfer query within campaigns already returned by the
+    // rep-authorized campaign subscription; an account-only query is not
+    // provably safe for a rep and is rejected by Firestore.
+    if (role === 'outbound_rep' && !assignedCampaignIds.length) return null;
+    if (role !== 'outbound_rep' && !allAccounts && !accountIds.length) return null;
+    const accountClause = role === 'outbound_rep' || allAccounts
+      ? []
+      : [where('accountId', 'in', accountIds.slice(0, 10))];
+    const campaignClause = role === 'outbound_rep'
+      ? [where('campaignId', 'in', assignedCampaignIds)]
+      : [];
     return {
       cap: 20,
       q: query(
         collection(db, 'calls'),
         ...accountClause,
+        ...campaignClause,
         where('direction', '==', 'outbound'),
         where('staffTransfer.toUid', '==', uid),
         limit(20)
       )
     };
-  }, [uid, accountIds.join(','), allAccounts]);
+  }, [uid, accountIds.join(','), allAccounts, role, campaignIds.join(',')]);
 
 /** Manager view of currently connected outbound calls for private coaching. */
 export const useTeamLiveCalls = (accountIds = [], allAccounts = false) =>

@@ -377,7 +377,13 @@ export default function OutboundCalls({ role = 'admin', currentUid = '' }) {
       {prospectId && (
         <ProspectDetail prospectId={prospectId} onClose={() => setProspectId(null)} onChanged={campaigns.refresh} />
       )}
-      <TransferInbox currentUid={currentUid} accountIds={accountIds} allAccounts={allAccounts} />
+      <TransferInbox
+        currentUid={currentUid}
+        accountIds={accountIds}
+        allAccounts={allAccounts}
+        role={role}
+        campaignIds={campaigns.rows.map(campaign => campaign.id)}
+      />
     </>
   );
 }

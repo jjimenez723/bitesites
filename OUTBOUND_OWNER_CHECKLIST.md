@@ -125,6 +125,18 @@ release checks. Production currently has no default campaign or training
 attempt/progress records; reps can practice, but a manager must choose a
 campaign before they can access its leads or dial.
 
+**Rep sign-in correction — 2026-10-28:** production logs identified the
+training-status 500 as a missing `node:crypto` `createHash` import. The
+separate Firestore permission error came from the always-mounted warm-transfer
+listener querying calls by account, while rep reads are limited to assigned
+campaigns. The import is fixed, and rep transfer reads now query only campaigns
+already returned by the rep-authorized campaign list. The supporting composite
+index is READY. Only `getRepTrainingStatus` and Hosting were redeployed; the
+live function is ACTIVE, the released app bundle is current, and no post-release
+function errors were present at verification. No Firestore rules or sales
+roles, training, campaign, or dialer records changed, and the human-dialing
+functions were not redeployed.
+
 The following notes preserve dated production findings so their historical
 context stays clear alongside the current deployment state.
 

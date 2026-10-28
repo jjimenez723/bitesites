@@ -4,7 +4,7 @@
 // endpoints add V2 ownership, handoff, agent configuration, Twilio browser
 // access tokens/TwiML, transcript ingestion, and OpenAI/Twilio control hooks.
 
-import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { onCall, onRequest, HttpsError } from 'firebase-functions/v2/https';
 import { defineSecret } from 'firebase-functions/params';
 import { FieldValue, Timestamp, getFirestore } from 'firebase-admin/firestore';
