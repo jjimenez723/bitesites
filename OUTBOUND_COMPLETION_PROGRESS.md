@@ -433,7 +433,8 @@ transactionally, the email composer waits for verified contact context, and
 the mobile audio status has an explicit grid row. Destroyed Twilio devices
 show a reconnect prompt and are recreated on retry. The manager callables are
 re-exported from the deployed Functions entrypoint, and the rep picker queries
-the chosen account directly.
+the chosen account directly. The Hybrid release manifest now targets all seven
+new callable endpoints as well as Hosting and Firestore.
 
 **Evidence:** branch `feat/rep-campaign-access-followup-pause` is based on
 `221fba8` (`main`). `node --check` passed for the edited Functions modules,
