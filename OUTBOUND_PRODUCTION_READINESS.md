@@ -107,9 +107,11 @@ predates this workstream, with every campaign paused.
 **Branch update — 2026-10-27:** per-rep campaign assignment, the human-call
 follow-up pause, and the mobile destroyed-device reconnect correction are
 implemented on `feat/rep-campaign-access-followup-pause`. The frontend build
-passes; this branch has not been deployed or rehearsed. The historical
-deployment statements in this document describe the 2026-09-08 readiness
-checkpoint, not this branch's current release state.
+passes. The owner authorized merging PR #5 and deploying this branch on
+2026-10-27; `Outbound AI CI / validate` passed on commit `7d673e2`. Merge and
+deployment are pending. No production release or rehearsal of these changes is
+complete yet. The historical deployment statements in this document describe
+the 2026-09-08 readiness checkpoint, not this branch's current release state.
 
 | Boundary | Current local implementation |
 |---|---|

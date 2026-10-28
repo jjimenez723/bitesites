@@ -439,15 +439,18 @@ the chosen account directly. The Hybrid release manifest now targets all seven
 new callable endpoints as well as Hosting and Firestore.
 
 **Evidence:** branch `feat/rep-campaign-access-followup-pause` is based on
-`221fba8` (`main`). `node --check` passed for the edited Functions modules,
-`firestore.indexes.json` parsed, `git diff --check` passed, and `npm run build`
-passed. Vite reported its existing mixed static/dynamic Firebase import and
-large-chunk warnings. Automated tests were not run for this follow-up.
+`221fba8` (`main`). `Outbound AI CI / validate` passed on `7d673e2`, including
+the full repository suite, Functions check, and sideband check. The release
+preflights pass with `OUTBOUND_EXTERNAL_DIALING=disabled` and
+`PAID_PHONE_SCREENING=disabled`; the Hybrid secret names and sideband service
+are present in `bitesites-org`. A local emulator run did not complete because
+it stalled downloading Firestore emulator 1.22.0; CI supplies the passing
+full-suite evidence. Vite reported its existing mixed static/dynamic Firebase
+import and large-chunk warnings.
 
-**Remaining:** production release and rehearsals. Alex's display name can be
-entered by a manager from Campaign Builder; the temporary Bergen test account
-remains `Jensy Jimenez` and remains an `outbound_rep`. No production profile,
-campaign, role, or dialer data was changed by this branch.
-
-**Blocker:** this follow-up branch has not been authorized for merge or
-production deployment. The earlier approval applied to PR #3 only.
+**Release authorization:** the owner explicitly authorized merging PR #5 and
+deploying this follow-up to production on 2026-10-27. Merge and deployment are
+pending. No production profiles, roles, campaign assignments, or dialer records
+have been changed by this release. Alex's display name can be entered by a
+manager from Campaign Builder; the temporary Bergen test account remains
+`Jensy Jimenez` and remains an `outbound_rep`.

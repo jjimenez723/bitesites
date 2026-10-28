@@ -77,6 +77,12 @@ production.
 > voice remains closed on per-number consent and screening regardless of the
 > flag.
 
+**Authorized code follow-up — 2026-10-27:** PR #5 adds manager-controlled rep
+campaign assignment and a human-call follow-up pause. The owner authorized
+merging and deploying it; CI passed on `7d673e2`. Merge and deployment are
+pending. This authorization does not change campaign assignments or authorize
+any additional calls.
+
 The stage below is kept as written on 2026-08-25 because the reasoning still
 explains how production got into the state this deploy found it in.
 
