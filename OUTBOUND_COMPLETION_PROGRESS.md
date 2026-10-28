@@ -3,6 +3,8 @@
 Working document for `OUTBOUND_COMPLETION_GOAL_SPEC.md`. One short entry per
 checkpoint: what changed, what proves it, what is left, and who is blocking.
 
+> **🚧 IN PROGRESS** — 2026-10-27 — Twilio destroyed-device recovery and mobile reconnect layout — `src/admin/outbound/voice-client.js`, `src/admin/outbound/LiveCallWorkspace.jsx`, `src/admin/outbound/hybrid.css`, `package.json`, `package-lock.json`, `OUTBOUND_COMPLETION_PROGRESS.md`
+
 **Branch:** `feat/outbound-readiness-closeout`
 **Baseline commit:** `925697f9b62711decaf46c37d4e76e9b5026d060` (`main`)
 
