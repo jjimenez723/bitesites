@@ -168,7 +168,13 @@ const { sessionId } = await startDialerSession(db, {
 check('the session started', Boolean(sessionId));
 check('a legacy campaign starts under the BiteSites account',
   (await db.doc(`dialerSessions/${sessionId}`).get()).get('accountId') === 'bitesites');
-await db.doc(`dialerSessions/${sessionId}`).set({ hybridV2: true }, { merge: true });
+await db.doc('roles/rep-1').set({ role: 'outbound_rep', accountIds: ['bitesites'] });
+await db.doc(`outboundCampaigns/${campaignId}`).set({ allowedRepUids: ['rep-1'] }, { merge: true });
+await db.doc(`dialerSessions/${sessionId}`).set({
+  hybridV2: true,
+  userRole: 'outbound_rep',
+  autoDial: { enabled: true, state: 'running' }
+}, { merge: true });
 const resumed = await findActiveDialerSession(db, 'rep-1', { hybridOnly: true });
 check('the active hybrid session can be recovered after client state is lost', resumed?.id === sessionId);
 

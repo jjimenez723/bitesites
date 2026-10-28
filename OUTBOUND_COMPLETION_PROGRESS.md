@@ -423,6 +423,8 @@ Hosting assets only and do not deploy or change dialing functions.
 
 ## Checkpoint 7 — rep assignments, interested follow-up, and mobile recovery
 
+> **🚧 IN PROGRESS** — 2026-10-27 — PR #5 CI and production release — `functions/outbound-calls.test.mjs`, `OUTBOUND_COMPLETION_PROGRESS.md`, `OUTBOUND_PRODUCTION_READINESS.md`, `OUTBOUND_OWNER_CHECKLIST.md`
+
 **Changes:** Managers can assign an account's active sales reps to each
 campaign and set their display names. Rep campaign queries, Firestore reads,
 session creation, and dial/refill paths enforce assignment. Human call wrap-up
