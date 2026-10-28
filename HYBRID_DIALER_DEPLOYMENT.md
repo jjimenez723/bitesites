@@ -227,6 +227,18 @@ Production outbound dialing should remain disabled until all of the following ar
 
 ## 10. Current access model
 
-The current operational release remains **admin-operated** because the existing console and outbound Firestore reads are admin-only. This supports the current small team by assigning the dialer users existing admin access.
+The repository supports least-privilege `outbound_rep` and
+`outbound_manager` roles. This branch adds campaign-level rep assignment:
+managers create campaigns and select which active sales reps may dial each
+one. Rep campaign queries require the rep UID in
+`allowedRepUids`; Firestore rules and the server's session-start and
+dial/refill checks enforce the same account and assignment boundary. Older
+campaigns with no assignments are manager-only until edited.
 
-The V2 backend state model is already rep-scoped by `userUid` and prevents one session from controlling another rep's calls. A future least-privilege `outbound_rep` / `outbound_manager` console role should be released only together with matching Firestore query/rule scoping; do not expose those backend role names in the UI before the read model is properly isolated.
+For human-led calls, terminal webhooks hold the next refill until the rep saves
+an outcome. `interested` disables auto-dial and opens a rep-composed email to
+the lead's stored address; email suppression and campaign/session ownership
+are checked server-side. The rep explicitly sends or skips the message and
+resumes dialing. These campaign-assignment and follow-up changes are not
+deployed until the owner authorizes their release and the verification steps
+above are completed.

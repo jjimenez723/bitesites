@@ -7,6 +7,7 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { defineSecret } from 'firebase-functions/params';
 import { FieldValue, Timestamp, getFirestore } from 'firebase-admin/firestore';
+import { createHash } from 'node:crypto';
 
 import {
   startDialerSession,
@@ -28,6 +29,7 @@ import {
 } from './accounts.js';
 import { assertDocumentAccountAccess, assertOutboundAccess, resolveAccountAccess } from './account-access.js';
 import { resolveCampaignOperatingLimits } from './outbound-compliance.js';
+import { buildLeadOutreachTemplate, buildMessage, sendPostmark } from './email.js';
 
 /**
  * A persona may only speak to the account its campaign serves.
@@ -56,6 +58,7 @@ const TWILIO_AUTH_TOKEN = defineSecret('TWILIO_AUTH_TOKEN');
 const TWILIO_TWIML_APP_SID = defineSecret('TWILIO_TWIML_APP_SID');
 const TWILIO_API_KEY_SID = defineSecret('TWILIO_API_KEY_SID');
 const TWILIO_API_KEY_SECRET = defineSecret('TWILIO_API_KEY_SECRET');
+const POSTMARK_SERVER_TOKEN = defineSecret('POSTMARK_SERVER_TOKEN');
 
 const HYBRID_SECRETS = [
   TWILIO_ACCOUNT_SID,
@@ -75,6 +78,16 @@ const requireId = (value, label) => {
   if (!result || !/^[A-Za-z0-9_-]+$/.test(result)) throw new HttpsError('invalid-argument', `A valid ${label} is required.`);
   return result;
 };
+
+function assertRepCampaignAssignment(role, uid, campaign) {
+  if (role === 'outbound_rep' && !(campaign?.allowedRepUids || []).includes(uid)) {
+    throw new HttpsError('permission-denied', 'A manager must assign this campaign to you before you can dial it.');
+  }
+}
+
+const normalizedEmail = value => clean(value, 200).toLowerCase();
+const emailKey = email => createHash('sha256').update(normalizedEmail(email)).digest('hex');
+const validEmail = value => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value);
 
 async function requireDialer(request) {
   if (!request.auth?.uid) throw new HttpsError('unauthenticated', 'Sign in first.');
@@ -153,6 +166,7 @@ export const startHybridDialerSession = onCall({ ...callOptions, secrets: HYBRID
   const campaign = { id: campaignId, ...campaignSnapshot.data() };
   try { assertDocumentAccountAccess(access, campaign, { resource: 'campaign' }); }
   catch (error) { throw new HttpsError('permission-denied', clean(error.message, 300)); }
+  assertRepCampaignAssignment(role, uid, campaign);
   const concurrency = resolveCampaignOperatingLimits({
     ...campaign,
     concurrency: Math.max(1, Math.min(5, Number(request.data?.concurrency) || 1))
@@ -194,10 +208,13 @@ export const startHybridDialerSession = onCall({ ...callOptions, secrets: HYBRID
     && role !== 'outbound_rep' && request.data?.autoTakeover === true;
   await db.doc(`dialerSessions/${sessionId}`).set({
     hybridV2: true,
+    userRole: role,
     concurrency,
     operatingMode,
     detachedAllowed: operatingMode === 'ai',
     autoDial: { enabled: false, state: 'idle', refillLeaseToken: '', refillLeaseUntil: null },
+    wrapUpPendingCallId: '',
+    pendingFollowUp: null,
     rep: { state: 'available', activeCallId: '', listeningCallId: '' },
     takeover: { autoEnabled: autoTakeover },
     agentProfileId: requestedProfileId,
@@ -348,7 +365,7 @@ export const setHybridConcurrency = onCall({ ...callOptions, secrets: HYBRID_SEC
 
 /** Start server-owned auto dialing at the session's configured concurrency. */
 export const dialHybridTargets = onCall({ ...callOptions, timeoutSeconds: 180, secrets: HYBRID_SECRETS }, async request => {
-  const { db, uid, access } = await requireDialer(request);
+  const { db, uid, role, access } = await requireDialer(request);
   const sessionId = requireId(request.data?.sessionId, 'session id');
   const session = await requireOwnedSession(db, sessionId, uid, access);
   if (session.hybridV2 !== true) throw new HttpsError('failed-precondition', 'This is not a Hybrid Dialer V2 session.');
@@ -362,6 +379,10 @@ export const dialHybridTargets = onCall({ ...callOptions, timeoutSeconds: 180, s
     );
   }
   if (session.status !== 'active') return { started: [], reason: `session_${session.status}`, verifiedState: 'blocked' };
+  if (session.wrapUpPendingCallId || session.pendingFollowUp?.status === 'awaiting_email'
+      || session.pendingFollowUp?.status === 'sending') {
+    throw new HttpsError('failed-precondition', 'Finish the last call’s outcome or interested-lead follow-up before dialing again.');
+  }
 
   const nonTerminal = [];
   for (const callId of (session.activeCallIds || []).slice(-20)) {
@@ -387,6 +408,11 @@ export const dialHybridTargets = onCall({ ...callOptions, timeoutSeconds: 180, s
   }
 
   const campaignSnapshot = await db.doc(`outboundCampaigns/${session.campaignId}`).get();
+  if (!campaignSnapshot.exists) throw new HttpsError('not-found', 'Campaign not found.');
+  const campaign = { id: campaignSnapshot.id, ...campaignSnapshot.data() };
+  try { assertDocumentAccountAccess(access, campaign, { resource: 'campaign' }); }
+  catch (error) { throw new HttpsError('permission-denied', clean(error.message, 300)); }
+  assertRepCampaignAssignment(role, uid, campaign);
   const providerId = campaignSnapshot.get('provider');
   if (providerId !== 'twilio') throw new HttpsError('failed-precondition', 'Hybrid V2 currently requires Twilio.');
 
@@ -546,13 +572,13 @@ export const saveHybridCallNotes = onCall(callOptions, async request => {
   return { ok: true };
 });
 
-export const submitHybridDisposition = onCall(callOptions, async request => {
+export const submitHybridDisposition = onCall({ ...callOptions, secrets: HYBRID_SECRETS }, async request => {
   const { db, uid, email, access } = await requireDialer(request);
   const callId = requireId(request.data?.callId, 'call id');
   const callSnapshot = await db.doc(`calls/${callId}`).get();
   if (!callSnapshot.exists) throw new HttpsError('not-found', 'Call not found.');
   const call = { id: callId, ...callSnapshot.data() };
-  await requireCallOperator(db, call, uid, access);
+  const session = await requireCallOperator(db, call, uid, access);
   const campaignSnapshot = await db.doc(`outboundCampaigns/${call.campaignId}`).get();
   const disposition = clean(request.data?.disposition, 40);
   const scheduleOnly = request.data?.scheduleOnly === true;
@@ -616,5 +642,236 @@ export const submitHybridDisposition = onCall(callOptions, async request => {
     callId, sessionId: call.sessionId, campaignId: call.campaignId,
     actorType: 'rep', actorId: uid, metadata: { disposition, followUpAt: followUpAtRaw }
   });
+  if (!scheduleOnly && session.hybridV2 === true) {
+    const sessionRef = db.doc(`dialerSessions/${session.id}`);
+    if (disposition === 'interested') {
+      const leadId = clean(result.leadId, 200);
+      if (!leadId) throw new HttpsError('failed-precondition', 'The interested contact could not be saved as a lead.');
+      const leadSnapshot = await db.doc(`leads/${leadId}`).get();
+      if (!leadSnapshot.exists) throw new HttpsError('failed-precondition', 'The interested lead could not be found.');
+      await sessionRef.set({
+        wrapUpPendingCallId: '',
+        pendingFollowUp: { callId, leadId, status: 'awaiting_email', campaignId: call.campaignId },
+        autoDial: { ...(session.autoDial || {}), enabled: false, state: 'paused_for_followup' },
+        updatedAt: FieldValue.serverTimestamp()
+      }, { merge: true });
+    } else {
+      await sessionRef.set({
+        ...(session.wrapUpPendingCallId === callId ? { wrapUpPendingCallId: '' } : {}),
+        updatedAt: FieldValue.serverTimestamp()
+      }, { merge: true });
+      if (session.status === 'active' && session.autoDial?.enabled === true) {
+        await maintainHybridCapacity(db, session.id, { providerConfig: twilioConfig(), actorId: uid })
+          .catch(error => console.error('[hybrid-capacity] disposition refill failed', clean(error?.message, 300)));
+      }
+    }
+  }
   return result;
+});
+
+/** Pause new calls immediately; an already-connected call is left untouched. */
+export const pauseHybridAutoDial = onCall(callOptions, async request => {
+  const { db, uid, access } = await requireDialer(request);
+  const sessionId = requireId(request.data?.sessionId, 'session id');
+  const session = await requireOwnedSession(db, sessionId, uid, access);
+  if (session.hybridV2 !== true) throw new HttpsError('failed-precondition', 'This is not a Hybrid Dialer V2 session.');
+  await db.doc(`dialerSessions/${sessionId}`).set({
+    autoDial: { ...(session.autoDial || {}), enabled: false, state: 'paused_by_rep' },
+    updatedAt: FieldValue.serverTimestamp()
+  }, { merge: true });
+  await recordCallAuditEvent(db, 'auto_dial_paused', {
+    sessionId, campaignId: session.campaignId, actorType: 'rep', actorId: uid,
+    metadata: { reason: 'rep_pause' }
+  });
+  return { ok: true, enabled: false };
+});
+
+/** Only resume after the pending disposition and any interested follow-up are handled. */
+export const resumeHybridAutoDial = onCall({ ...callOptions, secrets: HYBRID_SECRETS }, async request => {
+  const { db, uid, role, access } = await requireDialer(request);
+  const sessionId = requireId(request.data?.sessionId, 'session id');
+  const session = await requireOwnedSession(db, sessionId, uid, access);
+  if (session.hybridV2 !== true) throw new HttpsError('failed-precondition', 'This is not a Hybrid Dialer V2 session.');
+  if (session.wrapUpPendingCallId) {
+    throw new HttpsError('failed-precondition', 'Record the last call outcome before resuming.');
+  }
+  if (session.pendingFollowUp?.status === 'awaiting_email' || session.pendingFollowUp?.status === 'sending') {
+    throw new HttpsError('failed-precondition', 'Send the interested lead’s follow-up email or continue without one before resuming.');
+  }
+  const campaignSnapshot = await db.doc(`outboundCampaigns/${session.campaignId}`).get();
+  if (!campaignSnapshot.exists) throw new HttpsError('not-found', 'Campaign not found.');
+  const campaign = { id: campaignSnapshot.id, ...campaignSnapshot.data() };
+  try { assertDocumentAccountAccess(access, campaign, { resource: 'campaign' }); }
+  catch (error) { throw new HttpsError('permission-denied', clean(error.message, 300)); }
+  assertRepCampaignAssignment(role, uid, campaign);
+  if (campaign.status === 'paused' || campaign.status === 'cancelled') {
+    throw new HttpsError('failed-precondition', `This campaign is ${campaign.status}. Ask a manager to resume it before dialing.`);
+  }
+  await db.doc(`dialerSessions/${sessionId}`).set({
+    autoDial: { ...(session.autoDial || {}), enabled: true, state: 'starting', lastError: '' },
+    pendingFollowUp: null,
+    updatedAt: FieldValue.serverTimestamp()
+  }, { merge: true });
+  const result = await maintainHybridCapacity(db, sessionId, { providerConfig: twilioConfig(), actorId: uid });
+  await recordCallAuditEvent(db, 'auto_dial_resumed', {
+    sessionId, campaignId: session.campaignId, actorType: 'rep', actorId: uid,
+    metadata: { started: (result.started || []).length }
+  });
+  return { ok: true, enabled: true, started: result.started || [], reason: result.reason || '' };
+});
+
+async function requirePendingFollowUp(db, session, role, uid, access) {
+  const pending = session.pendingFollowUp || {};
+  if (!pending.callId || !pending.leadId || !['awaiting_email', 'sending', 'sent', 'skipped'].includes(pending.status)) {
+    throw new HttpsError('failed-precondition', 'There is no interested-call follow-up to open.');
+  }
+  const [callSnapshot, campaignSnapshot, leadSnapshot] = await Promise.all([
+    db.doc(`calls/${pending.callId}`).get(),
+    db.doc(`outboundCampaigns/${session.campaignId}`).get(),
+    db.doc(`leads/${pending.leadId}`).get()
+  ]);
+  if (!callSnapshot.exists || callSnapshot.get('disposition') !== 'interested'
+      || callSnapshot.get('sessionId') !== session.id
+      || callSnapshot.get('campaignId') !== session.campaignId
+      || (pending.campaignId && pending.campaignId !== session.campaignId)
+      || !campaignSnapshot.exists || !leadSnapshot.exists) {
+    throw new HttpsError('failed-precondition', 'The interested-call follow-up could not be verified.');
+  }
+  const campaign = { id: campaignSnapshot.id, ...campaignSnapshot.data() };
+  assertRepCampaignAssignment(role, uid, campaign);
+  const lead = leadSnapshot.data() || {};
+  try { assertDocumentAccountAccess(access, campaign, { resource: 'campaign' }); }
+  catch (error) { throw new HttpsError('permission-denied', clean(error.message, 300)); }
+  const leadAccountId = readAccountId(lead.accountId, { fallback: LEGACY_ACCOUNT_ID });
+  if (leadAccountId !== campaign.accountId || leadAccountId !== session.accountId) {
+    throw new HttpsError('permission-denied', 'The lead and campaign belong to different accounts.');
+  }
+  return { pending, campaign, call: { id: callSnapshot.id, ...callSnapshot.data() }, lead, leadRef: leadSnapshot.ref };
+}
+
+/** Return the server-resolved recipient for the rep's own pending interested lead. */
+export const getHybridFollowUpContext = onCall(callOptions, async request => {
+  const { db, uid, role, access } = await requireDialer(request);
+  const sessionId = requireId(request.data?.sessionId, 'session id');
+  const session = await requireOwnedSession(db, sessionId, uid, access);
+  const { pending, lead } = await requirePendingFollowUp(db, session, role, uid, access);
+  const email = normalizedEmail(lead.email);
+  const preference = validEmail(email) ? await db.doc(`emailPreferences/${emailKey(email)}`).get() : null;
+  return {
+    callId: pending.callId,
+    leadId: pending.leadId,
+    name: clean(lead.name, 120),
+    businessName: clean(lead.businessName, 200),
+    email,
+    emailAvailable: validEmail(email) && lead.doNotEmail !== true && preference?.get('transactionalBlocked') !== true,
+    emailBlockReason: !validEmail(email) ? 'missing_address'
+      : lead.doNotEmail === true ? 'do_not_email'
+        : preference?.get('transactionalBlocked') === true ? 'suppressed' : '',
+    status: pending.status
+  };
+});
+
+/** Send an explicitly composed follow-up to the lead's stored email address. */
+export const sendHybridFollowUpEmail = onCall(
+  { ...callOptions, secrets: [POSTMARK_SERVER_TOKEN], timeoutSeconds: 30 },
+  async request => {
+    const { db, uid, role, access } = await requireDialer(request);
+    const sessionId = requireId(request.data?.sessionId, 'session id');
+    const session = await requireOwnedSession(db, sessionId, uid, access);
+    const { pending, call, lead, leadRef } = await requirePendingFollowUp(db, session, role, uid, access);
+    const subject = clean(request.data?.subject, 200);
+    const message = typeof request.data?.message === 'string' ? request.data.message.trim().slice(0, 10000) : '';
+    const email = normalizedEmail(lead.email);
+    if (pending.status !== 'awaiting_email') throw new HttpsError('failed-precondition', 'This follow-up is already being sent or is complete.');
+    if (!subject || !message) throw new HttpsError('invalid-argument', 'Add an email subject and message before sending.');
+    if (!validEmail(email)) throw new HttpsError('failed-precondition', 'This lead does not have a valid email address.');
+    if (lead.doNotEmail === true) throw new HttpsError('failed-precondition', 'This lead is marked do not email.');
+    const preference = await db.doc(`emailPreferences/${emailKey(email)}`).get();
+    if (preference.get('transactionalBlocked') === true) {
+      throw new HttpsError('failed-precondition', 'Email delivery to this address is suppressed.');
+    }
+
+    const sessionRef = db.doc(`dialerSessions/${sessionId}`);
+    await db.runTransaction(async transaction => {
+      const latest = await transaction.get(sessionRef);
+      const current = latest.get('pendingFollowUp') || {};
+      if (latest.get('userUid') !== uid || current.callId !== call.id || current.status !== 'awaiting_email') {
+        throw new HttpsError('failed-precondition', 'This follow-up has already been handled.');
+      }
+      transaction.set(sessionRef, {
+        pendingFollowUp: { ...current, status: 'sending' },
+        updatedAt: FieldValue.serverTimestamp()
+      }, { merge: true });
+    });
+
+    const from = process.env.POSTMARK_FROM_EMAIL || 'BiteSites <jensy@bitesites.org>';
+    const stream = process.env.POSTMARK_MESSAGE_STREAM || 'outbound';
+    let result;
+    try {
+      result = await sendPostmark(POSTMARK_SERVER_TOKEN.value(), buildMessage({
+        from,
+        to: email,
+        template: buildLeadOutreachTemplate(),
+        variables: {
+          first_name: clean(lead.name, 120).split(/\s+/)[0] || 'there',
+          subject_line: subject,
+          headline: subject,
+          preheader: message.replace(/\s+/g, ' ').slice(0, 140),
+          message
+        },
+        stream,
+        tag: 'rep-call-follow-up'
+      }));
+    } catch (error) {
+      await sessionRef.set({
+        pendingFollowUp: { ...pending, status: 'awaiting_email' },
+        updatedAt: FieldValue.serverTimestamp()
+      }, { merge: true });
+      throw new HttpsError('internal', clean(error?.message, 300) || 'Could not send the follow-up email.');
+    }
+
+    // Delivery succeeded; a secondary CRM/audit problem must not invite a duplicate send.
+    await sessionRef.set({
+      pendingFollowUp: { ...pending, status: 'sent', sentAt: FieldValue.serverTimestamp(), sentBy: uid },
+      updatedAt: FieldValue.serverTimestamp()
+    }, { merge: true });
+    await Promise.all([
+      leadRef.set({ lastOutboundEmailAt: FieldValue.serverTimestamp(), lastOutboundEmailBy: uid }, { merge: true })
+        .catch(error => console.error('[hybrid-follow-up] lead update failed', clean(error?.message, 200))),
+      leadRef.collection('activities').add({
+        type: 'outbound_email_sent', callId: call.id, campaignId: session.campaignId,
+        actor: uid, recipientKey: emailKey(email), subject: clean(subject, 200),
+        createdAt: FieldValue.serverTimestamp()
+      }).catch(error => console.error('[hybrid-follow-up] activity log failed', clean(error?.message, 200))),
+      db.collection('emailDeliveries').add({
+        templateId: 'lead-follow-up', kind: 'lead-follow-up', recipientCount: 1,
+        recipientKey: emailKey(email), leadId: pending.leadId,
+        sentBy: uid, status: 'sent', postmark: [result.MessageID].filter(Boolean),
+        createdAt: FieldValue.serverTimestamp()
+      }).catch(error => console.error('[hybrid-follow-up] delivery log failed', clean(error?.message, 200)))
+    ]);
+    await recordCallAuditEvent(db, 'interested_follow_up_email_sent', {
+      callId: call.id, sessionId, campaignId: session.campaignId,
+      actorType: 'rep', actorId: uid, metadata: { recipientKey: emailKey(email) }
+    }).catch(error => console.error('[hybrid-follow-up] audit write failed', clean(error?.message, 200)));
+    return { ok: true, email, status: 'sent' };
+  }
+);
+
+/** Explicitly let a rep continue without sending the optional follow-up email. */
+export const skipHybridFollowUpEmail = onCall(callOptions, async request => {
+  const { db, uid, role, access } = await requireDialer(request);
+  const sessionId = requireId(request.data?.sessionId, 'session id');
+  const session = await requireOwnedSession(db, sessionId, uid, access);
+  const { pending } = await requirePendingFollowUp(db, session, role, uid, access);
+  if (pending.status !== 'awaiting_email') throw new HttpsError('failed-precondition', 'This follow-up is already being sent or is complete.');
+  await db.doc(`dialerSessions/${sessionId}`).set({
+    pendingFollowUp: { ...pending, status: 'skipped', skippedAt: FieldValue.serverTimestamp(), skippedBy: uid },
+    updatedAt: FieldValue.serverTimestamp()
+  }, { merge: true });
+  await recordCallAuditEvent(db, 'interested_follow_up_email_skipped', {
+    callId: pending.callId, sessionId, campaignId: session.campaignId,
+    actorType: 'rep', actorId: uid
+  });
+  return { ok: true, status: 'skipped' };
 });

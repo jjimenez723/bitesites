@@ -93,6 +93,14 @@ service cloud.firestore {
             && accountScope().hasAny([accountId]));
     }
 
+    function canReadOutboundCampaign(campaign) {
+      return canAccessOutboundAccount(campaign.accountId)
+        && (!isOutboundRep()
+            || ('allowedRepUids' in campaign
+                && campaign.allowedRepUids is list
+                && campaign.allowedRepUids.hasAny([request.auth.uid])));
+    }
+
     function isOwner(uid) {
       return isSignedIn() && request.auth.uid == uid;
     }
@@ -583,11 +591,11 @@ service cloud.firestore {
       // even here the callables own status and counts — a browser that could
       // set `status: running` would start dialing without the provider
       // capability check that createOutboundCampaign performs.
-      allow read: if canAccessOutboundAccount(resource.data.accountId);
+      allow read: if canReadOutboundCampaign(resource.data);
       allow create, update, delete: if false;
 
       match /events/{eventId} {
-        allow read: if canAccessOutboundAccount(get(/databases/$(database)/documents/outboundCampaigns/$(campaignId)).data.accountId);
+        allow read: if canReadOutboundCampaign(get(/databases/$(database)/documents/outboundCampaigns/$(campaignId)).data);
         allow write: if false;
       }
     }

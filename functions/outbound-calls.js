@@ -106,6 +106,12 @@ export function sanitizeCampaign(input = {}, { existing = null } = {}) {
     // than failing; `createCampaign` demands an explicit one, which is what
     // stops a new campaign from ever being ambiguous.
     accountId: readAccountId(input.accountId ?? existing?.accountId, { fallback: LEGACY_ACCOUNT_ID }),
+    // A rep can use a campaign only when a manager explicitly assigns it.
+    // Missing values on older campaign documents intentionally mean nobody.
+    allowedRepUids: [...new Set((Array.isArray(input.allowedRepUids) ? input.allowedRepUids : existing?.allowedRepUids || [])
+      .map(uid => clean(uid, 128))
+      .filter(uid => /^[A-Za-z0-9_-]+$/.test(uid)))]
+      .slice(0, 100),
     mode,
     provider,
     // Power and AI modes are one call at a time by definition; storing a higher
@@ -168,6 +174,18 @@ async function assertCampaignBindings(db, campaign) {
     // account. That makes it usable by BiteSites campaigns and refused by
     // every client campaign, which is the safe direction for the mistake.
     profileAccountId = readAccountId(snapshot.get('accountId'), { fallback: LEGACY_ACCOUNT_ID });
+  }
+
+  const repUids = campaign.allowedRepUids || [];
+  if (repUids.length) {
+    const roles = await db.getAll(...repUids.map(uid => db.doc(`roles/${uid}`)));
+    const invalid = roles.filter(snapshot => !snapshot.exists
+      || snapshot.get('role') !== 'outbound_rep'
+      || !Array.isArray(snapshot.get('accountIds'))
+      || !snapshot.get('accountIds').includes(campaign.accountId));
+    if (invalid.length) {
+      throw new Error('Every assigned teammate must be an active sales rep assigned to this campaign’s account.');
+    }
   }
 
   const verdict = checkAccountAlignment({
@@ -975,11 +993,26 @@ export async function dialNext(db, sessionId, {
   if (!sessionSnapshot.exists) throw new Error('Session not found');
   const session = { id: sessionId, ...sessionSnapshot.data() };
   if (session.status !== 'active') return { started: [], reason: `session_${session.status}` };
+  if (session.wrapUpPendingCallId || ['awaiting_email', 'sending'].includes(session.pendingFollowUp?.status)) {
+    return { started: [], reason: 'wrap_up_pending' };
+  }
   if (session.connectedCallId) return { started: [], reason: 'already_connected' };
 
   const campaignSnapshot = await db.doc(`outboundCampaigns/${session.campaignId}`).get();
   if (!campaignSnapshot.exists) throw new Error('Campaign not found');
   const campaign = readCampaign(campaignSnapshot, session.campaignId);
+  if (session.hybridV2 === true && session.userUid) {
+    const roleSnapshot = await db.doc(`roles/${session.userUid}`).get();
+    const currentRole = roleSnapshot.exists ? roleSnapshot.get('role') : session.userRole;
+    if (!currentRole) return { started: [], reason: 'session_role_unavailable' };
+    if (session.userRole && session.userRole !== currentRole) {
+      return { started: [], reason: 'rep_role_changed' };
+    }
+    if (currentRole === 'outbound_rep'
+        && !(campaign.allowedRepUids || []).includes(session.userUid)) {
+      return { started: [], reason: 'rep_not_assigned' };
+    }
+  }
   // Checked before the status so a halted campaign reports why it stopped
   // rather than the generic pause the breaker wrote on its way past.
   if (campaignSafetyLockEngaged(campaign)) {
@@ -1143,6 +1176,43 @@ export async function dialNext(db, sessionId, {
         rejectedByReason
       }
     };
+  }
+
+  // Research and compliance can take long enough for a manager to revoke a
+  // rep's assignment or for call wrap-up to begin. Recheck server-owned V2
+  // state immediately before contacting the carrier so that a late-running
+  // refill cannot slip a new call in after a pause or disposition hold.
+  if (session.hybridV2 === true) {
+    const latestSessionSnapshot = await sessionRef.get();
+    let blockedReason = !latestSessionSnapshot.exists ? 'session_missing' : '';
+    const latestSession = latestSessionSnapshot.exists ? latestSessionSnapshot.data() || {} : {};
+    if (!blockedReason && latestSession.status !== 'active') blockedReason = `session_${latestSession.status}`;
+    if (!blockedReason && (latestSession.wrapUpPendingCallId
+        || ['awaiting_email', 'sending'].includes(latestSession.pendingFollowUp?.status))) {
+      blockedReason = 'wrap_up_pending';
+    }
+    if (!blockedReason && latestSession.autoDial?.enabled !== true) blockedReason = 'auto_dial_disabled';
+
+    const latestCampaignSnapshot = blockedReason ? null : await db.doc(`outboundCampaigns/${session.campaignId}`).get();
+    if (!blockedReason && !latestCampaignSnapshot?.exists) blockedReason = 'campaign_missing';
+    const latestCampaign = latestCampaignSnapshot?.exists
+      ? readCampaign(latestCampaignSnapshot, session.campaignId) : null;
+    if (!blockedReason && campaignSafetyLockEngaged(latestCampaign)) blockedReason = 'campaign_safety_lock';
+    if (!blockedReason && ['paused', 'cancelled'].includes(latestCampaign.status)) {
+      blockedReason = `campaign_${latestCampaign.status}`;
+    }
+    if (!blockedReason && session.userUid) {
+      const latestRoleSnapshot = await db.doc(`roles/${session.userUid}`).get();
+      const currentRole = latestRoleSnapshot.exists ? latestRoleSnapshot.get('role') : session.userRole;
+      if (!currentRole) blockedReason = 'session_role_unavailable';
+      else if (session.userRole && session.userRole !== currentRole) blockedReason = 'rep_role_changed';
+      else if (currentRole === 'outbound_rep'
+          && !(latestCampaign.allowedRepUids || []).includes(session.userUid)) blockedReason = 'rep_not_assigned';
+    }
+    if (blockedReason) {
+      for (const target of claimedTargets) await releaseTarget(db, target.id, { state: 'ready' });
+      return { started: [], rejected, reason: blockedReason };
+    }
   }
 
   // Dial. A provider failure releases the legs it did claim — a locked target

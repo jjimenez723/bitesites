@@ -85,7 +85,7 @@ export default function OutboundCalls({ role = 'admin', currentUid = '' }) {
 
   const accountIds = config.data?.accountIds || [];
   const allAccounts = config.data?.allAccounts === true || role === 'admin';
-  const campaigns = useCampaigns(accountIds, allAccounts);
+  const campaigns = useCampaigns(accountIds, allAccounts, role, currentUid);
 
   const setTab = useCallback(next => {
     if (!visibleTabs.some(([key]) => key === next)) return;
@@ -295,6 +295,8 @@ export default function OutboundCalls({ role = 'admin', currentUid = '' }) {
             <QuickDial
               campaignId={campaignId}
               campaigns={campaigns.rows}
+              campaignsLoading={campaigns.loading}
+              role={role}
               onSelectCampaign={setCampaignId}
               onOpenAdvanced={() => setDialerAdvanced(true)}
             />

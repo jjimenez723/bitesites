@@ -1,11 +1,30 @@
 {
   "indexes": [
     {
+      "//": "Campaign manager rep picker: only active reps assigned to the selected account.",
+      "collectionGroup": "roles",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "role", "order": "ASCENDING" },
+        { "fieldPath": "accountIds", "arrayConfig": "CONTAINS" }
+      ]
+    },
+    {
       "//": "Account-scoped campaign list for managers and reps.",
       "collectionGroup": "outboundCampaigns",
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "accountId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "//": "Campaigns explicitly assigned to an account-scoped rep.",
+      "collectionGroup": "outboundCampaigns",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "accountId", "order": "ASCENDING" },
+        { "fieldPath": "allowedRepUids", "arrayConfig": "CONTAINS" },
         { "fieldPath": "createdAt", "order": "DESCENDING" }
       ]
     },

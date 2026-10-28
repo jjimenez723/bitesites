@@ -5,6 +5,7 @@ import { createVoiceSession } from './voice-session';
 let devicePromise = null;
 
 const deviceIsDestroyed = device => device?.state === 'destroyed';
+const destroyedDeviceError = error => /device.{0,40}destroyed|destroyed.{0,40}device/i.test(error?.message || '');
 
 function forgetDevice(device) {
   const pending = devicePromise;
@@ -36,13 +37,19 @@ async function buildDevice() {
       }
       device.updateToken(token);
     } catch (error) {
-      if (deviceIsDestroyed(device)) forgetDevice(device);
-      else voice.deviceError(error);
+      if (deviceIsDestroyed(device) || destroyedDeviceError(error)) {
+        forgetDevice(device);
+        voice.deviceError(new Error('Call audio disconnected. Tap Reconnect audio to try again.'));
+      } else voice.deviceError(error);
     }
   });
   device.on('destroyed', () => forgetDevice(device));
   device.on('error', error => {
-    if (deviceIsDestroyed(device)) forgetDevice(device);
+    if (deviceIsDestroyed(device) || destroyedDeviceError(error)) {
+      forgetDevice(device);
+      voice.deviceError(new Error('Call audio disconnected. Tap Reconnect audio to try again.'));
+      return;
+    }
     voice.deviceError(error);
   });
   return device;
@@ -93,7 +100,7 @@ const voice = createVoiceSession({
     try {
       device.updateToken(token);
     } catch (error) {
-      if (!deviceIsDestroyed(device)) throw error;
+      if (!deviceIsDestroyed(device) && !destroyedDeviceError(error)) throw error;
       forgetDevice(device);
       device = await hybridVoiceDevice();
       if (deviceIsDestroyed(device)) {

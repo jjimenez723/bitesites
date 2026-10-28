@@ -3,8 +3,12 @@
 Working document for `OUTBOUND_COMPLETION_GOAL_SPEC.md`. One short entry per
 checkpoint: what changed, what proves it, what is left, and who is blocking.
 
-**Branch:** `feat/outbound-readiness-closeout`
-**Baseline commit:** `925697f9b62711decaf46c37d4e76e9b5026d060` (`main`)
+**Current follow-up branch:** `feat/rep-campaign-access-followup-pause`
+**Current base:** `221fba8` (`main`, destroyed Twilio device recovery)
+
+The checkpoints below document the original outbound-readiness branch. The
+2026-10-27 follow-up continues that work from the current `main` head; the old
+baseline and worktree notes in those checkpoints are historical.
 
 Unrelated uncommitted work was present on `main` at branch time and is being
 left alone: admin-UI accessibility edits across `src/admin/` plus the untracked
@@ -416,3 +420,37 @@ present.
 **Production:** Hosting deployment is pending; the GHL read-only audit callable
 from PR #3 is already deployed to `bitesites-org`. The PR #4 changes affect
 Hosting assets only and do not deploy or change dialing functions.
+
+## Checkpoint 7 — rep assignments, interested follow-up, and mobile recovery
+
+> **🚧 IN PROGRESS** — 2026-10-27 — PR #5 CI and production release — `functions/outbound-calls.test.mjs`, `OUTBOUND_COMPLETION_PROGRESS.md`, `OUTBOUND_PRODUCTION_READINESS.md`, `OUTBOUND_OWNER_CHECKLIST.md`
+
+**Changes:** Managers can assign an account's active sales reps to each
+campaign and set their display names. Rep campaign queries, Firestore reads,
+session creation, and dial/refill paths enforce assignment. Human call wrap-up
+holds auto-dial for an outcome; `interested` pauses the session while the rep
+composes a follow-up to the lead's stored email, then chooses send or skip and
+explicitly resumes. The terminal webhook now writes its wrap-up hold
+transactionally, the email composer waits for verified contact context, and
+the mobile audio status has an explicit grid row. Destroyed Twilio devices
+show a reconnect prompt and are recreated on retry. The manager callables are
+re-exported from the deployed Functions entrypoint, and the rep picker queries
+the chosen account directly. The Hybrid release manifest now targets all seven
+new callable endpoints as well as Hosting and Firestore.
+
+**Evidence:** branch `feat/rep-campaign-access-followup-pause` is based on
+`221fba8` (`main`). `Outbound AI CI / validate` passed on `7d673e2`, including
+the full repository suite, Functions check, and sideband check. The release
+preflights pass with `OUTBOUND_EXTERNAL_DIALING=disabled` and
+`PAID_PHONE_SCREENING=disabled`; the Hybrid secret names and sideband service
+are present in `bitesites-org`. A local emulator run did not complete because
+it stalled downloading Firestore emulator 1.22.0; CI supplies the passing
+full-suite evidence. Vite reported its existing mixed static/dynamic Firebase
+import and large-chunk warnings.
+
+**Release authorization:** the owner explicitly authorized merging PR #5 and
+deploying this follow-up to production on 2026-10-27. Merge and deployment are
+pending. No production profiles, roles, campaign assignments, or dialer records
+have been changed by this release. Alex's display name can be entered by a
+manager from Campaign Builder; the temporary Bergen test account remains
+`Jensy Jimenez` and remains an `outbound_rep`.

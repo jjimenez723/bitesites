@@ -1143,6 +1143,25 @@ export const recordHybridCallEvent = onRequest({
     await callRef.set({ status: event.type === 'cancelled' ? 'cancelled' : 'completed', endedAt: stamp }, { merge: true });
     const campaignSnapshot = call.campaignId ? await db.doc(`outboundCampaigns/${call.campaignId}`).get() : null;
     const campaign = campaignSnapshot?.exists ? { id: campaignSnapshot.id, ...campaignSnapshot.data() } : null;
+    // A human-handled call needs a disposition before the next prospect starts.
+    // Record the hold before capacity maintenance runs so a terminal webhook
+    // cannot race the rep's choice of "interested" and place another call.
+    if (call.hybridV2 === true && call.humanHandled === true) {
+      const sessionRef = db.doc(`dialerSessions/${call.sessionId}`);
+      await db.runTransaction(async transaction => {
+        const [latestCall, latestSession] = await Promise.all([
+          transaction.get(callRef), transaction.get(sessionRef)
+        ]);
+        if (!latestCall.exists || !latestSession.exists || latestCall.get('disposition')) return;
+        const pendingFollowUp = latestSession.get('pendingFollowUp') || {};
+        if (pendingFollowUp.callId === call.id) return;
+        transaction.set(sessionRef, {
+          wrapUpPendingCallId: call.id,
+          autoDial: { ...(latestSession.get('autoDial') || {}), state: 'awaiting_disposition' },
+          updatedAt: FieldValue.serverTimestamp()
+        }, { merge: true });
+      });
+    }
     await applyDisposition(db, {
       targetId: call.targetId,
       callId: call.id,
