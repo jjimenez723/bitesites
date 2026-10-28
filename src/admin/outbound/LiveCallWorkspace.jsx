@@ -239,7 +239,7 @@ export default function LiveCallWorkspace({
       ]);
       return;
     }
-    const result = await action.run(() => outbound.listTransferAgents());
+    const result = await action.run(() => outbound.listTransferAgents(call.campaignId));
     if (result?.agents) setTransferAgents(result.agents);
   };
 

@@ -33,6 +33,7 @@ stranger, or relying on outside approval.
 | Screening evidence can be produced from the console | ✅ 2026-08-25 — the callable existed with no client, so the evidence the dial gate demands had no way to come into existence outside a test |
 | A simulated screening provider cannot write production evidence | ✅ 2026-08-25 — it could until then, and nothing downstream could tell the difference |
 | No-dial eligibility audit reusing the runtime gates | ✅ proven stricter than the dial path, proven side-effect free |
+| Mandatory sales-rep role-play and post-pass default campaign access | ✅ implemented locally 2026-10-28; not deployed; release approval still required |
 | Live-model evaluation adapter, guarded and fake-adapter tested | ✅ built; **not run** |
 | Readiness documents agree with the code | ✅ this pass |
 
@@ -110,6 +111,18 @@ authorized running Twilio campaign. Other Twilio campaigns were paused. The
 manager assignment workflow is live; a manager must assign a salesperson in
 Campaign Builder before they can dial. No call was placed and no production
 campaign, rep, or role record was changed.
+
+**Pending local release — 2026-10-28:** mandatory AI role-play training now
+gates campaign reads, call history, calendar entries, warm transfers, browser
+softphone joins, and human dialing at the server and Firestore-rule layers.
+Reps can pass three seller-specific practice scenarios before a default is
+chosen; passing records training completion but grants no lead access until a
+manager selects a default campaign, which then auto-assigns trained reps. The
+practice uses fictional adults and no real leads or carrier calls. The server
+scores a transcript submitted by the browser; it does not independently verify
+the speaker or transcript. No default is configured in production, and these
+changes have not been deployed. The release needs action-specific owner
+approval.
 
 The following notes preserve dated production findings so their historical
 context stays clear alongside the current deployment state.

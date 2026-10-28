@@ -130,10 +130,24 @@ The authorized running Twilio campaign has no reps assigned yet; all other
 Twilio campaigns remain paused. No active sessions or calls were present during
 the activation.
 
+**Mandatory rep training and default assignment — local implementation only,
+2026-10-28:** the current work adds fictional, browser-only AI prospect role-
+plays, a scored three-scenario course per seller, a manager control for the
+account default campaign, and server/rules gates that grant campaign access
+only after both training passes and a manager selects a campaign. Reps can
+complete training before a default exists; a later default selection
+auto-assigns trained reps. It also fixes the destroyed Twilio Device token
+race and mobile live-call status layout. This work is not deployed. Production
+has no configured outbound default campaign, no training completion records,
+and no role/profile data was changed. Until an explicitly approved release
+deploys the code, the current production human dialing behavior remains in
+effect.
+
 | Boundary | Current implementation / production state |
 |---|---|
 | Seller separation | Campaigns, profiles, knowledge, research, calls, targets, sessions, and appointments are seller-account bound. Stored role records override stale claims. |
-| Rep campaign access | **Deployed 2026-10-27.** Managers can assign active reps to each campaign and set display names. Rep campaign queries are filtered by UID, and session start and dial/refill paths re-check both role scope and assignment. |
+| Mandatory rep training and default campaign | **Implemented locally; not deployed.** Three fictional adult-prospect scenarios per seller are practiced in browser-only Realtime sessions. The browser submits the transcript for server-side scoring; score and eligibility are stored server-side, but the transcript is not retained or independently authenticated, so this is a required practice gate rather than an identity-proof exam. Reps may complete the course before a default exists; the server records the pass, but grants no lead access until a manager selects a valid default campaign, which auto-assigns already-trained reps. Firestore rules and call/refill APIs enforce both the pass and assigned-campaign scope. No live default is selected. Production deploy needs a separate action-specific approval. |
+| Rep campaign access | **Base manager assignment is deployed 2026-10-27.** This local release further limits Firestore reads, call history, warm transfers, and appointments to the campaigns assigned to a trained rep, and checks transfer/softphone entry against that assignment. These tighter rules are not deployed yet. |
 | Human wrap-up | **Deployed 2026-10-27.** A terminal human-handled call holds capacity until the rep records an outcome. `interested` pauses auto-dial until the rep sends or skips a composed email to the lead's stored address and explicitly resumes. Authenticated production rehearsal remains outstanding. |
 | Consent | Imported consent-like fields are evidence candidates only. AI admission requires an active, server-issued, seller- and number-specific written-consent grant. Revocation and expiry fail closed. |
 | Recording | Disabled at campaign sanitization and carrier call creation. |

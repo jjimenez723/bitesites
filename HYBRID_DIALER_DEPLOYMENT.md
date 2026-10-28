@@ -21,7 +21,7 @@ When `TWILIO_ACCOUNT_SID` and `TWILIO_AUTH_TOKEN` are supplied and no browser ke
 
 For example, export the values in your current terminal (do not save this command in shell history), run `npm run configure:hybrid`, and then unset them. The command is incremental: existing secrets remain in place and only supplied values receive a new version.
 
-The deploy command targets only the Hybrid V2 Functions plus Hosting and Firestore. It does not redeploy unrelated legacy Kixie, discovery, email, or lifecycle functions, so those providers do not need to be reconfigured for this release.
+The deploy command targets the Hybrid V2 Functions plus Hosting and Firestore, including the new training and default-campaign callables. It does not redeploy unrelated legacy Kixie, email, or lifecycle functions, so those providers do not need to be reconfigured for this release.
 During Firebase analysis, the command temporarily selects `functions/hybrid-index.js` and always restores the normal package entrypoint in a `finally` block.
 The Cloud Run phase creates or reuses a dedicated `bitesites-sideband` service account and grants it access only to the three sideband secrets.
 

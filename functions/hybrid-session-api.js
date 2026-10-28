@@ -85,6 +85,29 @@ function assertRepCampaignAssignment(role, uid, campaign) {
   }
 }
 
+async function assertRepTrainingPassed(db, uid, role, accountId) {
+  if (role !== 'outbound_rep') return;
+  const roleSnapshot = await db.doc(`roles/${uid}`).get();
+  const passedAccounts = roleSnapshot.get('trainingPassedAccountIds');
+  if (!Array.isArray(passedAccounts) || !passedAccounts.includes(accountId)) {
+    throw new HttpsError('failed-precondition', 'Pass the required sales practice course before accessing campaign leads or dialing.');
+  }
+}
+
+async function assertRepCampaignAccess(db, uid, role, campaignId, accountId) {
+  if (role !== 'outbound_rep') return;
+  const campaignSnapshot = campaignId
+    ? await db.doc(`outboundCampaigns/${campaignId}`).get()
+    : null;
+  if (!campaignSnapshot?.exists
+      || readAccountId(campaignSnapshot.get('accountId'), { fallback: LEGACY_ACCOUNT_ID })
+        !== readAccountId(accountId, { fallback: LEGACY_ACCOUNT_ID })) {
+    throw new HttpsError('permission-denied', 'This session is not linked to an available campaign in your seller account.');
+  }
+  assertRepCampaignAssignment(role, uid, campaignSnapshot.data());
+  await assertRepTrainingPassed(db, uid, role, readAccountId(accountId, { fallback: LEGACY_ACCOUNT_ID }));
+}
+
 const normalizedEmail = value => clean(value, 200).toLowerCase();
 const emailKey = email => createHash('sha256').update(normalizedEmail(email)).digest('hex');
 const validEmail = value => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value);
@@ -100,13 +123,17 @@ async function requireDialer(request) {
   }
 }
 
-async function requireOwnedSession(db, sessionId, uid, access) {
+async function requireOwnedSession(db, sessionId, uid, access, { allowUntrained = false } = {}) {
   const snapshot = await db.doc(`dialerSessions/${sessionId}`).get();
   if (!snapshot.exists) throw new HttpsError('not-found', 'Session not found.');
   try { assertDocumentAccountAccess(access, snapshot.data() || {}, { resource: 'dialer session' }); }
   catch (error) { throw new HttpsError('permission-denied', clean(error.message, 300)); }
   if (snapshot.get('userUid') !== uid) throw new HttpsError('permission-denied', 'That session belongs to another rep.');
-  return { id: sessionId, ...snapshot.data() };
+  const session = { id: sessionId, ...snapshot.data() };
+  if (!allowUntrained) {
+    await assertRepCampaignAccess(db, uid, access.role, session.campaignId, session.accountId);
+  }
+  return session;
 }
 
 async function requireCallOperator(db, call, uid, access) {
@@ -121,6 +148,7 @@ async function requireCallOperator(db, call, uid, access) {
   if (!originalOperator && !transferredOperator) {
     throw new HttpsError('permission-denied', 'You are not the active operator for this call.');
   }
+  await assertRepCampaignAccess(db, uid, access.role, call.campaignId, call.accountId);
   return { id: call.sessionId, ...snapshot.data() };
 }
 
@@ -138,11 +166,13 @@ function twilioConfig() {
 
 /** Restore the active server session after a tab switch, navigation or reload. */
 export const getActiveHybridDialerSession = onCall(callOptions, async request => {
-  const { db, uid, access } = await requireDialer(request);
+  const { db, uid, role, access } = await requireDialer(request);
   const session = await findActiveDialerSession(db, uid, { hybridOnly: true });
   if (!session) return { session: null };
   try { assertDocumentAccountAccess(access, session, { resource: 'dialer session' }); }
   catch (error) { return { session: null }; }
+  try { await assertRepTrainingPassed(db, uid, role, session.accountId); }
+  catch { return { session: null }; }
   return {
     session: {
       sessionId: session.id,
@@ -167,6 +197,7 @@ export const startHybridDialerSession = onCall({ ...callOptions, secrets: HYBRID
   try { assertDocumentAccountAccess(access, campaign, { resource: 'campaign' }); }
   catch (error) { throw new HttpsError('permission-denied', clean(error.message, 300)); }
   assertRepCampaignAssignment(role, uid, campaign);
+  await assertRepTrainingPassed(db, uid, role, campaign.accountId);
   const concurrency = resolveCampaignOperatingLimits({
     ...campaign,
     concurrency: Math.max(1, Math.min(5, Number(request.data?.concurrency) || 1))
@@ -369,6 +400,7 @@ export const dialHybridTargets = onCall({ ...callOptions, timeoutSeconds: 180, s
   const sessionId = requireId(request.data?.sessionId, 'session id');
   const session = await requireOwnedSession(db, sessionId, uid, access);
   if (session.hybridV2 !== true) throw new HttpsError('failed-precondition', 'This is not a Hybrid Dialer V2 session.');
+  await assertRepTrainingPassed(db, uid, role, session.accountId);
   // A session without an explicit mode routes as Hybrid inside `routeDecision`,
   // which silently puts the rep on the first answered call. Sessions started
   // before calling modes existed must be replaced, not guessed at.
@@ -455,7 +487,7 @@ export const dialHybridTargets = onCall({ ...callOptions, timeoutSeconds: 180, s
 export const stopHybridDialerSession = onCall({ ...callOptions, secrets: HYBRID_SECRETS }, async request => {
   const { db, uid, access } = await requireDialer(request);
   const sessionId = requireId(request.data?.sessionId, 'session id');
-  const session = await requireOwnedSession(db, sessionId, uid, access);
+  const session = await requireOwnedSession(db, sessionId, uid, access, { allowUntrained: true });
   await db.doc(`dialerSessions/${sessionId}`).set({
     autoDial: { ...(session.autoDial || {}), enabled: false, state: 'stopped' },
     updatedAt: FieldValue.serverTimestamp()
@@ -673,7 +705,7 @@ export const submitHybridDisposition = onCall({ ...callOptions, secrets: HYBRID_
 export const pauseHybridAutoDial = onCall(callOptions, async request => {
   const { db, uid, access } = await requireDialer(request);
   const sessionId = requireId(request.data?.sessionId, 'session id');
-  const session = await requireOwnedSession(db, sessionId, uid, access);
+  const session = await requireOwnedSession(db, sessionId, uid, access, { allowUntrained: true });
   if (session.hybridV2 !== true) throw new HttpsError('failed-precondition', 'This is not a Hybrid Dialer V2 session.');
   await db.doc(`dialerSessions/${sessionId}`).set({
     autoDial: { ...(session.autoDial || {}), enabled: false, state: 'paused_by_rep' },
@@ -691,6 +723,7 @@ export const resumeHybridAutoDial = onCall({ ...callOptions, secrets: HYBRID_SEC
   const { db, uid, role, access } = await requireDialer(request);
   const sessionId = requireId(request.data?.sessionId, 'session id');
   const session = await requireOwnedSession(db, sessionId, uid, access);
+  await assertRepTrainingPassed(db, uid, role, session.accountId);
   if (session.hybridV2 !== true) throw new HttpsError('failed-precondition', 'This is not a Hybrid Dialer V2 session.');
   if (session.wrapUpPendingCallId) {
     throw new HttpsError('failed-precondition', 'Record the last call outcome before resuming.');

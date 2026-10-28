@@ -75,6 +75,9 @@ export default function CampaignBuilder({ providers = [], campaign = null, onSav
   const [salesReps, setSalesReps] = useState([]);
   const [salesRepsLoading, setSalesRepsLoading] = useState(false);
   const [salesRepsError, setSalesRepsError] = useState('');
+  const [accountDefaultCampaign, setAccountDefaultCampaign] = useState(null);
+  const [defaultCampaignLoading, setDefaultCampaignLoading] = useState(false);
+  const [defaultCampaignError, setDefaultCampaignError] = useState('');
   const [repNameDrafts, setRepNameDrafts] = useState({});
   const action = useAction();
   const set = (key, value) => setForm(current => ({ ...current, [key]: value }));
@@ -135,6 +138,23 @@ export default function CampaignBuilder({ providers = [], campaign = null, onSav
     return () => { cancelled = true; };
   }, [form.accountId]);
 
+  useEffect(() => {
+    let cancelled = false;
+    if (!form.accountId) {
+      setAccountDefaultCampaign(null);
+      setDefaultCampaignError('');
+      setDefaultCampaignLoading(false);
+      return undefined;
+    }
+    setDefaultCampaignLoading(true);
+    setDefaultCampaignError('');
+    outbound.getDefaultCampaign(form.accountId)
+      .then(result => { if (!cancelled) setAccountDefaultCampaign(result?.campaign || null); })
+      .catch(error => { if (!cancelled) setDefaultCampaignError(error?.message || 'Could not load the default campaign.'); })
+      .finally(() => { if (!cancelled) setDefaultCampaignLoading(false); });
+    return () => { cancelled = true; };
+  }, [form.accountId, campaign?.id]);
+
   // Only this account's personas are offerable. The server refuses the rest
   // anyway; showing them invites the operator to pick one and read the refusal
   // as a bug rather than as the boundary working.
@@ -190,6 +210,12 @@ export default function CampaignBuilder({ providers = [], campaign = null, onSav
     return result;
   }, 'Sales rep name saved.');
 
+  const toggleDefaultCampaign = enabled => action.run(async () => {
+    const result = await outbound.setDefaultCampaign(form.accountId, enabled ? campaign.id : '');
+    setAccountDefaultCampaign(result?.campaign || null);
+    return result;
+  }, enabled ? 'Default campaign saved. Reps receive it after passing training.' : 'Default campaign cleared.');
+
   return (
     <div className="admin-card">
       <div className="card-head">
@@ -242,11 +268,14 @@ export default function CampaignBuilder({ providers = [], campaign = null, onSav
                           <input
                             type="checkbox"
                             checked={(form.allowedRepUids || []).includes(rep.uid)}
+                            disabled={action.busy || (!rep.trainingPassed && !(form.allowedRepUids || []).includes(rep.uid))}
                             onChange={event => set('allowedRepUids', event.target.checked
                               ? [...new Set([...(form.allowedRepUids || []), rep.uid])]
                               : (form.allowedRepUids || []).filter(uid => uid !== rep.uid))}
                           />
-                          <span>{rep.name}{rep.email ? <small>{rep.email}</small> : null}</span>
+                          <span>{rep.name}{rep.email ? <small>{rep.email}</small> : null}
+                            <small>{rep.trainingPassed ? 'Training passed' : 'Required training not passed'}</small>
+                          </span>
                         </label>
                         <div className="outbound-rep-name-editor">
                           <input aria-label={`Display name for ${rep.email || rep.uid}`}
@@ -263,9 +292,30 @@ export default function CampaignBuilder({ providers = [], campaign = null, onSav
                       </div>
                     ))}
                   </div>
-                ) : <small>No BiteSites sales reps are assigned to this account yet.</small>}
-            <small>Only checked reps can see this campaign in their dialer or start a session. New campaigns start with no reps assigned.</small>
+                ) : <small>No sales reps are assigned to this account yet.</small>}
+            <small>Only checked reps who passed training can see this campaign or start a session. New campaigns start with no reps assigned.</small>
           </fieldset>
+
+          {campaign?.id && form.accountId && (
+            <div className="full outbound-default-campaign">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={accountDefaultCampaign?.id === campaign.id}
+                  disabled={action.busy || defaultCampaignLoading}
+                  onChange={event => toggleDefaultCampaign(event.target.checked)}
+                />
+                <span>Default campaign for new sales reps</span>
+              </label>
+              <small>
+                {defaultCampaignLoading ? 'Checking account default…'
+                  : accountDefaultCampaign && accountDefaultCampaign.id !== campaign.id
+                    ? `Current default: ${accountDefaultCampaign.name}. Choose this campaign to replace it.`
+                    : 'New reps receive this campaign’s access only after passing all required training scenarios.'}
+              </small>
+              {defaultCampaignError && <small className="admin-error">{defaultCampaignError}</small>}
+            </div>
+          )}
 
           <label>
             <span>Mode</span>

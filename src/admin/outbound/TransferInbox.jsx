@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { outbound, useAction, useIncomingHybridTransfers, useLiveDoc } from './data';
+import { outbound, useAction, useIncomingHybridTransfers } from './data';
 import { joinHybridCall, leaveHybridVoice, prepareHybridVoice } from './voice-client';
 import LiveCallWorkspace from './LiveCallWorkspace';
 
@@ -15,7 +15,6 @@ export default function TransferInbox({ currentUid, accountIds = [], allAccounts
     .sort((a, b) => Number(b.staffTransfer?.state === 'requested') - Number(a.staffTransfer?.state === 'requested')),
   [transfers.rows]);
   const call = live.find(entry => entry.id === workspaceCallId) || null;
-  const session = useLiveDoc(call?.sessionId ? `dialerSessions/${call.sessionId}` : '').data;
   const pending = live[0] || null;
 
   const join = async (entry, accept = false) => {
@@ -75,7 +74,7 @@ export default function TransferInbox({ currentUid, accountIds = [], allAccounts
       {call && (
         <LiveCallWorkspace
           call={call}
-          session={session}
+          session={null}
           participationMode="assist"
           onClose={() => { leaveHybridVoice(); setWorkspaceCallId(''); }}
           onDisposition={disposition}

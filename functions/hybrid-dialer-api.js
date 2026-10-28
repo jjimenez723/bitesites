@@ -27,7 +27,7 @@ import { buildAgentPreviewRuntime, mintAgentPreviewClientSecret } from './agent-
 import { applyDisposition, cancelLosingLegs, markDoNotCall } from './outbound-calls.js';
 import { getCallingProvider } from './providers/calling/index.js';
 import { clean } from './prospect-normalization.js';
-import { LEGACY_ACCOUNT_ID, requireAccountId, readAccountId } from './accounts.js';
+import { LEGACY_ACCOUNT_ID, requireAccountId, readAccountId, getAccount } from './accounts.js';
 import { assertAccountAccess, assertDocumentAccountAccess, assertOutboundAccess, normalizeAccountScope, resolveAccountAccess } from './account-access.js';
 import { maintainHybridCapacity } from './hybrid-capacity.js';
 import { hybridOutboundEventsUrl } from './hybrid-urls.js';
@@ -35,6 +35,10 @@ import { validHybridTwilioRequest } from './hybrid-twilio-signature.js';
 import { hybridCallProgress } from './hybrid-call-progress.js';
 import { aiMediaAttachDeadline, failClosedAIMediaAttachment, isAIMediaAttachPending } from './hybrid-media-failsafe.js';
 import { externalDialingAdmission } from './deployment-environment.js';
+import {
+  buildRepTrainingSession, evaluateRepTrainingTranscript, nextRepTrainingScenario,
+  publicTrainingScenario, repTrainingScenarios
+} from './rep-training.js';
 
 export const HYBRID_TWILIO_ACCOUNT_SID = defineSecret('TWILIO_ACCOUNT_SID');
 export const HYBRID_TWILIO_AUTH_TOKEN = defineSecret('TWILIO_AUTH_TOKEN');
@@ -145,13 +149,61 @@ async function requireDialer(request, { manageAgents = false } = {}) {
   }
 }
 
+const repTrainingProgressId = (uid, accountId) =>
+  createHash('sha256').update(`${clean(uid, 160)}:${clean(accountId, 80)}`).digest('hex');
+
+async function requireRepTrainingPassed(db, uid, accountId) {
+  const roleSnapshot = await db.doc(`roles/${uid}`).get();
+  const passedAccounts = roleSnapshot.get('trainingPassedAccountIds');
+  if (roleSnapshot.get('role') !== 'outbound_rep'
+      || !Array.isArray(passedAccounts)
+      || !passedAccounts.includes(accountId)) {
+    throw new HttpsError('failed-precondition', 'Pass the required sales practice course before accessing campaign leads or dialing.');
+  }
+}
+
+function assertRepCampaignAssignment(role, uid, campaign) {
+  if (role === 'outbound_rep' && !(campaign?.allowedRepUids || []).includes(uid)) {
+    throw new HttpsError('permission-denied', 'A manager must assign this campaign to you before you can dial it.');
+  }
+}
+
+async function repCanAccessCampaign(db, uid, roleSnapshot, campaignId, accountId) {
+  const account = readAccountId(accountId, { fallback: LEGACY_ACCOUNT_ID });
+  if (roleSnapshot.get('role') !== 'outbound_rep'
+      || !Array.isArray(roleSnapshot.get('trainingPassedAccountIds'))
+      || !roleSnapshot.get('trainingPassedAccountIds').includes(account)) return false;
+  const campaignSnapshot = campaignId
+    ? await db.doc(`outboundCampaigns/${campaignId}`).get()
+    : null;
+  return Boolean(campaignSnapshot?.exists
+    && readAccountId(campaignSnapshot.get('accountId'), { fallback: LEGACY_ACCOUNT_ID }) === account
+    && Array.isArray(campaignSnapshot.get('allowedRepUids'))
+    && campaignSnapshot.get('allowedRepUids').includes(uid));
+}
+
+async function assertRepCampaignAccess(db, uid, access, campaignId, accountId) {
+  if (access.role !== 'outbound_rep') return;
+  const roleSnapshot = await db.doc(`roles/${uid}`).get();
+  const passedAccounts = roleSnapshot.get('trainingPassedAccountIds');
+  if (!Array.isArray(passedAccounts)
+      || !passedAccounts.includes(readAccountId(accountId, { fallback: LEGACY_ACCOUNT_ID }))) {
+    throw new HttpsError('failed-precondition', 'Pass the required sales practice course before accessing campaign leads or dialing.');
+  }
+  if (!(await repCanAccessCampaign(db, uid, roleSnapshot, campaignId, accountId))) {
+    throw new HttpsError('permission-denied', 'A manager must assign this campaign to you before you can access its calls.');
+  }
+}
+
 async function ownedSession(db, sessionId, uid, access) {
   const snapshot = await db.doc(`dialerSessions/${sessionId}`).get();
   if (!snapshot.exists) throw new HttpsError('not-found', 'Session not found.');
   try { assertDocumentAccountAccess(access, snapshot.data() || {}, { resource: 'dialer session' }); }
   catch (error) { throw new HttpsError('permission-denied', clean(error.message, 300)); }
   if (snapshot.get('userUid') !== uid) throw new HttpsError('permission-denied', 'That dialer session belongs to another rep.');
-  return { id: sessionId, ...snapshot.data() };
+  const session = { id: sessionId, ...snapshot.data() };
+  await assertRepCampaignAccess(db, uid, access, session.campaignId, session.accountId);
+  return session;
 }
 
 async function ownedCall(db, callId, uid, access) {
@@ -160,7 +212,12 @@ async function ownedCall(db, callId, uid, access) {
   const call = { id: callId, ...snapshot.data() };
   try { assertDocumentAccountAccess(access, call, { resource: 'call' }); }
   catch (error) { throw new HttpsError('permission-denied', clean(error.message, 300)); }
-  await ownedSession(db, call.sessionId, uid, access);
+  const session = await ownedSession(db, call.sessionId, uid, access);
+  if (call.campaignId !== session.campaignId
+      || readAccountId(call.accountId, { fallback: LEGACY_ACCOUNT_ID })
+        !== readAccountId(session.accountId, { fallback: LEGACY_ACCOUNT_ID })) {
+    throw new HttpsError('permission-denied', 'This call does not belong to your assigned campaign session.');
+  }
   return call;
 }
 
@@ -174,6 +231,7 @@ async function transferCall(db, callId, uid, access) {
   if (![transfer.fromUid, transfer.toUid].includes(uid)) {
     throw new HttpsError('permission-denied', 'This staff handoff does not belong to you.');
   }
+  await assertRepCampaignAccess(db, uid, access, call.campaignId, call.accountId);
   return call;
 }
 
@@ -372,12 +430,26 @@ export const getHybridVoiceAccessToken = onCall({ ...callOptions, secrets: TWILI
 /** A bounded, role-filtered directory for warm transfer and coaching requests. */
 export const listHybridTransferAgents = onCall(callOptions, async request => {
   const { db, uid, access } = await requireDialer(request);
+  const campaignId = id(request.data?.campaignId, 'campaign id');
+  const campaignSnapshot = await db.doc(`outboundCampaigns/${campaignId}`).get();
+  if (!campaignSnapshot.exists) throw new HttpsError('not-found', 'Campaign not found.');
+  const campaign = { id: campaignId, ...campaignSnapshot.data() };
+  try { assertDocumentAccountAccess(access, campaign, { resource: 'campaign' }); }
+  catch (error) { throw new HttpsError('permission-denied', clean(error.message, 300)); }
+  assertRepCampaignAssignment(access.role, uid, campaign);
+  if (access.role === 'outbound_rep') await requireRepTrainingPassed(db, uid, campaign.accountId);
   const roles = await db.collection('roles')
     .where('role', 'in', ['admin', 'outbound_rep', 'outbound_manager'])
     .limit(100).get();
   const eligible = roles.docs.filter(entry => entry.id !== uid && (
-    access.allAccounts
-    || normalizeAccountScope(entry.get('accountIds')).some(accountId => access.accountIds.includes(accountId))
+    entry.get('role') === 'admin'
+    || (entry.get('role') === 'outbound_rep'
+      && normalizeAccountScope(entry.get('accountIds')).includes(campaign.accountId)
+      && Array.isArray(entry.get('trainingPassedAccountIds'))
+      && entry.get('trainingPassedAccountIds').includes(campaign.accountId)
+      && (campaign.allowedRepUids || []).includes(entry.id))
+    || (entry.get('role') === 'outbound_manager'
+      && normalizeAccountScope(entry.get('accountIds')).includes(campaign.accountId))
   ));
   const profiles = eligible.length
     ? await db.getAll(...eligible.map(entry => db.doc(`users/${entry.id}`)))
@@ -423,6 +495,16 @@ export const requestHybridStaffTransfer = onCall(callOptions, async request => {
   }
   if (to.role !== 'admin' && !to.accountIds.includes(call.accountId)) {
     throw new HttpsError('permission-denied', 'That teammate is not assigned to this seller account.');
+  }
+  if (to.role === 'outbound_rep') {
+    const campaignSnapshot = call.campaignId
+      ? await db.doc(`outboundCampaigns/${call.campaignId}`).get()
+      : null;
+    if (!campaignSnapshot?.exists) {
+      throw new HttpsError('failed-precondition', 'This call is not linked to an available campaign.');
+    }
+    assertRepCampaignAssignment(to.role, toUid, campaignSnapshot.data());
+    await requireRepTrainingPassed(db, toUid, call.accountId);
   }
   await db.doc(`calls/${callId}`).set({
     staffTransfer: {
@@ -823,6 +905,270 @@ export const createAIAgentPreviewSession = onCall(
   }
 );
 
+/** A bounded status view for the rep's account-scoped mandatory practice. */
+export const getRepTrainingStatus = onCall(callOptions, async request => {
+  const { db, uid, role, access } = await requireDialer(request);
+  if (role !== 'outbound_rep') throw new HttpsError('permission-denied', 'Sales training is available to sales reps.');
+  const accountIds = normalizeAccountScope(access.accountIds);
+  const roleSnapshot = await db.doc(`roles/${uid}`).get();
+  const passedAccountIds = roleSnapshot.get('trainingPassedAccountIds');
+  const accounts = await Promise.all(accountIds.map(async accountId => {
+    const [defaultSnapshot, progressSnapshot] = await Promise.all([
+      db.doc(`outboundDefaults/${accountId}`).get(),
+      db.doc(`repTrainingProgress/${repTrainingProgressId(uid, accountId)}`).get()
+    ]);
+    const campaignId = clean(defaultSnapshot.get('campaignId'), 200);
+    const campaignSnapshot = campaignId ? await db.doc(`outboundCampaigns/${campaignId}`).get() : null;
+    const requiredScenarioIds = repTrainingScenarios(accountId).map(scenario => scenario.id);
+    const rawCompletedScenarioIds = progressSnapshot.get('completedScenarioIds');
+    const completedScenarioIds = Array.isArray(rawCompletedScenarioIds)
+      ? rawCompletedScenarioIds.filter(id => requiredScenarioIds.includes(id))
+      : [];
+    const requiredScenarioCount = requiredScenarioIds.length;
+    const defaultCampaign = campaignSnapshot?.exists
+      && readAccountId(campaignSnapshot.get('accountId'), { fallback: LEGACY_ACCOUNT_ID }) === accountId
+      ? { id: campaignId, name: clean(campaignSnapshot.get('name'), 120) || 'Default campaign' }
+      : null;
+    const passed = Array.isArray(passedAccountIds)
+      && passedAccountIds.includes(accountId)
+      && requiredScenarioIds.every(id => completedScenarioIds.includes(id));
+    return {
+      accountId,
+      accountName: getAccount(accountId)?.label || accountId,
+      ready: requiredScenarioIds.length > 0,
+      defaultCampaign,
+      campaignAssigned: Boolean(defaultCampaign
+        && Array.isArray(campaignSnapshot.get('allowedRepUids'))
+        && campaignSnapshot.get('allowedRepUids').includes(uid)),
+      completedScenarioIds,
+      requiredScenarioCount,
+      passed,
+      progress: progressSnapshot.get('status') || 'not_started'
+    };
+  }));
+  return { accounts };
+});
+
+/** Start one fictional prospect role-play for the next required niche. */
+export const createRepTrainingSession = onCall(
+  { ...callOptions, secrets: [HYBRID_OPENAI_API_KEY] },
+  async request => {
+    const { db, uid, role, access } = await requireDialer(request);
+    if (role !== 'outbound_rep') throw new HttpsError('permission-denied', 'Sales training is available to sales reps.');
+    const accountId = clean(request.data?.accountId, 80);
+    if (!normalizeAccountScope(access.accountIds).includes(accountId)) {
+      throw new HttpsError('permission-denied', 'That seller account is not assigned to you.');
+    }
+    const apiKey = secretValue(HYBRID_OPENAI_API_KEY);
+    if (!apiKey) throw new HttpsError('failed-precondition', 'The AI training coach is not configured.');
+    const [defaultSnapshot, progressSnapshot, roleSnapshot] = await Promise.all([
+      db.doc(`outboundDefaults/${accountId}`).get(),
+      db.doc(`repTrainingProgress/${repTrainingProgressId(uid, accountId)}`).get(),
+      db.doc(`roles/${uid}`).get()
+    ]);
+    const campaignId = clean(defaultSnapshot.get('campaignId'), 200);
+    const alreadyPassedAccounts = roleSnapshot.get('trainingPassedAccountIds');
+    if (Array.isArray(alreadyPassedAccounts) && alreadyPassedAccounts.includes(accountId)) {
+      throw new HttpsError('already-exists', 'You have already passed this account’s required training.');
+    }
+    if (repTrainingScenarios(accountId).length === 0) {
+      throw new HttpsError('failed-precondition', 'No training scenarios are configured for this seller account yet.');
+    }
+    const requiredScenarioIds = repTrainingScenarios(accountId).map(entry => entry.id);
+    let completedScenarioIds = Array.isArray(progressSnapshot.get('completedScenarioIds'))
+      ? progressSnapshot.get('completedScenarioIds').filter(id => requiredScenarioIds.includes(id)) : [];
+    let scenario = nextRepTrainingScenario(accountId, completedScenarioIds);
+    if (!scenario) {
+      // A role change clears the authoritative pass flag. If its old progress
+      // says every scenario passed, require a fresh course rather than leaving
+      // the rep with no way to earn a new pass.
+      completedScenarioIds = [];
+      scenario = nextRepTrainingScenario(accountId, completedScenarioIds);
+      await progressSnapshot.ref.set({
+        status: 'in_progress', completedScenarioIds,
+        defaultCampaignId: FieldValue.delete(), updatedAt: FieldValue.serverTimestamp()
+      }, { merge: true });
+    }
+    if (!scenario) throw new HttpsError('failed-precondition', 'No required training scenarios are configured for this seller account.');
+
+    const progressRef = db.doc(`repTrainingProgress/${repTrainingProgressId(uid, accountId)}`);
+    const trainingDayKey = new Date().toISOString().slice(0, 10);
+    await db.runTransaction(async transaction => {
+      const currentProgress = await transaction.get(progressRef);
+      const dailyCount = currentProgress.get('trainingDayKey') === trainingDayKey
+        ? Math.max(0, Number(currentProgress.get('trainingAttemptCount')) || 0) : 0;
+      if (dailyCount >= 12) {
+        throw new HttpsError('resource-exhausted', 'You have reached today’s practice limit. Try again tomorrow.');
+      }
+      transaction.set(progressRef, {
+        trainingDayKey,
+        trainingAttemptCount: dailyCount + 1,
+        updatedAt: FieldValue.serverTimestamp()
+      }, { merge: true });
+    });
+
+    let client;
+    try {
+      client = await mintAgentPreviewClientSecret({
+        apiKey, uid,
+        session: buildRepTrainingSession({
+          sellerName: getAccount(accountId)?.label || accountId,
+          scenario
+        })
+      });
+    } catch (error) {
+      throw new HttpsError('internal', clean(error?.message, 350) || 'Could not start the training role-play.');
+    }
+
+    const attemptRef = db.collection('repTrainingAttempts').doc();
+    await attemptRef.set({
+      uid, accountId, campaignId, scenarioId: scenario.id,
+      status: 'in_progress', createdAt: FieldValue.serverTimestamp(),
+      expiresAt: Timestamp.fromMillis(Date.now() + 20 * 60 * 1000)
+    });
+    return {
+      clientSecret: client.value,
+      expiresAt: client.expiresAt,
+      attemptId: attemptRef.id,
+      scenario: publicTrainingScenario(scenario)
+    };
+  }
+);
+
+/** Score a completed role-play and grant default campaign access after all required niches pass. */
+export const completeRepTrainingAttempt = onCall(
+  { ...callOptions, secrets: [HYBRID_OPENAI_API_KEY], timeoutSeconds: 45 },
+  async request => {
+    const { db, uid, role, access } = await requireDialer(request);
+    if (role !== 'outbound_rep') throw new HttpsError('permission-denied', 'Sales training is available to sales reps.');
+    const attemptId = clean(request.data?.attemptId, 200);
+    if (!/^[A-Za-z0-9_-]+$/.test(attemptId)) throw new HttpsError('invalid-argument', 'A valid training attempt is required.');
+    const attemptRef = db.doc(`repTrainingAttempts/${attemptId}`);
+    const initial = await attemptRef.get();
+    if (!initial.exists || initial.get('uid') !== uid) throw new HttpsError('not-found', 'Training attempt not found.');
+    const accountId = clean(initial.get('accountId'), 80);
+    if (!normalizeAccountScope(access.accountIds).includes(accountId)) {
+      throw new HttpsError('permission-denied', 'That seller account is not assigned to you.');
+    }
+    if (['passed', 'failed'].includes(initial.get('status'))) {
+      return initial.get('result') || { score: initial.get('score') || 0, passed: initial.get('status') === 'passed' };
+    }
+    if (initial.get('status') !== 'in_progress') throw new HttpsError('failed-precondition', 'This training attempt is already being reviewed.');
+    const expiresAtMs = initial.get('expiresAt')?.toMillis?.();
+    if (!Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now()) {
+      await attemptRef.set({ status: 'expired', finishedAt: FieldValue.serverTimestamp() }, { merge: true });
+      throw new HttpsError('deadline-exceeded', 'This practice session expired. Start a fresh role-play.');
+    }
+    const scenario = repTrainingScenarios(accountId).find(entry => entry.id === initial.get('scenarioId'));
+    if (!scenario) throw new HttpsError('failed-precondition', 'This training scenario is no longer available.');
+    const apiKey = secretValue(HYBRID_OPENAI_API_KEY);
+    if (!apiKey) throw new HttpsError('failed-precondition', 'The AI training evaluator is not configured.');
+
+    const transcript = request.data?.transcript;
+    const scoringLock = await db.runTransaction(async transaction => {
+      const current = await transaction.get(attemptRef);
+      if (current.get('uid') !== uid || current.get('status') !== 'in_progress') return false;
+      transaction.set(attemptRef, { status: 'scoring', scoringStartedAt: FieldValue.serverTimestamp() }, { merge: true });
+      return true;
+    });
+    if (!scoringLock) throw new HttpsError('failed-precondition', 'This training attempt has already been submitted.');
+
+    try {
+      const evaluation = await evaluateRepTrainingTranscript({ apiKey, scenario, transcript, uid });
+      const result = await db.runTransaction(async transaction => {
+        const [attemptSnapshot, roleSnapshot, progressSnapshot, defaultSnapshot] = await Promise.all([
+          transaction.get(attemptRef),
+          transaction.get(db.doc(`roles/${uid}`)),
+          transaction.get(db.doc(`repTrainingProgress/${repTrainingProgressId(uid, accountId)}`)),
+          transaction.get(db.doc(`outboundDefaults/${accountId}`))
+        ]);
+        if (attemptSnapshot.get('status') !== 'scoring' || attemptSnapshot.get('uid') !== uid) {
+          throw new HttpsError('failed-precondition', 'This training attempt is no longer available.');
+        }
+        if (roleSnapshot.get('role') !== 'outbound_rep'
+            || !normalizeAccountScope(roleSnapshot.get('accountIds')).includes(accountId)) {
+          throw new HttpsError('permission-denied', 'Your sales-rep access changed during training.');
+        }
+
+        const requiredScenarioIds = repTrainingScenarios(accountId).map(entry => entry.id);
+        const previous = Array.isArray(progressSnapshot.get('completedScenarioIds'))
+          ? progressSnapshot.get('completedScenarioIds').filter(id => requiredScenarioIds.includes(id)) : [];
+        const completedScenarioIds = evaluation.passed
+          ? [...new Set([...previous, scenario.id])]
+          : previous;
+        const requiredScenarioCount = repTrainingScenarios(accountId).length;
+        const coursePassed = requiredScenarioIds.every(id => completedScenarioIds.includes(id));
+        let defaultCampaignId = clean(defaultSnapshot.get('campaignId'), 200);
+        let campaignSnapshot = null;
+        let campaignRef = null;
+        if (coursePassed && defaultCampaignId) {
+          campaignRef = db.doc(`outboundCampaigns/${defaultCampaignId}`);
+          campaignSnapshot = await transaction.get(campaignRef);
+          if (!campaignSnapshot.exists
+              || readAccountId(campaignSnapshot.get('accountId'), { fallback: LEGACY_ACCOUNT_ID }) !== accountId) {
+            defaultCampaignId = '';
+            campaignRef = null;
+            campaignSnapshot = null;
+          } else {
+            const assigned = Array.isArray(campaignSnapshot.get('allowedRepUids')) ? campaignSnapshot.get('allowedRepUids') : [];
+            if (!assigned.includes(uid) && assigned.length >= 100) {
+              defaultCampaignId = '';
+              campaignRef = null;
+              campaignSnapshot = null;
+            }
+          }
+        }
+
+        const currentPassedAccounts = Array.isArray(roleSnapshot.get('trainingPassedAccountIds'))
+          ? roleSnapshot.get('trainingPassedAccountIds') : [];
+        const courseResult = {
+          ...evaluation,
+          coursePassed,
+          completedScenarioCount: completedScenarioIds.length,
+          requiredScenarioCount,
+          scenario: publicTrainingScenario(scenario),
+          assignedCampaign: coursePassed && campaignRef ? {
+            id: defaultCampaignId,
+            name: clean(campaignSnapshot?.get('name'), 120) || 'Default campaign'
+          } : null,
+          assignmentPending: coursePassed && !campaignRef
+        };
+        transaction.set(attemptRef, {
+          status: evaluation.passed ? 'passed' : 'failed',
+          score: evaluation.score,
+          result: courseResult,
+          finishedAt: FieldValue.serverTimestamp()
+        }, { merge: true });
+        transaction.set(db.doc(`repTrainingProgress/${repTrainingProgressId(uid, accountId)}`), {
+          uid, accountId, status: coursePassed ? 'passed' : 'in_progress',
+          completedScenarioIds,
+          requiredScenarioCount,
+          ...(coursePassed ? { passedAt: FieldValue.serverTimestamp(), defaultCampaignId } : {}),
+          updatedAt: FieldValue.serverTimestamp()
+        }, { merge: true });
+        if (coursePassed && !currentPassedAccounts.includes(accountId)) {
+          transaction.set(db.doc(`roles/${uid}`), {
+            trainingPassedAccountIds: FieldValue.arrayUnion(accountId),
+            updatedAt: FieldValue.serverTimestamp()
+          }, { merge: true });
+        }
+        if (coursePassed && campaignRef) {
+          transaction.set(campaignRef, {
+            allowedRepUids: FieldValue.arrayUnion(uid),
+            updatedAt: FieldValue.serverTimestamp()
+          }, { merge: true });
+        }
+        return courseResult;
+      });
+      return result;
+    } catch (error) {
+      await attemptRef.set({ status: 'in_progress', updatedAt: FieldValue.serverTimestamp() }, { merge: true }).catch(() => {});
+      if (error instanceof HttpsError) throw error;
+      throw new HttpsError('internal', clean(error?.message, 300) || 'The AI coach could not score this practice session.');
+    }
+  }
+);
+
 // ------------------------------------------------------------- knowledge KB
 
 export const listAIKnowledgeBases = onCall(callOptions, async request => {
@@ -933,12 +1279,20 @@ export const twilioHybridBrowserTwiML = onRequest({ secrets: [HYBRID_TWILIO_AUTH
     && ['accepted', 'completed'].includes(call?.staffTransfer?.state)
     && identity === transferIdentity;
   const identityUid = identity.startsWith('bs_') ? identity.slice(3) : '';
-  const coachRoleSnapshot = mode === 'coach' && identityUid ? await db.doc(`roles/${identityUid}`).get() : null;
+  const identityRoleSnapshot = identityUid ? await db.doc(`roles/${identityUid}`).get() : null;
+  const identityRole = clean(identityRoleSnapshot?.get('role'), 80);
+  const callAccountId = readAccountId(call.accountId, { fallback: LEGACY_ACCOUNT_ID });
+  const roleAccountIds = normalizeAccountScope(identityRoleSnapshot?.get('accountIds'));
+  const roleCanAccessAccount = identityRole === 'admin'
+    || (['outbound_manager', 'outbound_rep'].includes(identityRole) && roleAccountIds.includes(callAccountId));
+  const repAllowed = roleCanAccessAccount
+    && (identityRole !== 'outbound_rep'
+      || await repCanAccessCampaign(db, identityUid, identityRoleSnapshot, call.campaignId, call.accountId));
   const coachAllowed = mode === 'coach'
-    && ['admin', 'outbound_manager'].includes(clean(coachRoleSnapshot?.get('role'), 80))
+    && ['admin', 'outbound_manager'].includes(identityRole)
     && call?.coaching?.state === 'monitoring'
     && call?.coaching?.supervisorUid === identityUid;
-  if (!identity || (identity !== expectedIdentity && !transferAllowed && !coachAllowed)) { res.status(403).type('text/plain').send('wrong rep'); return; }
+  if (!identity || !repAllowed || (identity !== expectedIdentity && !transferAllowed && !coachAllowed)) { res.status(403).type('text/plain').send('wrong rep'); return; }
   const label = `${mode}-${clean(sessionSnapshot.get('userUid'), 80)}`.slice(0, 120);
   const participantLabel = mode === 'assist' ? `assist-${call.staffTransfer.toUid}`
     : mode === 'coach' ? `coach-${identityUid}` : label;

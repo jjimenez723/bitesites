@@ -637,10 +637,38 @@
 }
 
 @media (max-width: 540px) {
+  .bs-admin .live-call-workspace {
+    height: 100dvh;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    overflow: hidden;
+  }
+  .bs-admin .live-call-workspace.has-audio-status {
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+  }
+  .bs-admin .live-call-workspace.has-audio-status .live-call-topbar { grid-row: 1; }
+  .bs-admin .live-call-workspace.has-audio-status .live-call-audio-status {
+    grid-row: 2;
+    box-sizing: border-box;
+    width: 100%;
+    align-self: start;
+    overflow-wrap: anywhere;
+  }
+  .bs-admin .live-call-workspace.has-audio-status .live-call-canvas { grid-row: 3; }
+  .bs-admin .live-call-workspace.has-audio-status .live-control-dock {
+    grid-row: 4;
+    padding-bottom: calc(12px + env(safe-area-inset-bottom));
+  }
   .bs-admin .live-call-audio-status { align-items: stretch; flex-direction: column; padding: 10px 14px; }
   .bs-admin .live-call-audio-status .btn-admin { width: 100%; justify-content: center; }
-  .bs-admin .live-call-topbar { gap: 10px; padding: 10px 14px; }
+  .bs-admin .live-call-topbar {
+    grid-template-columns: minmax(0,1fr) auto;
+    align-items: start;
+    gap: 10px;
+    padding: calc(10px + env(safe-area-inset-top)) 14px 10px;
+  }
   .bs-admin .live-call-identity { gap: 8px; }
+  .bs-admin .live-call-identity > div { min-width: 0; }
+  .bs-admin .live-call-identity h2 { white-space: normal; overflow-wrap: anywhere; line-height: 1.25; }
   .bs-admin .live-minimize { min-height: 34px; padding: 0 9px; font-size: 10px; }
 }
 

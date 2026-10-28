@@ -27,7 +27,7 @@ import {
   submitDiscoveryResults, finishJob, recoverStaleJobs, pruneRawResults
 } from './lead-discovery.js';
 import { importProspects, createImportRun, finishImportRun, resolveDuplicate } from './prospect-import.js';
-import { requireAccountId, sanitizePartnerOutcomes } from './accounts.js';
+import { LEGACY_ACCOUNT_ID, readAccountId, requireAccountId, sanitizePartnerOutcomes } from './accounts.js';
 import {
   assertAccountAccess, assertDocumentAccountAccess, assertOutboundAccess,
   resolveAccountAccess
@@ -177,10 +177,32 @@ const requireScopedDocument = async (db, access, path, resource) => {
   catch (error) { throw scopeError(error); }
   return data;
 };
-const requireScopedCampaign = (db, access, campaignId) =>
-  requireScopedDocument(db, access, `outboundCampaigns/${campaignId}`, 'Campaign');
-const requireScopedTarget = (db, access, targetId) =>
-  requireScopedDocument(db, access, `outboundTargets/${targetId}`, 'Target');
+const assertRepCampaignAccess = async (db, access, campaign) => {
+  if (access.role !== 'outbound_rep') return campaign;
+  const roleSnapshot = await db.doc(`roles/${access.uid}`).get();
+  if (!Array.isArray(roleSnapshot.get('trainingPassedAccountIds'))
+      || !roleSnapshot.get('trainingPassedAccountIds').includes(campaign.accountId)) {
+    throw new HttpsError('failed-precondition', 'Pass the required sales practice course before accessing campaign leads or dialing.');
+  }
+  if (!Array.isArray(campaign.allowedRepUids) || !campaign.allowedRepUids.includes(access.uid)) {
+    throw new HttpsError('permission-denied', 'A manager must assign this campaign to you before you can access its leads.');
+  }
+  return campaign;
+};
+const requireScopedCampaign = async (db, access, campaignId) => {
+  const campaign = await requireScopedDocument(db, access, `outboundCampaigns/${campaignId}`, 'Campaign');
+  return assertRepCampaignAccess(db, access, campaign);
+};
+const requireScopedTarget = async (db, access, targetId) => {
+  const target = await requireScopedDocument(db, access, `outboundTargets/${targetId}`, 'Target');
+  if (access.role === 'outbound_rep') {
+    const campaign = await requireScopedCampaign(db, access, target.campaignId);
+    if (campaign.accountId !== target.accountId) {
+      throw new HttpsError('permission-denied', 'The target and campaign belong to different seller accounts.');
+    }
+  }
+  return target;
+};
 
 // Approving or revoking artificial-voice permission is deliberately narrower
 // than operating a dialer. Outbound managers can supervise campaigns, but only
@@ -453,10 +475,80 @@ export const listOutboundCampaignReps = onCall(callOptions, async request => {
         uid: entry.id,
         email,
         displayName,
-        name: displayName || email.split('@')[0] || 'Sales rep'
+        name: displayName || email.split('@')[0] || 'Sales rep',
+        trainingPassed: Array.isArray(entry.get('trainingPassedAccountIds'))
+          && entry.get('trainingPassedAccountIds').includes(accountId)
       };
     })
   };
+});
+
+/** Managers read the one default campaign configured for a seller account. */
+export const getOutboundDefaultCampaign = onCall(callOptions, async request => {
+  const { db, access } = await requireAdmin(request);
+  const accountId = requireScopedAccount(access, request.data?.accountId);
+  const snapshot = await db.doc(`outboundDefaults/${accountId}`).get();
+  const campaignId = str(snapshot.get('campaignId'), 200);
+  if (!campaignId) return { accountId, campaign: null };
+  const campaignSnapshot = await db.doc(`outboundCampaigns/${campaignId}`).get();
+  if (!campaignSnapshot.exists
+      || readAccountId(campaignSnapshot.get('accountId'), { fallback: LEGACY_ACCOUNT_ID }) !== accountId) {
+    return { accountId, campaign: null, stale: true };
+  }
+  return { accountId, campaign: { id: campaignId, name: str(campaignSnapshot.get('name'), 120) } };
+});
+
+/** Set or clear the default; only reps who passed this account's course are assigned. */
+export const setOutboundDefaultCampaign = onCall(callOptions, async request => {
+  const { db, uid, access } = await requireAdmin(request);
+  const accountId = requireScopedAccount(access, request.data?.accountId);
+  const campaignId = str(request.data?.campaignId, 200);
+  const defaultRef = db.doc(`outboundDefaults/${accountId}`);
+
+  if (!campaignId) {
+    await defaultRef.delete();
+    return { accountId, campaign: null };
+  }
+  if (!/^[A-Za-z0-9_-]+$/.test(campaignId)) throw new HttpsError('invalid-argument', 'Choose a valid campaign.');
+  const campaignRef = db.doc(`outboundCampaigns/${campaignId}`);
+  const repsSnapshot = await db.collection('roles')
+    .where('role', '==', 'outbound_rep')
+    .where('accountIds', 'array-contains', accountId)
+    .limit(101)
+    .get();
+  if (repsSnapshot.size > 100) {
+    throw new HttpsError('resource-exhausted', 'This account has more than 100 sales reps. Reduce the roster before choosing a default campaign.');
+  }
+  const trainedRepUids = repsSnapshot.docs
+    .filter(entry => Array.isArray(entry.get('trainingPassedAccountIds'))
+      && entry.get('trainingPassedAccountIds').includes(accountId))
+    .map(entry => entry.id);
+  if (trainedRepUids.length > 100) {
+    throw new HttpsError('resource-exhausted', 'This account has more trained sales reps than the campaign can assign.');
+  }
+  const campaignSnapshot = await db.runTransaction(async transaction => {
+    const currentCampaign = await transaction.get(campaignRef);
+    if (!currentCampaign.exists) throw new HttpsError('not-found', 'Campaign not found.');
+    if (readAccountId(currentCampaign.get('accountId'), { fallback: LEGACY_ACCOUNT_ID }) !== accountId) {
+      throw new HttpsError('failed-precondition', 'The default campaign must belong to this seller account.');
+    }
+    const currentlyAssigned = Array.isArray(currentCampaign.get('allowedRepUids'))
+      ? currentCampaign.get('allowedRepUids') : [];
+    if (new Set([...currentlyAssigned, ...trainedRepUids]).size > 100) {
+      throw new HttpsError('resource-exhausted', 'This campaign has reached its sales-rep limit. Choose a campaign with room.');
+    }
+    transaction.set(defaultRef, {
+      accountId, campaignId, updatedAt: FieldValue.serverTimestamp(), updatedBy: uid
+    });
+    if (trainedRepUids.length) {
+      transaction.set(campaignRef, {
+        allowedRepUids: FieldValue.arrayUnion(...trainedRepUids),
+        updatedAt: FieldValue.serverTimestamp()
+      }, { merge: true });
+    }
+    return currentCampaign;
+  });
+  return { accountId, campaign: { id: campaignId, name: str(campaignSnapshot.get('name'), 120) }, assignedExistingTrainedReps: trainedRepUids.length };
 });
 
 /** Managers may set a teammate's visible name, but only within their seller account. */

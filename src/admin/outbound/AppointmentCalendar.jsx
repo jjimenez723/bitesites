@@ -785,12 +785,14 @@ function ScheduleSettings({ accountId, settings, google, onSaved, openRef }) {
 
 // -------------------------------------------------------------------- shell
 
-export default function AppointmentCalendar({ canManage = true, accountIds = ACCOUNT_IDS, allAccounts = true }) {
+export default function AppointmentCalendar({ canManage = true, accountIds = ACCOUNT_IDS, allAccounts = true, role = 'admin', campaigns = [] }) {
+  const isRep = role === 'outbound_rep';
   const accountScopeKey = accountIds.join('|');
   const availableAccountIds = useMemo(() => allAccounts
     ? ACCOUNT_IDS
     : ACCOUNT_IDS.filter(id => accountIds.includes(id)), [allAccounts, accountScopeKey]);
   const [accountId, setAccountId] = useState(availableAccountIds[0] || '');
+  const [campaignId, setCampaignId] = useState(campaigns[0]?.id || '');
   const [view, setView] = useState('week');
   const [anchor, setAnchor] = useState(() => startOfDay(Date.now()));
   const [meta, setMeta] = useState({ settings: null, google: null, error: '' });
@@ -801,6 +803,13 @@ export default function AppointmentCalendar({ canManage = true, accountIds = ACC
   useEffect(() => {
     if (!availableAccountIds.includes(accountId)) setAccountId(availableAccountIds[0] || '');
   }, [accountId, availableAccountIds]);
+
+  useEffect(() => {
+    if (!campaigns.some(campaign => campaign.id === campaignId)) setCampaignId(campaigns[0]?.id || '');
+  }, [campaigns, campaignId]);
+
+  const activeCampaign = campaigns.find(campaign => campaign.id === campaignId) || null;
+  const effectiveAccountId = isRep ? activeCampaign?.accountId || '' : accountId;
 
   const openBooking = useRef(null);
   const openSettings = useRef(null);
@@ -833,18 +842,20 @@ export default function AppointmentCalendar({ canManage = true, accountIds = ACC
   // dates in the schedule's timezone; a console open in another zone would
   // otherwise lose the meetings sitting on the first and last day's edges.
   const { rows, loading, error, refresh } = useAppointments({
-    fromMs: fromMs - DAY_MS, toMs: toMs + DAY_MS, accountId
+    fromMs: fromMs - DAY_MS, toMs: toMs + DAY_MS,
+    accountId: effectiveAccountId,
+    campaignId: isRep ? activeCampaign?.id || '' : ''
   });
 
   useEffect(() => {
     let cancelled = false;
     setMeta({ settings: null, google: null, error: '' });
-    if (!accountId) return () => { cancelled = true; };
-    calendar.settings(accountId)
+    if (!effectiveAccountId) return () => { cancelled = true; };
+    calendar.settings(effectiveAccountId)
       .then(result => { if (!cancelled) setMeta({ settings: result?.settings || null, google: result?.google || null, error: '' }); })
       .catch(caught => { if (!cancelled) setMeta(current => ({ ...current, error: caught?.message || 'Could not load calendar settings.' })); });
     return () => { cancelled = true; };
-  }, [accountId]);
+  }, [effectiveAccountId]);
 
   const timezone = meta.settings?.timezone || '';
 
@@ -853,12 +864,12 @@ export default function AppointmentCalendar({ canManage = true, accountIds = ACC
   const visible = useMemo(() => {
     const now = Date.now();
     return rows.filter(row => {
-      if (readAccountId(row.accountId, { fallback: LEGACY_ACCOUNT_ID }) !== accountId) return false;
+      if (readAccountId(row.accountId, { fallback: LEGACY_ACCOUNT_ID }) !== effectiveAccountId) return false;
       if (row.status !== 'held') return true;
       const expires = toDate(row.holdExpiresAt);
       return expires ? expires.getTime() > now : false;
     });
-  }, [rows, accountId]);
+  }, [rows, effectiveAccountId]);
 
   const byDay = useMemo(() => {
     const buckets = days.map(() => []);
@@ -886,14 +897,14 @@ export default function AppointmentCalendar({ canManage = true, accountIds = ACC
     const who = attendeeName(appointment);
     // eslint-disable-next-line no-alert
     if (!window.confirm(`Cancel ${who}? This removes it from Google Calendar too.`)) return;
-    action.run(() => calendar.cancel(accountId, appointment.id, 'cancelled_by_rep'), 'Cancelled.')
+    action.run(() => calendar.cancel(effectiveAccountId, appointment.id, 'cancelled_by_rep'), 'Cancelled.')
       .then(result => { if (result) { setSelected(null); refresh(); } });
-  }, [accountId, action, refresh]);
+  }, [effectiveAccountId, action, refresh]);
 
   const setOutcome = useCallback((appointmentId, outcome) =>
-    action.run(() => calendar.setOutcome(accountId, appointmentId, outcome), 'Saved.')
+    action.run(() => calendar.setOutcome(effectiveAccountId, appointmentId, outcome), 'Saved.')
       .then(result => { if (result) { setSelected(null); refresh(); } }),
-  [accountId, action, refresh]);
+  [effectiveAccountId, action, refresh]);
 
   const googleUrl = meta.settings?.googleCalendarId
     ? `https://calendar.google.com/calendar/u/0/r/week?cid=${encodeURIComponent(meta.settings.googleCalendarId)}`
@@ -975,7 +986,7 @@ export default function AppointmentCalendar({ canManage = true, accountIds = ACC
     <div className="admin-card cal-card">
       <div className="cal-toolbar">
         <div className="cal-toolbar-title">
-          <h3>{ACCOUNTS[accountId]?.label || 'Calendar'}</h3>
+          <h3>{isRep ? activeCampaign?.name || 'Campaign calendar' : ACCOUNTS[accountId]?.label || 'Calendar'}</h3>
           <span className={`cal-sync${meta.google?.connected ? ' on' : ''}`}
             title={meta.google?.calendarId || ''}>
             <i aria-hidden="true" />
@@ -988,10 +999,17 @@ export default function AppointmentCalendar({ canManage = true, accountIds = ACC
         </div>
 
         <div className="cal-toolbar-controls">
-          <select className="admin-select" value={accountId} aria-label="Entity"
-            onChange={event => setAccountId(event.target.value)}>
-            {availableAccountIds.map(id => <option key={id} value={id}>{ACCOUNTS[id].label}</option>)}
-          </select>
+          {isRep ? (
+            <select className="admin-select" value={campaignId} aria-label="Campaign"
+              onChange={event => setCampaignId(event.target.value)}>
+              {campaigns.map(campaign => <option key={campaign.id} value={campaign.id}>{campaign.name}</option>)}
+            </select>
+          ) : (
+            <select className="admin-select" value={accountId} aria-label="Entity"
+              onChange={event => setAccountId(event.target.value)}>
+              {availableAccountIds.map(id => <option key={id} value={id}>{ACCOUNTS[id].label}</option>)}
+            </select>
+          )}
 
           <div className="cal-viewswitch" role="group" aria-label="Calendar view">
             {VIEWS.map(name => (
@@ -1056,11 +1074,11 @@ export default function AppointmentCalendar({ canManage = true, accountIds = ACC
       ) : null}
 
       {canManage ? (
-        <BookingForm accountId={accountId} timezone={timezone} onBooked={refresh} openRef={openBooking} />
+        <BookingForm accountId={effectiveAccountId} timezone={timezone} onBooked={refresh} openRef={openBooking} />
       ) : null}
       {canManage ? (
         <ScheduleSettings
-          accountId={accountId}
+          accountId={effectiveAccountId}
           settings={meta.settings}
           google={meta.google}
           openRef={openSettings}

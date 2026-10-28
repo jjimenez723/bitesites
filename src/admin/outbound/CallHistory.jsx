@@ -55,12 +55,12 @@ function operatorLabel(call) {
   return call.operator || '—';
 }
 
-function HistoryWebsite({ call }) {
+function HistoryWebsite({ call, role = 'admin' }) {
   const targetState = useLiveDoc(!call.website && call.targetId ? `outboundTargets/${call.targetId}` : '');
   const target = targetState.data?.id === call.targetId ? targetState.data : null;
   const leadId = target?.leadId || call.leadId;
   const prospectId = target?.prospectId || call.prospectId || target?.convertedFromProspectId;
-  const contactPath = call.website ? '' : leadId ? `leads/${leadId}` : prospectId ? `prospects/${prospectId}` : '';
+  const contactPath = call.website || role === 'outbound_rep' ? '' : leadId ? `leads/${leadId}` : prospectId ? `prospects/${prospectId}` : '';
   const contactState = useLiveDoc(contactPath);
   const contact = contactState.data?.id === (leadId || prospectId) ? contactState.data : null;
   const website = String(call.website || contact?.website || target?.website || '').trim();
@@ -103,11 +103,13 @@ function HistoryFollowUp({ call }) {
   </section>;
 }
 
-export default function CallHistory({ campaignId, campaigns = [], onSelectCampaign }) {
+export default function CallHistory({ campaignId, campaigns = [], onSelectCampaign, role = 'admin' }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const [openId, setOpenId] = useState(() => searchParams.get('call'));
   const accountId = campaigns.find(entry => entry.id === campaignId)?.accountId || '';
-  const { rows, loading, error, capped, refresh } = useOutboundCalls(campaignId || 'all', accountId);
+  const effectiveCampaignId = role === 'outbound_rep' ? (campaignId || campaigns[0]?.id || '') : campaignId;
+  const effectiveAccountId = accountId || (role === 'outbound_rep' ? campaigns[0]?.accountId || '' : '');
+  const { rows, loading, error, capped, refresh } = useOutboundCalls(effectiveCampaignId || 'all', effectiveAccountId);
   const directCall = useLiveDoc(openId ? `calls/${openId}` : '');
   const open = (directCall.data?.id === openId ? directCall.data : null) || rows.find(row => row.id === openId) || null;
   const openCall = id => {
@@ -132,8 +134,8 @@ export default function CallHistory({ campaignId, campaigns = [], onSelectCampai
             <p>Review who you called, what happened, and the notes for your next conversation.</p>
           </div>
           <div className="card-head-actions">
-            <select className="admin-select" value={campaignId || 'all'} onChange={event => onSelectCampaign?.(event.target.value === 'all' ? '' : event.target.value)}>
-              <option value="all">Every campaign</option>
+            <select className="admin-select" value={role === 'outbound_rep' ? effectiveCampaignId : campaignId || 'all'} onChange={event => onSelectCampaign?.(event.target.value === 'all' ? '' : event.target.value)}>
+              {role !== 'outbound_rep' && <option value="all">Every campaign</option>}
               {campaigns.map(entry => <option key={entry.id} value={entry.id}>{entry.name}</option>)}
             </select>
             <button className="btn-admin" type="button" onClick={refresh}>Refresh</button>
@@ -195,7 +197,7 @@ export default function CallHistory({ campaignId, campaigns = [], onSelectCampai
               ['Business', businessName(open)],
               ['Contact', open.contactName],
               ['Phone', open.phoneE164 ? formatPhone(open.phoneE164) : 'Not recorded'],
-              ['Website', <HistoryWebsite key={open.id} call={open} />],
+              ['Website', <HistoryWebsite key={open.id} call={open} role={role} />],
               ['Status', <StatusPill status={open.status} />],
               ['Disposition', open.disposition],
               ['Agent', receivingAgent(open).agentName],

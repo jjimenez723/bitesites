@@ -287,7 +287,7 @@ export const useConsentGrants = () =>
  * calendar mid-call — a rep looking at today's schedule needs to see a meeting
  * appear the moment an agent closes one.
  */
-export const useAppointments = ({ fromMs, toMs, accountId = '' }) =>
+export const useAppointments = ({ fromMs, toMs, accountId = '', campaignId = '' }) =>
   useLiveOutboundQuery(() => {
     if (!fromMs || !toMs || !accountId) return null;
     return {
@@ -295,13 +295,14 @@ export const useAppointments = ({ fromMs, toMs, accountId = '' }) =>
       q: query(
         collection(db, 'appointments'),
         where('accountId', '==', accountId),
+        ...(campaignId ? [where('campaignId', '==', campaignId)] : []),
         where('startAt', '>=', new Date(fromMs)),
         where('startAt', '<', new Date(toMs)),
         orderBy('startAt', 'asc'),
         limit(LIST_CAP)
       )
     };
-  }, [fromMs, toMs, accountId]);
+  }, [fromMs, toMs, accountId, campaignId]);
 
 export const calendar = {
   settings: accountId => callable('getCalendarSettings', { accountId }),
@@ -365,6 +366,8 @@ export const outbound = {
 
   createCampaign: campaign => callable('createOutboundCampaign', campaign),
   listCampaignReps: accountId => callable('listOutboundCampaignReps', { accountId }),
+  getDefaultCampaign: accountId => callable('getOutboundDefaultCampaign', { accountId }),
+  setDefaultCampaign: (accountId, campaignId) => callable('setOutboundDefaultCampaign', { accountId, campaignId }),
   updateRepName: (accountId, repUid, displayName) =>
     callable('updateOutboundRepName', { accountId, repUid, displayName }),
   updateCampaign: (campaignId, campaign) => callable('updateOutboundCampaign', { campaignId, campaign }),
@@ -444,7 +447,7 @@ export const outbound = {
   beginListen: callId => callable('beginHybridListen', { callId }),
   stopListen: callId => callable('stopHybridListen', { callId }),
   voiceToken: () => callable('getHybridVoiceAccessToken'),
-  listTransferAgents: () => callable('listHybridTransferAgents'),
+  listTransferAgents: campaignId => callable('listHybridTransferAgents', { campaignId }),
   requestStaffTransfer: (callId, toUid, note = '', handoffSummary = '') =>
     callable('requestHybridStaffTransfer', { callId, toUid, note, handoffSummary }),
   acceptStaffTransfer: callId => callable('acceptHybridStaffTransfer', { callId }),
@@ -461,6 +464,10 @@ export const outbound = {
   archiveAgentProfile: profileId => callable('archiveAIAgentProfile', { profileId }),
   previewAgentRuntime: payload => callable('previewAIAgentRuntime', payload),
   createAgentPreviewSession: (profile, mode) => callable('createAIAgentPreviewSession', { profile, mode }),
+  repTrainingStatus: () => callable('getRepTrainingStatus'),
+  createRepTrainingSession: accountId => callable('createRepTrainingSession', { accountId }),
+  completeRepTrainingAttempt: (attemptId, transcript) =>
+    callable('completeRepTrainingAttempt', { attemptId, transcript }),
   listKnowledgeBases: () => callable('listAIKnowledgeBases'),
   createKnowledgeBase: payload => callable('createAIKnowledgeBase', payload),
   upsertKnowledgeDocument: payload => callable('upsertAIKnowledgeDocument', payload)

@@ -2664,6 +2664,8 @@ export {
   createOutboundCampaign,
   updateOutboundCampaign,
   listOutboundCampaignReps,
+  getOutboundDefaultCampaign,
+  setOutboundDefaultCampaign,
   updateOutboundRepName,
   startOutboundCampaign,
   pauseOutboundCampaign,
@@ -2779,7 +2781,6 @@ export const setUserRole = onCall(
     // Confirms the account exists before writing a role document about it.
     const target = await auth.getUser(uid).catch(() => null);
     if (!target) throw new HttpsError('not-found', 'No account with that uid.');
-
     if (role === 'none') {
       const preservedClaims = { ...(target.customClaims || {}) };
       delete preservedClaims.role;

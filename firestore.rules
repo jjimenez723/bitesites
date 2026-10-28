@@ -85,12 +85,20 @@ service cloud.firestore {
         : request.auth.token.get('accountIds', []);
     }
 
+    function hasPassedRepTraining(accountId) {
+      return !isOutboundRep()
+        || (hasStoredRole()
+            && get(/databases/$(database)/documents/roles/$(request.auth.uid)).data.get('trainingPassedAccountIds', []) is list
+            && get(/databases/$(database)/documents/roles/$(request.auth.uid)).data.get('trainingPassedAccountIds', []).hasAny([accountId]));
+    }
+
     function canAccessOutboundAccount(accountId) {
       return isAdmin()
         || (isOutboundStaff()
             && accountId is string
             && accountScope() is list
-            && accountScope().hasAny([accountId]));
+            && accountScope().hasAny([accountId])
+            && hasPassedRepTraining(accountId));
     }
 
     function canReadOutboundCampaign(campaign) {
@@ -99,6 +107,25 @@ service cloud.firestore {
             || ('allowedRepUids' in campaign
                 && campaign.allowedRepUids is list
                 && campaign.allowedRepUids.hasAny([request.auth.uid])));
+    }
+
+    function canReadOutboundCampaignId(campaignId) {
+      return campaignId is string
+        && exists(/databases/$(database)/documents/outboundCampaigns/$(campaignId))
+        && canReadOutboundCampaign(get(/databases/$(database)/documents/outboundCampaigns/$(campaignId)).data);
+    }
+
+    function canReadOutboundCampaignForAccount(campaignId, accountId) {
+      return accountId is string
+        && canReadOutboundCampaignId(campaignId)
+        && get(/databases/$(database)/documents/outboundCampaigns/$(campaignId)).data.accountId == accountId;
+    }
+
+    function canReadOutboundCall(call) {
+      return call.direction == 'outbound'
+        && canAccessOutboundAccount(call.accountId)
+        && (!isOutboundRep()
+            || canReadOutboundCampaignForAccount(call.campaignId, call.accountId));
     }
 
     function isOwner(uid) {
@@ -413,8 +440,7 @@ service cloud.firestore {
       allow update: if isAdmin()
                     || validConversationClose(request.resource.data, resource.data);
       allow read:   if isAdmin()
-                    || (resource.data.direction == 'outbound'
-                        && canAccessOutboundAccount(resource.data.accountId));
+                    || canReadOutboundCall(resource.data);
       allow delete: if isAdmin();
 
       // Turns cover both the state timeline and any transcript the widget
@@ -423,8 +449,7 @@ service cloud.firestore {
       match /turns/{turnId} {
         allow create: if validTurn(request.resource.data);
         allow read:   if isAdmin()
-                      || (get(/databases/$(database)/documents/calls/$(callId)).data.direction == 'outbound'
-                          && canAccessOutboundAccount(get(/databases/$(database)/documents/calls/$(callId)).data.accountId));
+                      || canReadOutboundCall(get(/databases/$(database)/documents/calls/$(callId)).data);
         allow update: if false;
         allow delete: if isAdmin();
       }
@@ -564,7 +589,10 @@ service cloud.firestore {
     // existing role behaviour.
 
     match /prospects/{prospectId} {
-      allow read: if canAccessOutboundAccount(resource.data.accountId);
+      // Reps receive only the target snapshot for a campaign they are assigned
+      // to; the full prospect record and its activity history stay with admins
+      // and outbound managers.
+      allow read: if !isOutboundRep() && canAccessOutboundAccount(resource.data.accountId);
       // Server-only lifecycle. See the note above: creation must go through
       // the import service, and deletion is an archive operation there too.
       allow create, delete: if false;
@@ -580,7 +608,8 @@ service cloud.firestore {
                          ]);
 
       match /activities/{activityId} {
-        allow read:   if canAccessOutboundAccount(get(/databases/$(database)/documents/prospects/$(prospectId)).data.accountId);
+        allow read:   if !isOutboundRep()
+                      && canAccessOutboundAccount(get(/databases/$(database)/documents/prospects/$(prospectId)).data.accountId);
         allow create: if isAdmin();
         allow update, delete: if false;
       }
@@ -601,7 +630,9 @@ service cloud.firestore {
     }
 
     match /outboundTargets/{targetId} {
-      allow read: if canAccessOutboundAccount(resource.data.accountId);
+      allow read: if isOutboundRep()
+        ? canReadOutboundCampaignForAccount(resource.data.campaignId, resource.data.accountId)
+        : canAccessOutboundAccount(resource.data.accountId);
       allow write: if false;
     }
 
@@ -618,8 +649,12 @@ service cloud.firestore {
 
     match /dialerSessions/{sessionId} {
       // A rep watches their own session live; the transitions are all written
-      // server-side inside transactions.
-      allow read: if canAccessOutboundAccount(resource.data.accountId);
+      // server-side inside transactions. It remains visible only while the rep
+      // still has access to that specific campaign.
+      allow read: if isOutboundRep()
+        ? (resource.data.userUid == request.auth.uid
+          && canReadOutboundCampaignForAccount(resource.data.campaignId, resource.data.accountId))
+        : canAccessOutboundAccount(resource.data.accountId);
       allow write: if false;
     }
 
@@ -637,8 +672,10 @@ service cloud.firestore {
     match /leadResearch/{contactKey} {
       // Read-only in the browser. Approval goes through approveLeadResearch,
       // which is what keeps `verifiedFacts` and `sources` unforgeable — an
-      // admin may reword a summary, not invent a sourced fact.
-      allow read: if canAccessOutboundAccount(resource.data.accountId);
+      // admin may reword a summary, not invent a sourced fact. Research is
+      // account-shared and has no campaign key, so reps read only the snapshot
+      // attached to targets from their assigned campaigns.
+      allow read: if !isOutboundRep() && canAccessOutboundAccount(resource.data.accountId);
       allow write: if false;
     }
 
@@ -667,7 +704,9 @@ service cloud.firestore {
     // a browser that could edit these documents could clear a safety halt by
     // decrementing a counter, which is exactly what the breaker exists to stop.
     match /campaignIncidents/{incidentId} {
-      allow read: if canAccessOutboundAccount(resource.data.accountId);
+      allow read: if isOutboundRep()
+        ? canReadOutboundCampaignForAccount(resource.data.campaignId, resource.data.accountId)
+        : canAccessOutboundAccount(resource.data.accountId);
       allow write: if false;
     }
 
@@ -689,11 +728,10 @@ service cloud.firestore {
     // No-dial eligibility audits. Counts only — the per-record rows are
     // returned to the caller who ran the audit and are never stored, because
     // they are a snapshot of one moment and re-reading a stale one is how
-    // somebody ends up acting on last month's verdict. Readable by anyone who
-    // can work this seller's outbound queue: an operator looking at a campaign
-    // with nothing in it is entitled to see why. Written only by the server.
+    // somebody ends up acting on last month's verdict. Managers may inspect
+    // why a seller's queue is empty. Written only by the server.
     match /outboundEligibilityAudits/{auditId} {
-      allow read: if canAccessOutboundAccount(resource.data.accountId);
+      allow read: if !isOutboundRep() && canAccessOutboundAccount(resource.data.accountId);
       allow write: if false;
     }
 
@@ -728,7 +766,9 @@ service cloud.firestore {
     // confirming, which is exactly the race the hold exists to prevent.
 
     match /appointments/{appointmentId} {
-      allow read: if canAccessOutboundAccount(resource.data.accountId);
+      allow read: if canAccessOutboundAccount(resource.data.accountId)
+        && (!isOutboundRep()
+          || canReadOutboundCampaignForAccount(resource.data.campaignId, resource.data.accountId));
       allow write: if false;
     }
 

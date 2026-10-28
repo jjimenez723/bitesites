@@ -20,11 +20,13 @@ import TransferInbox from './outbound/TransferInbox';
 import TeamCallCoach from './outbound/TeamCallCoach';
 import ConsentRegistry from './outbound/ConsentRegistry';
 import EligibilityAudit from './outbound/EligibilityAudit';
+import RepTraining from './outbound/RepTraining';
 import './outbound/outbound.css';
 import './outbound/hybrid.css';
 import './outbound/agents.css';
 
 const TABS = [
+  ['training', 'AI Training'],
   ['campaigns', 'Campaigns'],
   ['discovery', 'Lead Discovery'],
   ['prospects', 'Prospects'],
@@ -45,13 +47,14 @@ const TABS = [
 // collections in Firestore.  The key list above remains the single authority
 // for permissions and deep links; this only supplies visual hierarchy.
 const TAB_GROUPS = [
+  { key: 'onboard', label: 'Onboarding', tabs: ['training'] },
   { key: 'operate', label: 'Operate', tabs: ['campaigns', 'queue', 'dialer', 'calendar', 'history'] },
   { key: 'build', label: 'Build', tabs: ['prospects', 'agents'] },
   { key: 'monitor', label: 'Monitor', tabs: ['coaching', 'later', 'settings'] },
   { key: 'admin', label: 'Admin', tabs: ['discovery', 'review', 'consent', 'eligibility'] }
 ];
 
-const REP_TAB_KEYS = new Set(['queue', 'dialer', 'calendar', 'later', 'history']);
+const REP_TAB_KEYS = new Set(['training', 'queue', 'dialer', 'calendar', 'later', 'history']);
 const MANAGER_TAB_KEYS = new Set([
   'campaigns', 'prospects', 'queue', 'dialer', 'coaching', 'agents',
   'calendar', 'later', 'history', 'settings'
@@ -62,7 +65,7 @@ export default function OutboundCalls({ role = 'admin', currentUid = '' }) {
   const canManage = role !== 'outbound_rep';
   const visibleTabs = useMemo(
     () => canManage
-      ? TABS.filter(([key]) => role === 'admin' || MANAGER_TAB_KEYS.has(key))
+      ? TABS.filter(([key]) => key !== 'training' && (role === 'admin' || MANAGER_TAB_KEYS.has(key)))
       : TABS.filter(([key]) => REP_TAB_KEYS.has(key)),
     [canManage, role]
   );
@@ -70,9 +73,11 @@ export default function OutboundCalls({ role = 'admin', currentUid = '' }) {
     .map(key => visibleTabs.find(([tabKey]) => tabKey === key))
     .filter(Boolean)), [visibleTabs]);
   const requestedTab = searchParams.get('tab');
-  const initialTab = visibleTabs.some(([key]) => key === requestedTab)
-    ? requestedTab
-    : canManage ? 'campaigns' : 'dialer';
+  const initialTab = role === 'outbound_rep'
+    ? 'training'
+    : visibleTabs.some(([key]) => key === requestedTab)
+      ? requestedTab
+      : 'campaigns';
   const [tab, setTabState] = useState(initialTab);
   const [campaignId, setCampaignId] = useState('');
   const [prospectId, setProspectId] = useState(null);
@@ -81,11 +86,18 @@ export default function OutboundCalls({ role = 'admin', currentUid = '' }) {
   // deliberate detour, not the thing you have to get past to make a call.
   const [dialerAdvanced, setDialerAdvanced] = useState(false);
   const [config, setConfig] = useState({ data: null, loading: true, error: null });
+  const [repTraining, setRepTraining] = useState({ accounts: [], loading: role === 'outbound_rep', error: null });
   const tabRefs = useRef([]);
+  const repTrainingInitialized = useRef(false);
 
   const accountIds = config.data?.accountIds || [];
   const allAccounts = config.data?.allAccounts === true || role === 'admin';
-  const campaigns = useCampaigns(accountIds, allAccounts, role, currentUid);
+  const assignedTrainingAccountIds = useMemo(
+    () => repTraining.accounts.filter(account => account.passed && account.campaignAssigned).map(account => account.accountId),
+    [repTraining.accounts]
+  );
+  const campaignAccountIds = role === 'outbound_rep' ? assignedTrainingAccountIds : accountIds;
+  const campaigns = useCampaigns(campaignAccountIds, role === 'outbound_rep' ? false : allAccounts, role, currentUid);
 
   const setTab = useCallback(next => {
     if (!visibleTabs.some(([key]) => key === next)) return;
@@ -101,10 +113,13 @@ export default function OutboundCalls({ role = 'admin', currentUid = '' }) {
   }, [setTab]);
 
   useEffect(() => {
+    const repBlocked = role === 'outbound_rep'
+      && (repTraining.loading || repTraining.error || repTraining.accounts.some(account => !account.passed || !account.campaignAssigned));
     if (requestedTab && visibleTabs.some(([key]) => key === requestedTab) && requestedTab !== tab) {
+      if (repBlocked && requestedTab !== 'training') return;
       setTabState(requestedTab);
     }
-  }, [requestedTab, tab, visibleTabs]);
+  }, [requestedTab, tab, visibleTabs, role, repTraining]);
 
   const loadConfig = useCallback(() => {
     setConfig(current => ({ ...current, loading: true }));
@@ -120,6 +135,37 @@ export default function OutboundCalls({ role = 'admin', currentUid = '' }) {
   }, []);
 
   useEffect(loadConfig, [loadConfig]);
+
+  const loadRepTraining = useCallback(() => {
+    if (role !== 'outbound_rep') return Promise.resolve();
+    setRepTraining(current => ({ ...current, loading: true, error: null }));
+    return outbound.repTrainingStatus()
+      .then(result => setRepTraining({ accounts: result?.accounts || [], loading: false, error: null }))
+      .catch(error => setRepTraining({
+        accounts: [], loading: false,
+        error: error?.code === 'functions/not-found' || error?.code === 'functions/internal'
+          ? 'The required sales training service is unavailable in this environment. Try again later or ask a manager to check the release.'
+          : error?.message || 'Could not load required sales training.'
+      }));
+  }, [role]);
+
+  useEffect(() => { void loadRepTraining(); }, [loadRepTraining]);
+
+  useEffect(() => {
+    if (role !== 'outbound_rep' || repTraining.loading) return;
+    if (repTraining.error) {
+      if (tab !== 'training') setTab('training');
+      return;
+    }
+    const needsTrainingOrAssignment = repTraining.accounts.some(account => !account.passed || !account.campaignAssigned);
+    if (!repTrainingInitialized.current) {
+      repTrainingInitialized.current = true;
+      if (needsTrainingOrAssignment && tab !== 'training') setTab('training');
+      else if (!needsTrainingOrAssignment && repTraining.accounts.length && tab === 'training') setTab('dialer');
+      return;
+    }
+    if (needsTrainingOrAssignment && tab !== 'training') setTab('training');
+  }, [role, repTraining, tab, setTab]);
 
   useEffect(() => {
     if (!campaignId && campaigns.rows.length) setCampaignId(campaigns.rows[0].id);
@@ -154,7 +200,9 @@ export default function OutboundCalls({ role = 'admin', currentUid = '' }) {
         <div>
           <h1>Outbound Sales</h1>
           <p className="admin-topbar-sub">
-            Discover prospects, configure AI agents, run human + AI calls, and audit every outcome in one workspace.
+            {role === 'outbound_rep'
+              ? 'Practice with fictional prospects, then work the campaigns assigned to you.'
+              : 'Discover prospects, configure AI agents, run human + AI calls, and audit every outcome in one workspace.'}
           </p>
         </div>
         <div className="admin-topbar-spacer" />
@@ -162,14 +210,14 @@ export default function OutboundCalls({ role = 'admin', currentUid = '' }) {
           {activeCampaign?.status === 'running' && (
             <span className="pill running"><i />{activeCampaign.name} is running</span>
           )}
-          <button className="btn-admin" type="button" onClick={() => { campaigns.refresh(); loadConfig(); }}>
+          <button className="btn-admin" type="button" onClick={() => { campaigns.refresh(); loadConfig(); void loadRepTraining(); }}>
             Refresh
           </button>
         </div>
       </header>
 
       <div className="admin-body">
-        <section className="outbound-workspace-bar" aria-label="Current outbound workspace">
+        {!(role === 'outbound_rep' && (repTraining.loading || repTraining.error || repTraining.accounts.some(account => !account.passed || !account.campaignAssigned))) && <section className="outbound-workspace-bar" aria-label="Current outbound workspace">
           <div className="outbound-workspace-copy">
             <span className="outbound-eyebrow">Current workspace</span>
             <h2>{activeCampaign?.name || 'Choose a campaign'}</h2>
@@ -205,7 +253,7 @@ export default function OutboundCalls({ role = 'admin', currentUid = '' }) {
             )}
             <button className="btn-admin" type="button" onClick={() => setTab('campaigns')}>Campaigns</button>
           </div>
-        </section>
+        </section>}
 
         <div className="outbound-subnav" role="tablist" aria-label="Outbound sections" onKeyDown={onTabKeyDown}>
           {groupedTabs.map(group => (
@@ -242,6 +290,12 @@ export default function OutboundCalls({ role = 'admin', currentUid = '' }) {
         {config.error && <p className="admin-error" style={{ marginBottom: 14 }}>{config.error}</p>}
 
         <div id="outbound-panel" role="tabpanel" aria-labelledby={`outbound-tab-${tab}`}>
+          {tab === 'training' && <RepTraining
+            accounts={repTraining.accounts}
+            loading={repTraining.loading}
+            error={repTraining.error}
+            onRefresh={loadRepTraining}
+          />}
           {tab === 'campaigns' && (
             <CampaignList
               campaigns={campaigns.rows}
@@ -307,12 +361,12 @@ export default function OutboundCalls({ role = 'admin', currentUid = '' }) {
           {tab === 'eligibility' && (
             <EligibilityAudit campaigns={campaigns.rows} role={role} accountIds={accountIds} />
           )}
-          {tab === 'calendar' && <AppointmentCalendar canManage={canManage} accountIds={accountIds} allAccounts={allAccounts} />}
+          {tab === 'calendar' && <AppointmentCalendar canManage={canManage} accountIds={accountIds} allAccounts={allAccounts} role={role} campaigns={campaigns.rows} />}
           {tab === 'later' && (
             <CallLaterQueue campaignId={campaignId} campaigns={campaigns.rows} onSelectCampaign={setCampaignId} />
           )}
           {tab === 'history' && (
-            <CallHistory campaignId={campaignId} campaigns={campaigns.rows} onSelectCampaign={setCampaignId} />
+            <CallHistory campaignId={campaignId} campaigns={campaigns.rows} role={role} onSelectCampaign={setCampaignId} />
           )}
           {tab === 'settings' && (
             <ProviderStatus config={config.data} loading={config.loading} error={config.error} onRefresh={loadConfig} />

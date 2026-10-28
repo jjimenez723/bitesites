@@ -64,6 +64,28 @@ function requireCalendarAccount(context, request) {
   catch (error) { throw new HttpsError('permission-denied', clean(error.message, 300)); }
 }
 
+async function assertRepAppointmentCampaign(context, appointment) {
+  if (context.role !== 'outbound_rep') return;
+  const campaignId = clean(appointment?.campaignId, 200);
+  const campaignSnapshot = campaignId
+    ? await context.db.doc(`outboundCampaigns/${campaignId}`).get()
+    : null;
+  if (!campaignSnapshot?.exists
+      || readAccountId(campaignSnapshot.get('accountId'), { fallback: LEGACY_ACCOUNT_ID })
+        !== readAccountId(appointment?.accountId, { fallback: LEGACY_ACCOUNT_ID })) {
+    throw new HttpsError('permission-denied', 'This appointment is not linked to one of your assigned campaigns.');
+  }
+  const campaign = campaignSnapshot.data() || {};
+  if (!Array.isArray(campaign.allowedRepUids) || !campaign.allowedRepUids.includes(context.uid)) {
+    throw new HttpsError('permission-denied', 'This appointment belongs to a campaign that is not assigned to you.');
+  }
+  const roleSnapshot = await context.db.doc(`roles/${context.uid}`).get();
+  if (!Array.isArray(roleSnapshot.get('trainingPassedAccountIds'))
+      || !roleSnapshot.get('trainingPassedAccountIds').includes(campaign.accountId)) {
+    throw new HttpsError('failed-precondition', 'Pass the required sales practice course before accessing campaign appointments.');
+  }
+}
+
 async function calendarClient(db, accountId, hostId = '') {
   const settings = await loadCalendarSettings(db, accountId, hostId).catch(() => null);
   if (!settings || settings.googleSyncEnabled === false) return null;
@@ -141,7 +163,7 @@ export const updateCalendarSettings = onCall(callOptions, async request => {
  * voice agent so a rep and an agent cannot both take the same slot.
  */
 export const bookAppointment = onCall(callOptions, async request => {
-  const context = await requireCalendarAccess(request);
+  const context = await requireCalendarAccess(request, { manage: true });
   const { db, uid } = context;
   const accountId = requireCalendarAccount(context, request);
   const slotId = clean(request.data?.slotId, 200);
@@ -192,8 +214,15 @@ export const rescheduleAppointmentCall = onCall(callOptions, async request => {
   const context = await requireCalendarAccess(request);
   const { db, uid } = context;
   const accountId = requireCalendarAccount(context, request);
+  const appointmentId = clean(request.data?.appointmentId, 200);
+  const existing = await db.doc(`appointments/${appointmentId}`).get();
+  if (!existing.exists) throw new HttpsError('not-found', 'Appointment not found.');
+  if (readAccountId(existing.get('accountId'), { fallback: LEGACY_ACCOUNT_ID }) !== accountId) {
+    throw new HttpsError('failed-precondition', 'That appointment belongs to another entity.');
+  }
+  await assertRepAppointmentCampaign(context, existing.data());
   const result = await rescheduleAppointment(db, {
-    appointmentId: clean(request.data?.appointmentId, 200),
+    appointmentId,
     slotId: clean(request.data?.slotId, 200),
     accountId,
     actor: uid
@@ -220,6 +249,7 @@ export const cancelAppointmentCall = onCall(callOptions, async request => {
   if (readAccountId(existing.get('accountId'), { fallback: LEGACY_ACCOUNT_ID }) !== accountId) {
     throw new HttpsError('failed-precondition', 'That appointment belongs to another entity.');
   }
+  await assertRepAppointmentCampaign(context, existing.data());
   const result = await cancelAppointment(db, {
     appointmentId,
     accountId,
@@ -251,6 +281,7 @@ export const setAppointmentOutcome = onCall(callOptions, async request => {
   if (readAccountId(snapshot.get('accountId'), { fallback: LEGACY_ACCOUNT_ID }) !== accountId) {
     throw new HttpsError('failed-precondition', 'That appointment belongs to another entity.');
   }
+  await assertRepAppointmentCampaign(context, snapshot.data());
   if (snapshot.get('status') !== 'booked') {
     throw new HttpsError('failed-precondition', 'Only a booked appointment has an outcome.');
   }

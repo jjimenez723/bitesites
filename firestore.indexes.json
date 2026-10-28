@@ -128,6 +128,16 @@
       ]
     },
     {
+      "//": "Appointments limited to one campaign for a trained sales rep.",
+      "collectionGroup": "appointments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "accountId", "order": "ASCENDING" },
+        { "fieldPath": "campaignId", "order": "ASCENDING" },
+        { "fieldPath": "startAt", "order": "ASCENDING" }
+      ]
+    },
+    {
       "//": "consent-grants.expireDueConsentGrants — due active grants only, oldest expiry first.",
       "collectionGroup": "consentGrants",
       "queryScope": "COLLECTION",
@@ -724,6 +734,12 @@
     }
   ],
   "fieldOverrides": [
+    {
+      "collectionGroup": "repTrainingAttempts",
+      "fieldPath": "expiresAt",
+      "ttl": true,
+      "indexes": []
+    },
     {
       "collectionGroup": "results",
       "fieldPath": "expiresAt",

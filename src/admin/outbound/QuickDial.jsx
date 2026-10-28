@@ -36,6 +36,7 @@ const BLOCKER_COPY = {
   session_ended: 'That dialing session has ended. Start dialing again.',
   wrap_up_pending: 'Finish the last call’s outcome or interested-lead follow-up before dialing again.',
   rep_not_assigned: 'A manager must assign this campaign to you before you can dial it.',
+  rep_training_required: 'Complete the required sales practice before this dialer can place or refill calls.',
   rep_role_changed: 'Your outbound role changed. End this session and start a new one.',
   session_role_unavailable: 'The session could not verify your outbound role. End it and start a new one.'
 };

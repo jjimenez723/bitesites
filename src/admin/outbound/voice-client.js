@@ -6,6 +6,18 @@ let devicePromise = null;
 
 const deviceIsDestroyed = device => device?.state === 'destroyed';
 const destroyedDeviceError = error => /device.{0,40}destroyed|destroyed.{0,40}device/i.test(error?.message || '');
+const reconnectError = () => new Error('Call audio disconnected. Tap Reconnect audio to try again.');
+
+async function updateLiveDeviceToken(device, token) {
+  if (deviceIsDestroyed(device)) return false;
+  try {
+    await device.updateToken(token);
+    return !deviceIsDestroyed(device);
+  } catch (error) {
+    if (deviceIsDestroyed(device) || destroyedDeviceError(error)) return false;
+    throw error;
+  }
+}
 
 function forgetDevice(device) {
   const pending = devicePromise;
@@ -31,15 +43,15 @@ async function buildDevice() {
   device.on('tokenWillExpire', async () => {
     try {
       const token = (await outbound.voiceToken()).token;
-      if (deviceIsDestroyed(device)) {
+      if (!await updateLiveDeviceToken(device, token)) {
         forgetDevice(device);
+        voice.deviceError(reconnectError());
         return;
       }
-      device.updateToken(token);
     } catch (error) {
       if (deviceIsDestroyed(device) || destroyedDeviceError(error)) {
         forgetDevice(device);
-        voice.deviceError(new Error('Call audio disconnected. Tap Reconnect audio to try again.'));
+        voice.deviceError(reconnectError());
       } else voice.deviceError(error);
     }
   });
@@ -47,7 +59,7 @@ async function buildDevice() {
   device.on('error', error => {
     if (deviceIsDestroyed(device) || destroyedDeviceError(error)) {
       forgetDevice(device);
-      voice.deviceError(new Error('Call audio disconnected. Tap Reconnect audio to try again.'));
+      voice.deviceError(reconnectError());
       return;
     }
     voice.deviceError(error);
@@ -90,23 +102,13 @@ const voice = createVoiceSession({
     let device = await hybridVoiceDevice();
     // Recovered sessions can sit idle past the 15-minute token lifetime.
     const token = (await outbound.voiceToken()).token;
-    if (deviceIsDestroyed(device)) {
+    if (!await updateLiveDeviceToken(device, token)) {
       forgetDevice(device);
       device = await hybridVoiceDevice();
-    }
-    if (deviceIsDestroyed(device)) {
-      throw new Error('Call audio closed before connecting. Tap Reconnect audio to try again.');
-    }
-    try {
-      device.updateToken(token);
-    } catch (error) {
-      if (!deviceIsDestroyed(device) && !destroyedDeviceError(error)) throw error;
-      forgetDevice(device);
-      device = await hybridVoiceDevice();
-      if (deviceIsDestroyed(device)) {
-        throw new Error('Call audio closed before connecting. Tap Reconnect audio to try again.');
+      if (!await updateLiveDeviceToken(device, token)) {
+        forgetDevice(device);
+        throw reconnectError();
       }
-      device.updateToken(token);
     }
     return device;
   }

@@ -163,7 +163,7 @@ export function sanitizeCampaign(input = {}, { existing = null } = {}) {
  * one: a campaign built correctly and then re-pointed at another account's
  * persona is exactly how a client's contacts get called by the wrong voice.
  */
-async function assertCampaignBindings(db, campaign) {
+async function assertCampaignBindings(db, campaign, { requireTrainingRepUids = [] } = {}) {
   const profileId = campaign.agentProfileId;
   let profileAccountId;
 
@@ -185,6 +185,13 @@ async function assertCampaignBindings(db, campaign) {
       || !snapshot.get('accountIds').includes(campaign.accountId));
     if (invalid.length) {
       throw new Error('Every assigned teammate must be an active sales rep assigned to this campaign’s account.');
+    }
+    const trainingRequired = new Set(requireTrainingRepUids);
+    const untrained = roles.filter(snapshot => trainingRequired.has(snapshot.id)
+      && !(Array.isArray(snapshot.get('trainingPassedAccountIds'))
+        && snapshot.get('trainingPassedAccountIds').includes(campaign.accountId)));
+    if (untrained.length) {
+      throw new Error('A sales rep must pass the account’s required training before campaign access is granted.');
     }
   }
 
@@ -213,7 +220,7 @@ export async function createCampaign(db, input, { createdBy }) {
   if (!support.ok) {
     throw new Error(`Provider "${campaign.provider}" cannot run a ${campaign.mode} campaign: missing ${support.missing.join(', ')}`);
   }
-  await assertCampaignBindings(db, campaign);
+  await assertCampaignBindings(db, campaign, { requireTrainingRepUids: campaign.allowedRepUids });
 
   const ref = db.collection('outboundCampaigns').doc();
   await ref.set({
@@ -253,7 +260,9 @@ export async function updateCampaign(db, campaignId, input) {
       + 'Create a new campaign under the other account and import its targets there.'
     );
   }
-  await assertCampaignBindings(db, campaign);
+  const existingRepUids = new Set(Array.isArray(existing.allowedRepUids) ? existing.allowedRepUids : []);
+  const newlyAssignedRepUids = campaign.allowedRepUids.filter(uid => !existingRepUids.has(uid));
+  await assertCampaignBindings(db, campaign, { requireTrainingRepUids: newlyAssignedRepUids });
 
   await ref.set({ ...campaign, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
 
@@ -1001,7 +1010,7 @@ export async function dialNext(db, sessionId, {
   const campaignSnapshot = await db.doc(`outboundCampaigns/${session.campaignId}`).get();
   if (!campaignSnapshot.exists) throw new Error('Campaign not found');
   const campaign = readCampaign(campaignSnapshot, session.campaignId);
-  if (session.hybridV2 === true && session.userUid) {
+  if (session.userUid) {
     const roleSnapshot = await db.doc(`roles/${session.userUid}`).get();
     const currentRole = roleSnapshot.exists ? roleSnapshot.get('role') : session.userRole;
     if (!currentRole) return { started: [], reason: 'session_role_unavailable' };
@@ -1011,6 +1020,13 @@ export async function dialNext(db, sessionId, {
     if (currentRole === 'outbound_rep'
         && !(campaign.allowedRepUids || []).includes(session.userUid)) {
       return { started: [], reason: 'rep_not_assigned' };
+    }
+    if (currentRole === 'outbound_rep'
+        && !(Array.isArray(roleSnapshot.get('trainingPassedAccountIds'))
+          && roleSnapshot.get('trainingPassedAccountIds').includes(
+            readAccountId(campaign.accountId, { fallback: LEGACY_ACCOUNT_ID })
+          ))) {
+      return { started: [], reason: 'rep_training_required' };
     }
   }
   // Checked before the status so a halted campaign reports why it stopped
@@ -1182,7 +1198,7 @@ export async function dialNext(db, sessionId, {
   // rep's assignment or for call wrap-up to begin. Recheck server-owned V2
   // state immediately before contacting the carrier so that a late-running
   // refill cannot slip a new call in after a pause or disposition hold.
-  if (session.hybridV2 === true) {
+  if (session.hybridV2 === true || session.userUid) {
     const latestSessionSnapshot = await sessionRef.get();
     let blockedReason = !latestSessionSnapshot.exists ? 'session_missing' : '';
     const latestSession = latestSessionSnapshot.exists ? latestSessionSnapshot.data() || {} : {};
@@ -1191,7 +1207,7 @@ export async function dialNext(db, sessionId, {
         || ['awaiting_email', 'sending'].includes(latestSession.pendingFollowUp?.status))) {
       blockedReason = 'wrap_up_pending';
     }
-    if (!blockedReason && latestSession.autoDial?.enabled !== true) blockedReason = 'auto_dial_disabled';
+    if (!blockedReason && session.hybridV2 === true && latestSession.autoDial?.enabled !== true) blockedReason = 'auto_dial_disabled';
 
     const latestCampaignSnapshot = blockedReason ? null : await db.doc(`outboundCampaigns/${session.campaignId}`).get();
     if (!blockedReason && !latestCampaignSnapshot?.exists) blockedReason = 'campaign_missing';
@@ -1208,6 +1224,11 @@ export async function dialNext(db, sessionId, {
       else if (session.userRole && session.userRole !== currentRole) blockedReason = 'rep_role_changed';
       else if (currentRole === 'outbound_rep'
           && !(latestCampaign.allowedRepUids || []).includes(session.userUid)) blockedReason = 'rep_not_assigned';
+      else if (currentRole === 'outbound_rep'
+          && !(Array.isArray(latestRoleSnapshot.get('trainingPassedAccountIds'))
+            && latestRoleSnapshot.get('trainingPassedAccountIds').includes(
+              readAccountId(latestCampaign.accountId, { fallback: LEGACY_ACCOUNT_ID })
+            ))) blockedReason = 'rep_training_required';
     }
     if (blockedReason) {
       for (const target of claimedTargets) await releaseTarget(db, target.id, { state: 'ready' });
