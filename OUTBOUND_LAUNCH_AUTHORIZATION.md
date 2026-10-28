@@ -26,7 +26,7 @@ The one-page summary of which stage we are on is
 | BiteSites privacy | Private business address must never be publicized | The client-importable seller registry and runtime contain no BiteSites address. |
 | Calendar architecture | Google Calendar plus proprietary booking | Firestore owns holds, policy, attribution, and audit; Google owns live availability, the event, and attendee invitation. |
 | Operating posture | Verify backend first, then simplify UI | Staging and deterministic evaluations precede any external canary. The admin UI exposes blockers and keeps advanced controls out of the primary workflow. |
-| Sales-rep onboarding | Required browser role-play for each assigned seller; auto-assign that seller's manager-selected default campaign only after passing all required scenarios | Practice uses fictional prospects, never production leads or carrier calls. The current implementation is local and awaits an action-specific production deployment approval. No default campaign has been selected in production. |
+| Sales-rep onboarding | Approved and deployed 2026-10-28; auto-assign the manager-selected default only after the rep passes all required scenarios | Practice uses fictional prospects, never production leads or carrier calls. No production default campaign or training record is currently configured. |
 
 ## Exact authorizations still required
 
@@ -161,25 +161,25 @@ state, or legal reliance.
     which hold independently — there are zero `consentGrants` and zero
     `preDialScreenings` in production.
 
-12. **Mandatory rep-training release — deployment approval not yet recorded.**
+12. **Mandatory rep-training release — approved and deployed 2026-10-28.**
     The owner directed that sales reps complete the required AI prospect role-
     play before default campaign access is granted. Reps may finish the
     practice before a default is chosen; a manager's later default selection
-    assigns trained reps. Local code now implements this gate in the training
+    assigns trained reps. The release is deployed in the training
     evaluator, role records, Firestore rules, assigned campaign reads, warm
     transfers, browser softphone joins, and human dial/refill path. The
     evaluator scores a transcript submitted by the browser and does not
-    independently verify the speaker or transcript. Deploying these changes to
-    `bitesites-org` is a separate production action; the prior approval to turn
-    on human dialing does not cover this new release. No default campaign or
-    training record has been written to production.
+    independently verify the speaker or transcript. The owner separately
+    approved this production release. No default campaign, training attempt,
+    training progress, or rep assignment was created by deployment.
 
     **Production activation — 2026-10-28:** the owner again authorized
     human-only dialing. The gate is enabled on the six Quick Dial Functions
     (`getHybridVoiceAccessToken`, `dialHybridTargets`, `endHybridCall`,
     `submitHybridDisposition`, `resumeHybridAutoDial`, and
-    `recordHybridCallEvent`). The AI scheduler `runAICampaigns`, AI dispatcher
-    `dispatchHybridAIToSip`, and paid screening remain disabled. The local
+    `recordHybridCallEvent`). The AI scheduler `runAICampaigns` and dispatcher
+    `dispatchHybridAIToSip` remain deployed but their external-dialing gate is
+    disabled; paid screening is disabled. The local
     production parameter file stays disabled after the targeted deployment so
     a broad future Functions deploy remains fail-closed. At activation the
     authorized campaign had no assigned reps and there were no active sessions;

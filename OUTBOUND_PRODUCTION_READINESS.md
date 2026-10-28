@@ -103,8 +103,9 @@ The core outbound system is deployed to the **staging** project
 `bitesites-outbound-staging` and verified there by `npm run smoke:staging`.
 The cumulative PR #5 release was deployed to production on 2026-10-27. On
 2026-10-28, the owner authorized human dialing: six Quick Dial Functions now
-have external dialing enabled. The AI scheduler, AI dispatcher, and paid
-screening remain disabled. No production call, campaign change, rep assignment,
+have external dialing enabled. The mandatory training and campaign-default
+release was deployed later on 2026-10-28. The AI call-admission gate and paid
+screening remain closed. No production call, campaign change, rep assignment,
 or authenticated rep workflow rehearsal was performed.
 
 **Production release — 2026-10-27:** PR #5 was merged to `main` as `28849bf`
@@ -123,31 +124,31 @@ they are explicitly marked current.
 `resumeHybridAutoDial`, and `recordHybridCallEvent` are ACTIVE in production
 with `OUTBOUND_EXTERNAL_DIALING=enabled` and `PAID_PHONE_SCREENING=disabled`.
 The AI-only `runAICampaigns` scheduler and `dispatchHybridAIToSip` remain
-disabled. The local production parameter file stays disabled to keep a broad
+deployed but their external-dialing admission remains disabled. The local
+production parameter file stays disabled to keep a broad
 future Functions deployment fail-closed; a redeploy of these specific human
 Functions must explicitly restore the §11 authorization for that deployment.
 The authorized running Twilio campaign has no reps assigned yet; all other
 Twilio campaigns remain paused. No active sessions or calls were present during
 the activation.
 
-**Mandatory rep training and default assignment — local implementation only,
-2026-10-28:** the current work adds fictional, browser-only AI prospect role-
+**Mandatory rep training and default assignment — deployed 2026-10-28:** the
+release adds fictional, browser-only AI prospect role-
 plays, a scored three-scenario course per seller, a manager control for the
 account default campaign, and server/rules gates that grant campaign access
 only after both training passes and a manager selects a campaign. Reps can
 complete training before a default exists; a later default selection
 auto-assigns trained reps. It also fixes the destroyed Twilio Device token
-race and mobile live-call status layout. This work is not deployed. Production
-has no configured outbound default campaign, no training completion records,
-and no role/profile data was changed. Until an explicitly approved release
-deploys the code, the current production human dialing behavior remains in
-effect.
+race and mobile live-call status layout. Production has no configured default
+campaign or training attempt/progress records. The app route, training bundle,
+and sideband health endpoint returned success after rollout. The release did
+not modify campaign, role, or training data.
 
 | Boundary | Current implementation / production state |
 |---|---|
 | Seller separation | Campaigns, profiles, knowledge, research, calls, targets, sessions, and appointments are seller-account bound. Stored role records override stale claims. |
-| Mandatory rep training and default campaign | **Implemented locally; not deployed.** Three fictional adult-prospect scenarios per seller are practiced in browser-only Realtime sessions. The browser submits the transcript for server-side scoring; score and eligibility are stored server-side, but the transcript is not retained or independently authenticated, so this is a required practice gate rather than an identity-proof exam. Reps may complete the course before a default exists; the server records the pass, but grants no lead access until a manager selects a valid default campaign, which auto-assigns already-trained reps. Firestore rules and call/refill APIs enforce both the pass and assigned-campaign scope. No live default is selected. Production deploy needs a separate action-specific approval. |
-| Rep campaign access | **Base manager assignment is deployed 2026-10-27.** This local release further limits Firestore reads, call history, warm transfers, and appointments to the campaigns assigned to a trained rep, and checks transfer/softphone entry against that assignment. These tighter rules are not deployed yet. |
+| Mandatory rep training and default campaign | **Deployed 2026-10-28.** Three fictional adult-prospect scenarios per seller are practiced in browser-only Realtime sessions. The browser submits the transcript for server-side scoring; the transcript is not retained or independently authenticated, so this is a practice gate, not an identity-proof exam. Reps may complete the course before a default exists; the server records the pass but grants no lead access until a manager selects a valid default campaign, which auto-assigns already-trained reps. Firestore rules and call/refill APIs enforce the pass and assigned-campaign scope. No production default or training record exists yet. |
+| Rep campaign access | **Deployed 2026-10-27 and tightened 2026-10-28.** Firestore reads, call history, warm transfers, appointments, session visibility, and dialing are limited to campaigns assigned to trained reps. |
 | Human wrap-up | **Deployed 2026-10-27.** A terminal human-handled call holds capacity until the rep records an outcome. `interested` pauses auto-dial until the rep sends or skips a composed email to the lead's stored address and explicitly resumes. Authenticated production rehearsal remains outstanding. |
 | Consent | Imported consent-like fields are evidence candidates only. AI admission requires an active, server-issued, seller- and number-specific written-consent grant. Revocation and expiry fail closed. |
 | Recording | Disabled at campaign sanitization and carrier call creation. |
@@ -388,11 +389,10 @@ hybrid session on the same campaign still cannot.
 **Human-only dialing authorization and current gate:** §11 of
 [OUTBOUND_LAUNCH_AUTHORIZATION.md](./OUTBOUND_LAUNCH_AUTHORIZATION.md) was
 granted 2026-08-25. The 2026-10-28 activation enabled the external gate only on
-the human Quick Dial Functions. The AI scheduler and dispatcher still have the
-gate disabled, paid screening is disabled, and production has no consent grants
-or screening records. The rep call-plan gate fix and manager assignment checks
-are deployed; the designated running Twilio campaign currently has no assigned
-reps.
+the human Quick Dial Functions. The AI scheduler and dispatcher remain
+deployed but their external-dialing gate is disabled, paid screening is
+disabled, and production has no consent grants or screening records. The rep
+call-plan gate fix and manager assignment checks are deployed.
 
 **Production release history:** the base release deployed rules/indexes,
 Functions and Hosting on 2026-09-08 under §11. The cumulative follow-up

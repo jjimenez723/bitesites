@@ -33,7 +33,7 @@ stranger, or relying on outside approval.
 | Screening evidence can be produced from the console | ✅ 2026-08-25 — the callable existed with no client, so the evidence the dial gate demands had no way to come into existence outside a test |
 | A simulated screening provider cannot write production evidence | ✅ 2026-08-25 — it could until then, and nothing downstream could tell the difference |
 | No-dial eligibility audit reusing the runtime gates | ✅ proven stricter than the dial path, proven side-effect free |
-| Mandatory sales-rep role-play and post-pass default campaign access | ✅ implemented locally 2026-10-28; not deployed; release approval still required |
+| Mandatory sales-rep role-play and post-pass default campaign access | ✅ deployed 2026-10-28; no production default campaign selected yet |
 | Live-model evaluation adapter, guarded and fake-adapter tested | ✅ built; **not run** |
 | Readiness documents agree with the code | ✅ this pass |
 
@@ -112,7 +112,7 @@ manager assignment workflow is live; a manager must assign a salesperson in
 Campaign Builder before they can dial. No call was placed and no production
 campaign, rep, or role record was changed.
 
-**Pending local release — 2026-10-28:** mandatory AI role-play training now
+**Production release — 2026-10-28:** mandatory AI role-play training now
 gates campaign reads, call history, calendar entries, warm transfers, browser
 softphone joins, and human dialing at the server and Firestore-rule layers.
 Reps can pass three seller-specific practice scenarios before a default is
@@ -120,9 +120,10 @@ chosen; passing records training completion but grants no lead access until a
 manager selects a default campaign, which then auto-assigns trained reps. The
 practice uses fictional adults and no real leads or carrier calls. The server
 scores a transcript submitted by the browser; it does not independently verify
-the speaker or transcript. No default is configured in production, and these
-changes have not been deployed. The release needs action-specific owner
-approval.
+the speaker or transcript. The deployment passed the production dry run and
+release checks. Production currently has no default campaign or training
+attempt/progress records; reps can practice, but a manager must choose a
+campaign before they can access its leads or dial.
 
 The following notes preserve dated production findings so their historical
 context stays clear alongside the current deployment state.
@@ -137,9 +138,10 @@ historical state, not the current 2026-10-27 release:
   production the whole time this document described it as shut. Nothing dialed,
   because campaigns were paused and the AI path has no consent — but the
   outermost gate was not the thing holding the line.
-- §11 authorized **human-only** dialing. The external gate was re-enabled on
-  2026-10-28 only for the six Quick Dial Functions listed above. The AI
-  scheduler, AI dispatcher, and paid screening remain disabled.
+- §11 authorized **human-only** dialing. The external gate is enabled only on
+  the six approved Quick Dial Functions listed above. The AI scheduler and
+  dispatcher are deployed but their external-dialing admission remains closed;
+  paid screening is disabled.
 
 A third thing, found 2026-09-08 by trying to use the console the way a rep
 would: with §11 granted and the flag on, the rep dialer **still could not place

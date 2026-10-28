@@ -25,6 +25,15 @@ The deploy command targets the Hybrid V2 Functions plus Hosting and Firestore, i
 During Firebase analysis, the command temporarily selects `functions/hybrid-index.js` and always restores the normal package entrypoint in a `finally` block.
 The Cloud Run phase creates or reuses a dedicated `bitesites-sideband` service account and grants it access only to the three sideband secrets.
 
+**Human-gate parameter note:** the local production parameter file intentionally
+keeps `OUTBOUND_EXTERNAL_DIALING=disabled`. A broad Hybrid deploy propagates
+that fail-closed value, including to the human browser-token endpoint. If the
+separately approved §11 human-only gate is already open, restore only
+`getHybridVoiceAccessToken`, `dialHybridTargets`, `endHybridCall`,
+`submitHybridDisposition`, `resumeHybridAutoDial`, and `recordHybridCallEvent`
+with `OUTBOUND_EXTERNAL_DIALING=enabled` and the §11 deploy authorization.
+Leave AI dispatch functions and paid screening disabled.
+
 OpenAI webhook setup is intentionally two-phase. After the initial credentials are configured, `bootstrap:sideband` deploys the service with a nonfunctional placeholder webhook secret and `min=0`, verifies `/health`, and prints the webhook URL. Create the `realtime.call.incoming` webhook at that URL, store its real signing secret with `configure:hybrid`, and only then run the final deploy. The final deploy replaces the placeholder with the Secret Manager binding and sets `min=1` for persistent sideband sockets.
 
 ## 1. Production architecture
