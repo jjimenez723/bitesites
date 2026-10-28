@@ -431,6 +431,54 @@ export const promoteProspectToLead = onCall(callOptions, async request => {
 
 // ---------------------------------------------------------------- campaigns
 
+/** Managers choose from verified sales reps inside the selected seller account. */
+export const listOutboundCampaignReps = onCall(callOptions, async request => {
+  const { db, access } = await requireAdmin(request);
+  const accountId = requireScopedAccount(access, request.data?.accountId);
+  const roleRows = await db.collection('roles')
+    .where('role', '==', 'outbound_rep')
+    .where('accountIds', 'array-contains', accountId)
+    .limit(100)
+    .get();
+  const reps = roleRows.docs;
+  const profiles = reps.length
+    ? await db.getAll(...reps.map(entry => db.doc(`users/${entry.id}`)))
+    : [];
+  return {
+    reps: reps.map((entry, index) => {
+      const profile = profiles[index]?.exists ? profiles[index].data() : {};
+      const email = clean(profile.email || entry.get('email'), 200);
+      const displayName = clean(profile.displayName, 120);
+      return {
+        uid: entry.id,
+        email,
+        displayName,
+        name: displayName || email.split('@')[0] || 'Sales rep'
+      };
+    })
+  };
+});
+
+/** Managers may set a teammate's visible name, but only within their seller account. */
+export const updateOutboundRepName = onCall(callOptions, async request => {
+  const { db, uid, access } = await requireAdmin(request);
+  const accountId = requireScopedAccount(access, request.data?.accountId);
+  const repUid = requireId(request.data?.repUid, 'sales rep');
+  const displayName = str(request.data?.displayName, 120);
+  if (!displayName) throw new HttpsError('invalid-argument', 'Enter a name for this sales rep.');
+  const roleSnapshot = await db.doc(`roles/${repUid}`).get();
+  if (!roleSnapshot.exists || roleSnapshot.get('role') !== 'outbound_rep'
+      || !Array.isArray(roleSnapshot.get('accountIds'))
+      || !roleSnapshot.get('accountIds').includes(accountId)) {
+    throw new HttpsError('failed-precondition', 'Choose an active sales rep assigned to this account.');
+  }
+  await db.doc(`users/${repUid}`).set({
+    displayName, displayNameUpdatedAt: FieldValue.serverTimestamp(), displayNameUpdatedBy: uid,
+    updatedAt: FieldValue.serverTimestamp()
+  }, { merge: true });
+  return { uid: repUid, displayName };
+});
+
 export const createOutboundCampaign = onCall(callOptions, async request => {
   const { db, email, access } = await requireAdmin(request);
   requireScopedAccount(access, request.data?.accountId);

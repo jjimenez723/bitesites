@@ -3,8 +3,12 @@
 Working document for `OUTBOUND_COMPLETION_GOAL_SPEC.md`. One short entry per
 checkpoint: what changed, what proves it, what is left, and who is blocking.
 
-**Branch:** `feat/outbound-readiness-closeout`
-**Baseline commit:** `925697f9b62711decaf46c37d4e76e9b5026d060` (`main`)
+**Current follow-up branch:** `feat/rep-campaign-access-followup-pause`
+**Current base:** `221fba8` (`main`, destroyed Twilio device recovery)
+
+The checkpoints below document the original outbound-readiness branch. The
+2026-10-27 follow-up continues that work from the current `main` head; the old
+baseline and worktree notes in those checkpoints are historical.
 
 Unrelated uncommitted work was present on `main` at branch time and is being
 left alone: admin-UI accessibility edits across `src/admin/` plus the untracked
@@ -416,3 +420,31 @@ present.
 **Production:** Hosting deployment is pending; the GHL read-only audit callable
 from PR #3 is already deployed to `bitesites-org`. The PR #4 changes affect
 Hosting assets only and do not deploy or change dialing functions.
+
+## Checkpoint 7 — rep assignments, interested follow-up, and mobile recovery
+
+**Changes:** Managers can assign an account's active sales reps to each
+campaign and set their display names. Rep campaign queries, Firestore reads,
+session creation, and dial/refill paths enforce assignment. Human call wrap-up
+holds auto-dial for an outcome; `interested` pauses the session while the rep
+composes a follow-up to the lead's stored email, then chooses send or skip and
+explicitly resumes. The terminal webhook now writes its wrap-up hold
+transactionally, the email composer waits for verified contact context, and
+the mobile audio status has an explicit grid row. Destroyed Twilio devices
+show a reconnect prompt and are recreated on retry. The manager callables are
+re-exported from the deployed Functions entrypoint, and the rep picker queries
+the chosen account directly.
+
+**Evidence:** branch `feat/rep-campaign-access-followup-pause` is based on
+`221fba8` (`main`). `node --check` passed for the edited Functions modules,
+`firestore.indexes.json` parsed, `git diff --check` passed, and `npm run build`
+passed. Vite reported its existing mixed static/dynamic Firebase import and
+large-chunk warnings. Automated tests were not run for this follow-up.
+
+**Remaining:** production release and rehearsals. Alex's display name can be
+entered by a manager from Campaign Builder; the temporary Bergen test account
+remains `Jensy Jimenez` and remains an `outbound_rep`. No production profile,
+campaign, role, or dialer data was changed by this branch.
+
+**Blocker:** this follow-up branch has not been authorized for merge or
+production deployment. The earlier approval applied to PR #3 only.

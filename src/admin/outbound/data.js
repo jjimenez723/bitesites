@@ -184,18 +184,20 @@ export const useTeamLiveCalls = (accountIds = [], allAccounts = false) =>
     };
   }, [accountIds.join(','), allAccounts]);
 
-export const useCampaigns = (accountIds = [], allAccounts = true) =>
+export const useCampaigns = (accountIds = [], allAccounts = true, role = 'admin', uid = '') =>
   useLiveOutboundQuery(() => {
     if (!allAccounts && !accountIds.length) return null;
+    if (role === 'outbound_rep' && !uid) return null;
     return {
       cap: LIST_CAP,
       q: query(
         collection(db, 'outboundCampaigns'),
         ...(allAccounts ? [] : [where('accountId', 'in', accountIds.slice(0, 10))]),
+        ...(role === 'outbound_rep' ? [where('allowedRepUids', 'array-contains', uid)] : []),
         orderBy('createdAt', 'desc'), limit(LIST_CAP)
       )
     };
-  }, [accountIds.join(','), allAccounts]);
+  }, [accountIds.join(','), allAccounts, role, uid]);
 
 export const useProspects = ({ status = 'all', system = 'all', accountIds = [], allAccounts = false } = {}) =>
   useOutboundQuery(() => {
@@ -362,6 +364,9 @@ export const outbound = {
     callable('promoteProspectToLead', { prospectId, trigger, ...context }),
 
   createCampaign: campaign => callable('createOutboundCampaign', campaign),
+  listCampaignReps: accountId => callable('listOutboundCampaignReps', { accountId }),
+  updateRepName: (accountId, repUid, displayName) =>
+    callable('updateOutboundRepName', { accountId, repUid, displayName }),
   updateCampaign: (campaignId, campaign) => callable('updateOutboundCampaign', { campaignId, campaign }),
   startCampaign: campaignId => callable('startOutboundCampaign', { campaignId }),
   pauseCampaign: campaignId => callable('pauseOutboundCampaign', { campaignId }),
@@ -420,6 +425,12 @@ export const outbound = {
   setHybridConcurrency: (sessionId, concurrency) =>
     callable('setHybridConcurrency', { sessionId, concurrency }),
   dialHybrid: sessionId => callable('dialHybridTargets', { sessionId }),
+  pauseHybridAutoDial: sessionId => callable('pauseHybridAutoDial', { sessionId }),
+  resumeHybridAutoDial: sessionId => callable('resumeHybridAutoDial', { sessionId }),
+  hybridFollowUpContext: sessionId => callable('getHybridFollowUpContext', { sessionId }),
+  sendHybridFollowUpEmail: (sessionId, subject, message) =>
+    callable('sendHybridFollowUpEmail', { sessionId, subject, message }),
+  skipHybridFollowUpEmail: sessionId => callable('skipHybridFollowUpEmail', { sessionId }),
   stopHybridSession: (sessionId, reason = 'ended') => callable('stopHybridDialerSession', { sessionId, reason }),
   endHybridCall: callId => callable('endHybridCall', { callId }),
   dncHybridCall: callId => callable('markHybridCallDoNotCall', { callId }),

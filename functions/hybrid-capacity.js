@@ -91,6 +91,10 @@ async function acquireLease(db, sessionId, token, now) {
     if (session.hybridV2 !== true || session?.autoDial?.enabled !== true) {
       return { acquired: false, reason: 'auto_dial_disabled' };
     }
+    if (session.wrapUpPendingCallId || session.pendingFollowUp?.status === 'awaiting_email'
+        || session.pendingFollowUp?.status === 'sending') {
+      return { acquired: false, reason: 'wrap_up_pending' };
+    }
     const leaseUntil = session?.autoDial?.refillLeaseUntil?.toMillis?.() || 0;
     if (leaseUntil > now.getTime()) return { acquired: false, reason: 'refill_in_progress' };
     transaction.set(ref, {
@@ -148,6 +152,11 @@ export async function maintainHybridCapacity(db, sessionId, {
         lastResult = { reason: session.status !== 'active' ? `session_${session.status}` : 'auto_dial_disabled' };
         break;
       }
+      if (session.wrapUpPendingCallId || session.pendingFollowUp?.status === 'awaiting_email'
+          || session.pendingFollowUp?.status === 'sending') {
+        lastResult = { reason: 'wrap_up_pending' };
+        break;
+      }
 
       const liveCalls = await liveCallsForSession(db, session);
       await db.doc(`dialerSessions/${sessionId}`).set({
@@ -165,7 +174,8 @@ export async function maintainHybridCapacity(db, sessionId, {
       lastResult = await dialNext(db, sessionId, { now: new Date(), providerConfig, maxNewCalls: vacancies });
       const placed = lastResult.started || [];
       if (!placed.length) {
-        finalState = lastResult.reason === 'no_eligible_targets' ? 'waiting_for_targets' : 'running';
+        finalState = lastResult.reason === 'no_eligible_targets' ? 'waiting_for_targets'
+          : lastResult.reason === 'wrap_up_pending' ? 'awaiting_disposition' : 'running';
         break;
       }
       await initializeHybridCalls(db, session, placed, actorId);

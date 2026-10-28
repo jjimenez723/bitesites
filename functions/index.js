@@ -2663,6 +2663,8 @@ export {
   // Campaigns.
   createOutboundCampaign,
   updateOutboundCampaign,
+  listOutboundCampaignReps,
+  updateOutboundRepName,
   startOutboundCampaign,
   pauseOutboundCampaign,
   resumeOutboundCampaign,

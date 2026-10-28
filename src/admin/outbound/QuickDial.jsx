@@ -33,7 +33,11 @@ const BLOCKER_COPY = {
   external_dialing_disabled: 'Outside calling is switched off in this environment, so no call was placed.',
   at_capacity: 'A call is already running on this line.',
   batch_in_progress: 'A call is already running on this line.',
-  session_ended: 'That dialing session has ended. Start dialing again.'
+  session_ended: 'That dialing session has ended. Start dialing again.',
+  wrap_up_pending: 'Finish the last call’s outcome or interested-lead follow-up before dialing again.',
+  rep_not_assigned: 'A manager must assign this campaign to you before you can dial it.',
+  rep_role_changed: 'Your outbound role changed. End this session and start a new one.',
+  session_role_unavailable: 'The session could not verify your outbound role. End it and start a new one.'
 };
 
 /** Keep implementation failures out of the operator-facing dialer. */
@@ -197,7 +201,7 @@ function FollowUpPrompt({ label, busy, onCancel, onConfirm, callback = false }) 
   );
 }
 
-export default function QuickDial({ campaignId, campaigns = [], onSelectCampaign, onOpenAdvanced }) {
+export default function QuickDial({ campaignId, campaigns = [], campaignsLoading = false, role = 'admin', onSelectCampaign, onOpenAdvanced }) {
   const [sessionId, setSessionId] = useState('');
   const [recovering, setRecovering] = useState(true);
   const [blocker, setBlocker] = useState('');
@@ -207,6 +211,11 @@ export default function QuickDial({ campaignId, campaigns = [], onSelectCampaign
   // Which call a follow-up time is being picked for, so an outcome can never
   // land on the prospect who happened to be on screen when it was confirmed.
   const [followUp, setFollowUp] = useState({});
+  const [followUpContext, setFollowUpContext] = useState(null);
+  const [followUpContextLoading, setFollowUpContextLoading] = useState(false);
+  const [followUpContextRetry, setFollowUpContextRetry] = useState(0);
+  const [emailSubject, setEmailSubject] = useState('Thanks for speaking with me');
+  const [emailMessage, setEmailMessage] = useState('');
   const [now, setNow] = useState(Date.now());
   const lastCuedCallRef = useRef('');
   const action = useAction();
@@ -216,6 +225,35 @@ export default function QuickDial({ campaignId, campaigns = [], onSelectCampaign
   const { data: session } = useLiveDoc(sessionId ? `dialerSessions/${sessionId}` : '');
   useSessionHeartbeat(session?.status === 'active' ? sessionId : '');
   const calls = useLiveCalls(session?.activeCallIds || []);
+  const followUpFormCallRef = useRef('');
+
+  useEffect(() => {
+    const callId = session?.pendingFollowUp?.callId || '';
+    if (!sessionId || !callId) {
+      setFollowUpContext(null);
+      setFollowUpContextLoading(false);
+      followUpFormCallRef.current = '';
+      return undefined;
+    }
+    let cancelled = false;
+    setFollowUpContext(null);
+    setFollowUpContextLoading(true);
+    outbound.hybridFollowUpContext(sessionId)
+      .then(context => {
+        if (cancelled) return;
+        setFollowUpContext(context);
+        if (followUpFormCallRef.current !== callId) {
+          followUpFormCallRef.current = callId;
+          setEmailSubject('Thanks for speaking with me');
+          setEmailMessage('');
+        }
+      })
+      .catch(error => {
+        if (!cancelled) setFollowUpContext({ callId, error: error?.message || 'Could not load the follow-up details.' });
+      })
+      .finally(() => { if (!cancelled) setFollowUpContextLoading(false); });
+    return () => { cancelled = true; };
+  }, [sessionId, session?.pendingFollowUp?.callId, followUpContextRetry]);
 
   const live = useMemo(
     () => calls.rows.filter(entry => !isTerminal(entry))[0] || null,
@@ -239,6 +277,8 @@ export default function QuickDial({ campaignId, campaigns = [], onSelectCampaign
   const onCall = assignedToRep && voice.connected && voice.callId === live.id;
   const running = session?.status === 'active';
   const dialing = running && Boolean(session?.autoDial?.enabled);
+  const pendingFollowUp = session?.pendingFollowUp || null;
+  const followUpContextMatches = followUpContext?.callId === pendingFollowUp?.callId;
   const waitingForTargets = dialing && !live && session?.autoDial?.state === 'waiting_for_targets';
   const findingNext = dialing && !live && !waitingForTargets;
   const ringing = live?.status === 'ringing' && !live?.answeredAt && !assignedToRep;
@@ -373,13 +413,31 @@ export default function QuickDial({ campaignId, campaigns = [], onSelectCampaign
     return result;
   }, '');
 
+  const toggleAutoDial = () => action.run(async () => {
+    if (dialing) return outbound.pauseHybridAutoDial(sessionId);
+    await Promise.all([prepareHybridVoice(), soundEnabled ? primeDialerCue() : Promise.resolve()]);
+    const result = await outbound.resumeHybridAutoDial(sessionId);
+    const why = describeResult(result);
+    if (why) setBlocker(why);
+    return result;
+  }, '');
+
+  const sendInterestedFollowUp = () => action.run(
+    () => outbound.sendHybridFollowUpEmail(sessionId, emailSubject, emailMessage),
+    'Follow-up email sent.'
+  );
+
+  const skipInterestedFollowUp = () => action.run(
+    () => outbound.skipHybridFollowUpEmail(sessionId),
+    'Follow-up skipped. You can resume dialing.'
+  );
+
   const hangUp = () => action.run(async () => {
     leaveHybridVoice();
     return outbound.endHybridCall(call.id);
   }, '');
 
-  // One click is the whole wrap-up: record what happened, hang up, and let the
-  // server's capacity refill place the next call. A call the prospect already
+  // Record what happened before the server is allowed to refill the line. A call the prospect already
   // ended is only recorded — asking Twilio to end a finished call is an error,
   // and its replacement was already placed by the terminal-event refill.
   const finish = (target, disposition, followUpAt = '') => action.run(async () => {
@@ -445,16 +503,23 @@ export default function QuickDial({ campaignId, campaigns = [], onSelectCampaign
       : ended ? 'Wrap up'
         : findingNext ? 'Checking list'
           : waitingForTargets ? 'Waiting'
-            : running ? 'Ready' : 'Stopped';
+            : running && !dialing ? 'Paused' : running ? 'Ready' : 'Stopped';
 
   if (!campaignId) {
     return (
       <div className="admin-card quickdial-card">
-        <h3>Pick a list to call</h3>
-        <select className="admin-select" value="" onChange={event => onSelectCampaign?.(event.target.value)}>
-          <option value="">Choose a campaign…</option>
-          {campaigns.map(entry => <option key={entry.id} value={entry.id}>{entry.name}</option>)}
-        </select>
+        {campaignsLoading ? <h3>Loading campaigns…</h3> : campaigns.length ? <>
+          <h3>Pick a list to call</h3>
+          <select className="admin-select" value="" onChange={event => onSelectCampaign?.(event.target.value)}>
+            <option value="">Choose a campaign…</option>
+            {campaigns.map(entry => <option key={entry.id} value={entry.id}>{entry.name}</option>)}
+          </select>
+        </> : <>
+          <h3>{role === 'outbound_rep' ? 'No campaigns assigned yet' : 'No campaigns available'}</h3>
+          <p>{role === 'outbound_rep'
+            ? 'Ask a manager to assign you to a campaign. It will appear here when it is ready.'
+            : 'Create a campaign and assign its sales reps before dialing.'}</p>
+        </>}
       </div>
     );
   }
@@ -482,6 +547,14 @@ export default function QuickDial({ campaignId, campaigns = [], onSelectCampaign
           >
             {soundEnabled ? 'Sound on' : 'Sound off'}
           </button>
+          {running && !pendingFollowUp && (
+            <button className={`btn-admin ${dialing ? '' : 'primary'}`} type="button"
+              disabled={action.busy || (!dialing && (Boolean(session?.wrapUpPendingCallId)
+                || ['awaiting_email', 'sending'].includes(pendingFollowUp?.status)))}
+              onClick={toggleAutoDial}>
+              {dialing ? 'Pause dialing' : 'Resume dialing'}
+            </button>
+          )}
           {running && (
             <button className="btn-admin danger" type="button" disabled={action.busy} onClick={stop}>
               Stop dialing
@@ -574,17 +647,19 @@ export default function QuickDial({ campaignId, campaigns = [], onSelectCampaign
               </>
             ) : (
               <>
-                <h2>{waitingForTargets ? 'No call is active' : findingNext ? 'Checking who can be called…' : 'Nothing dialing'}</h2>
+                <h2>{waitingForTargets ? 'No call is active' : findingNext ? 'Checking who can be called…' : !dialing ? 'Dialer paused' : 'Nothing dialing'}</h2>
                 <p className="quickdial-person-meta">
                   {waitingForTargets
                     ? (blocker || 'The dialer is on, but nobody in this list is eligible right now.')
                     : findingNext
                       ? 'The dialer is checking the list. A prospect appears here as soon as the carrier starts the call.'
-                    : 'Press Call next to keep going.'}
+                    : !dialing ? 'Resume dialing when you’re ready to continue.' : 'Press Check again to keep going.'}
                 </p>
-                <button className="btn-admin primary" type="button" disabled={action.busy} onClick={dialAgain}>
-                  {waitingForTargets ? 'Check again' : 'Call next'}
-                </button>
+                {dialing && !pendingFollowUp && !session?.wrapUpPendingCallId && (
+                  <button className="btn-admin primary" type="button" disabled={action.busy} onClick={dialAgain}>
+                    {waitingForTargets ? 'Check again' : 'Call next'}
+                  </button>
+                )}
               </>
             )}
           </div>
@@ -603,7 +678,7 @@ export default function QuickDial({ campaignId, campaigns = [], onSelectCampaign
                     {muted ? 'Unmute' : 'Mute'}
                   </button>
                   <button className="btn-admin" type="button" disabled={action.busy} onClick={hangUp}>
-                    Hang up &amp; call next
+                    Hang up
                   </button>
                 </div>
               )}
@@ -645,13 +720,79 @@ export default function QuickDial({ campaignId, campaigns = [], onSelectCampaign
               )}
             </div>
           )}
+
+          {pendingFollowUp && (
+            <section className="quickdial-followup-card" aria-live="polite">
+              <div>
+                <span className="quickdial-followup-kicker">Dialer paused for follow-up</span>
+                <h3>{followUpContextMatches && (followUpContext?.name || followUpContext?.businessName) || 'Interested lead'}</h3>
+                {followUpContextMatches && followUpContext?.emailAvailable && <p>Email will go to {followUpContext.email}.</p>}
+                {followUpContextMatches && followUpContext?.emailBlockReason === 'missing_address' && <p>This lead has no valid email address.</p>}
+                {followUpContextMatches && followUpContext?.emailBlockReason === 'do_not_email' && <p>This lead is marked do not email.</p>}
+                {followUpContextMatches && followUpContext?.emailBlockReason === 'suppressed' && <p>Email delivery to this address is suppressed.</p>}
+                {followUpContextMatches && followUpContext?.error && <p className="admin-error">{followUpContext.error}</p>}
+              </div>
+              {pendingFollowUp.status === 'awaiting_email' && (followUpContextLoading || !followUpContextMatches) && <p role="status">Loading contact details…</p>}
+              {pendingFollowUp.status === 'awaiting_email' && followUpContextMatches && followUpContext?.error && (
+                <button className="btn-admin" type="button" disabled={action.busy}
+                  onClick={() => setFollowUpContextRetry(value => value + 1)}>
+                  Retry loading contact
+                </button>
+              )}
+              {pendingFollowUp.status === 'awaiting_email' && followUpContextMatches && followUpContext?.emailAvailable && (
+                <form className="quickdial-followup-form" onSubmit={event => {
+                  event.preventDefault();
+                  sendInterestedFollowUp();
+                }}>
+                  <label>
+                    <span>Subject</span>
+                    <input value={emailSubject} maxLength={200} onChange={event => setEmailSubject(event.target.value)} required />
+                  </label>
+                  <label>
+                    <span>Message</span>
+                    <textarea value={emailMessage} maxLength={10000} rows={5}
+                      placeholder="Write the follow-up you want to send…"
+                      onChange={event => setEmailMessage(event.target.value)} required />
+                  </label>
+                  <div className="quickdial-controls-row">
+                    <button className="btn-admin primary" type="submit"
+                      disabled={action.busy || !emailSubject.trim() || !emailMessage.trim()}>
+                      {action.busy ? 'Sending…' : 'Send follow-up email'}
+                    </button>
+                    <button className="btn-admin" type="button" disabled={action.busy} onClick={skipInterestedFollowUp}>
+                      Continue without email
+                    </button>
+                  </div>
+                </form>
+              )}
+              {pendingFollowUp.status === 'awaiting_email' && followUpContextMatches && followUpContext?.emailAvailable === false && (
+                <button className="btn-admin" type="button" disabled={action.busy} onClick={skipInterestedFollowUp}>
+                  Continue without email
+                </button>
+              )}
+              {pendingFollowUp.status === 'sending' && <p role="status">Sending the follow-up email…</p>}
+              {pendingFollowUp.status === 'sent' && (
+                <>
+                  <p role="status">Follow-up email sent. Resume when you’re ready for the next call.</p>
+                  <button className="btn-admin primary" type="button" disabled={action.busy} onClick={toggleAutoDial}>Resume dialing</button>
+                </>
+              )}
+              {pendingFollowUp.status === 'skipped' && (
+                <>
+                  <p role="status">You chose to continue without an email.</p>
+                  <button className="btn-admin primary" type="button" disabled={action.busy} onClick={toggleAutoDial}>Resume dialing</button>
+                </>
+              )}
+            </section>
+          )}
         </div>
       )}
 
       {blocker && (
         <div className="admin-note quickdial-blocker">
           <strong>{blocker}</strong>
-          {running && <button className="btn-admin" type="button" disabled={action.busy} onClick={dialAgain}>Try again</button>}
+          {running && !session?.wrapUpPendingCallId && !['awaiting_email', 'sending'].includes(pendingFollowUp?.status)
+            && <button className="btn-admin" type="button" disabled={action.busy} onClick={dialAgain}>Try again</button>}
         </div>
       )}
       {voiceError && <p className="admin-error">{voiceError}</p>}

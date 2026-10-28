@@ -1,6 +1,6 @@
 # Outbound AI production-readiness plan
 
-Last updated: 2026-09-08
+Last updated: 2026-10-27
 
 ## Decision
 
@@ -104,9 +104,18 @@ Everything below is deployed to the **staging** project
 **Nothing here is deployed to production.** Production still runs the code that
 predates this workstream, with every campaign paused.
 
+**Branch update — 2026-10-27:** per-rep campaign assignment, the human-call
+follow-up pause, and the mobile destroyed-device reconnect correction are
+implemented on `feat/rep-campaign-access-followup-pause`. The frontend build
+passes; this branch has not been deployed or rehearsed. The historical
+deployment statements in this document describe the 2026-09-08 readiness
+checkpoint, not this branch's current release state.
+
 | Boundary | Current local implementation |
 |---|---|
 | Seller separation | Campaigns, profiles, knowledge, research, calls, targets, sessions, and appointments are seller-account bound. Stored role records override stale claims. |
+| Rep campaign access | Managers assign active reps to each campaign. Rep campaign queries are filtered by UID, and session start and dial/refill paths re-check both role scope and assignment. This branch change is not deployed. |
+| Human wrap-up | A terminal human-handled call holds capacity until the rep records an outcome. `interested` pauses auto-dial until the rep sends or skips a composed email to the lead's stored address and explicitly resumes. This branch change is not deployed. |
 | Consent | Imported consent-like fields are evidence candidates only. AI admission requires an active, server-issued, seller- and number-specific written-consent grant. Revocation and expiry fail closed. |
 | Recording | Disabled at campaign sanitization and carrier call creation. |
 | Voicemail | No generated or generic voicemail is authorized. New campaigns default to none. |
@@ -310,11 +319,14 @@ Outbound Calls → **Dialer** now opens on `src/admin/outbound/QuickDial.jsx`: o
 **Start dialing** button, and when someone answers, the business name, contact,
 phone, category, location, their local time, and their website — as a link plus
 a best-effort inline preview loaded by the rep's own browser, never by a
-screenshot vendor. Outcome is one click, which dispositions the call, hangs up,
-and lets the server's capacity refill place the next one. The four-step guided
-flow (create plan → review & approve → preflight → start calls) still exists,
-one click away under **Advanced**, and remains the only way to reach AI-assisted
-and AI-led modes.
+screenshot vendor. The 2026-09-08 release refilled after a one-click outcome.
+The current branch changes that flow: a terminal human call waits for a
+disposition, and an `interested` outcome pauses auto-dial until the rep composes
+and sends or skips the email, then explicitly resumes. Managers assign each
+campaign to selected sales reps. These changes are not deployed. The four-step
+guided flow (create plan → review & approve → preflight → start calls) still
+exists, one click away under **Advanced**, and remains the only way to reach
+AI-assisted and AI-led modes.
 
 What this changed in the backend, and only this:
 

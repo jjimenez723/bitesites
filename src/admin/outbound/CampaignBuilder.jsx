@@ -38,6 +38,7 @@ const CONSENT_BASES = [
 
 const BLANK = {
   name: '', accountId: '', mode: 'power', provider: 'mock', concurrency: 1, callerId: '',
+  allowedRepUids: [],
   agentProfileId: '',
   objective: '', script: '', bookingRules: '', escalationRules: '',
   allowedDays: ['mon', 'tue', 'wed', 'thu', 'fri'],
@@ -71,6 +72,10 @@ export default function CampaignBuilder({ providers = [], campaign = null, onSav
   }));
   const [agentProfiles, setAgentProfiles] = useState([]);
   const [agentsLoading, setAgentsLoading] = useState(true);
+  const [salesReps, setSalesReps] = useState([]);
+  const [salesRepsLoading, setSalesRepsLoading] = useState(false);
+  const [salesRepsError, setSalesRepsError] = useState('');
+  const [repNameDrafts, setRepNameDrafts] = useState({});
   const action = useAction();
   const set = (key, value) => setForm(current => ({ ...current, [key]: value }));
 
@@ -107,6 +112,28 @@ export default function CampaignBuilder({ providers = [], campaign = null, onSav
       .finally(() => { if (!cancelled) setAgentsLoading(false); });
     return () => { cancelled = true; };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!form.accountId) {
+      setSalesReps([]);
+      setSalesRepsError('');
+      setSalesRepsLoading(false);
+      return undefined;
+    }
+    setSalesRepsLoading(true);
+    setSalesRepsError('');
+    outbound.listCampaignReps(form.accountId)
+      .then(result => { if (!cancelled) setSalesReps(result?.reps || []); })
+      .catch(error => {
+        if (!cancelled) {
+          setSalesReps([]);
+          setSalesRepsError(error?.message || 'Could not load the sales rep list.');
+        }
+      })
+      .finally(() => { if (!cancelled) setSalesRepsLoading(false); });
+    return () => { cancelled = true; };
+  }, [form.accountId]);
 
   // Only this account's personas are offerable. The server refuses the rest
   // anyway; showing them invites the operator to pick one and read the refusal
@@ -154,6 +181,15 @@ export default function CampaignBuilder({ providers = [], campaign = null, onSav
     ? form.allowedDays.filter(entry => entry !== day)
     : [...form.allowedDays, day]);
 
+  const saveRepName = rep => action.run(async () => {
+    const displayName = (repNameDrafts[rep.uid] || '').trim();
+    const result = await outbound.updateRepName(form.accountId, rep.uid, displayName);
+    setSalesReps(current => current.map(entry => entry.uid === rep.uid
+      ? { ...entry, displayName: result.displayName, name: result.displayName }
+      : entry));
+    return result;
+  }, 'Sales rep name saved.');
+
   return (
     <div className="admin-card">
       <div className="card-head">
@@ -178,7 +214,11 @@ export default function CampaignBuilder({ providers = [], campaign = null, onSav
           <label>
             <span>Account</span>
             <select value={form.accountId} required disabled={Boolean(campaign?.id)}
-              onChange={event => set('accountId', event.target.value)}>
+              onChange={event => setForm(current => ({
+                ...current,
+                accountId: event.target.value,
+                allowedRepUids: []
+              }))}>
               <option value="">Select an account…</option>
               {ACCOUNT_IDS.map(id => <option key={id} value={id}>{ACCOUNTS[id].label}</option>)}
             </select>
@@ -188,6 +228,44 @@ export default function CampaignBuilder({ providers = [], campaign = null, onSav
                 : 'Whose contacts this campaign may call. It cannot be changed later.'}
             </small>
           </label>
+
+          <fieldset className="full outbound-rep-assignment">
+            <legend>Sales reps allowed to dial</legend>
+            {!form.accountId ? <small>Choose an account to see its sales reps.</small>
+              : salesRepsLoading ? <small>Loading sales reps…</small>
+                : salesRepsError ? <small>{salesRepsError}</small>
+                : salesReps.length ? (
+                  <div className="outbound-rep-picker">
+                    {salesReps.map(rep => (
+                      <div className="outbound-rep-row" key={rep.uid}>
+                        <label>
+                          <input
+                            type="checkbox"
+                            checked={(form.allowedRepUids || []).includes(rep.uid)}
+                            onChange={event => set('allowedRepUids', event.target.checked
+                              ? [...new Set([...(form.allowedRepUids || []), rep.uid])]
+                              : (form.allowedRepUids || []).filter(uid => uid !== rep.uid))}
+                          />
+                          <span>{rep.name}{rep.email ? <small>{rep.email}</small> : null}</span>
+                        </label>
+                        <div className="outbound-rep-name-editor">
+                          <input aria-label={`Display name for ${rep.email || rep.uid}`}
+                            placeholder="Add display name"
+                            value={repNameDrafts[rep.uid] ?? rep.displayName ?? ''}
+                            maxLength={120}
+                            onChange={event => setRepNameDrafts(current => ({ ...current, [rep.uid]: event.target.value }))} />
+                          <button className="btn-admin" type="button"
+                            disabled={action.busy || !(repNameDrafts[rep.uid] ?? rep.displayName ?? '').trim()}
+                            onClick={() => saveRepName(rep)}>
+                            Save name
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : <small>No BiteSites sales reps are assigned to this account yet.</small>}
+            <small>Only checked reps can see this campaign in their dialer or start a session. New campaigns start with no reps assigned.</small>
+          </fieldset>
 
           <label>
             <span>Mode</span>

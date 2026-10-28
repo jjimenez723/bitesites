@@ -1013,6 +1013,49 @@
   padding: 9px 11px; color: var(--ink); background: var(--surface-1);
   font: inherit; font-size: 12.5px;
 }
+.bs-admin .quickdial-followup-card {
+  display: grid; gap: var(--sp-3); grid-column: 1 / -1;
+  padding: var(--sp-4); border: 1px solid var(--line);
+  border-radius: var(--r-xl); background: var(--surface-1);
+}
+.bs-admin .quickdial-followup-card h3 { margin: 4px 0; }
+.bs-admin .quickdial-followup-card p { margin: 4px 0 0; color: var(--ink-3); }
+.bs-admin .quickdial-followup-kicker {
+  color: var(--s1); font-size: 10px; font-weight: 800;
+  letter-spacing: .08em; text-transform: uppercase;
+}
+.bs-admin .quickdial-followup-form { display: grid; gap: var(--sp-2); }
+.bs-admin .quickdial-followup-form label { display: grid; gap: var(--sp-1); }
+.bs-admin .quickdial-followup-form label > span {
+  color: var(--ink-3); font-size: 11px; font-weight: 650;
+}
+.bs-admin .quickdial-followup-form input,
+.bs-admin .quickdial-followup-form textarea {
+  width: 100%; border: 1px solid var(--line); border-radius: var(--r-sm);
+  padding: 10px 12px; color: var(--ink); background: var(--surface-1);
+  font: inherit; font-size: 13px;
+}
+.bs-admin .outbound-rep-assignment {
+  grid-column: 1 / -1; min-width: 0; border: 1px solid var(--line);
+  border-radius: var(--r-lg); padding: var(--sp-3);
+}
+.bs-admin .outbound-rep-assignment legend { padding: 0 6px; color: var(--ink-3); font-size: 11px; font-weight: 700; }
+.bs-admin .outbound-rep-assignment > small { display: block; margin-top: 8px; color: var(--ink-3); font-size: 10.5px; }
+.bs-admin .outbound-rep-picker { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; }
+.bs-admin .outbound-rep-row {
+  display: grid; gap: 8px; min-width: 0; padding: 10px;
+  border: 1px solid var(--line); border-radius: var(--r-sm);
+}
+.bs-admin .outbound-rep-picker label {
+  display: flex !important; flex-direction: row !important; align-items: flex-start;
+  gap: 9px !important; padding: 0; border: 0; border-radius: 0;
+}
+.bs-admin .outbound-rep-picker input { width: auto !important; margin-top: 2px; }
+.bs-admin .outbound-rep-picker span { display: grid; gap: 3px; color: var(--ink); font-size: 12px; }
+.bs-admin .outbound-rep-picker small { color: var(--ink-3); font-size: 10px; }
+.bs-admin .outbound-rep-name-editor { display: flex; gap: 6px; min-width: 0; }
+.bs-admin .outbound-rep-name-editor input { min-width: 0; flex: 1; }
+.bs-admin .outbound-rep-name-editor .btn-admin { padding: 7px 9px; font-size: 10.5px; }
 
 .bs-admin .quickdial-blocker {
   display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3);
