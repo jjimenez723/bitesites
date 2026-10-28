@@ -3,8 +3,8 @@
 Working document for `OUTBOUND_COMPLETION_GOAL_SPEC.md`. One short entry per
 checkpoint: what changed, what proves it, what is left, and who is blocking.
 
-**Current follow-up branch:** `feat/rep-campaign-access-followup-pause`
-**Current base:** `221fba8` (`main`, destroyed Twilio device recovery)
+**Current follow-up:** merged to `main` as PR #5, commit `28849bf`
+**Production release:** completed 2026-10-27; outbound dialing flags remain disabled.
 
 The checkpoints below document the original outbound-readiness branch. The
 2026-10-27 follow-up continues that work from the current `main` head; the old
@@ -417,13 +417,11 @@ the reconnect action on narrow screens.
 opens at `/admin/outbound` and shows the sign-in screen when no local session is
 present.
 
-**Production:** Hosting deployment is pending; the GHL read-only audit callable
-from PR #3 is already deployed to `bitesites-org`. The PR #4 changes affect
-Hosting assets only and do not deploy or change dialing functions.
+**Production at this checkpoint:** Hosting deployment was pending; the GHL
+read-only audit callable from PR #3 was already deployed to `bitesites-org`.
+The cumulative Hosting release on 2026-10-27 included PR #4 and PR #5.
 
 ## Checkpoint 7 — rep assignments, interested follow-up, and mobile recovery
-
-> **🚧 IN PROGRESS** — 2026-10-27 — PR #5 CI and production release — `functions/outbound-calls.test.mjs`, `OUTBOUND_COMPLETION_PROGRESS.md`, `OUTBOUND_PRODUCTION_READINESS.md`, `OUTBOUND_OWNER_CHECKLIST.md`
 
 **Changes:** Managers can assign an account's active sales reps to each
 campaign and set their display names. Rep campaign queries, Firestore reads,
@@ -438,19 +436,25 @@ re-exported from the deployed Functions entrypoint, and the rep picker queries
 the chosen account directly. The Hybrid release manifest now targets all seven
 new callable endpoints as well as Hosting and Firestore.
 
-**Evidence:** branch `feat/rep-campaign-access-followup-pause` is based on
-`221fba8` (`main`). `Outbound AI CI / validate` passed on `7d673e2`, including
-the full repository suite, Functions check, and sideband check. The release
-preflights pass with `OUTBOUND_EXTERNAL_DIALING=disabled` and
-`PAID_PHONE_SCREENING=disabled`; the Hybrid secret names and sideband service
-are present in `bitesites-org`. A local emulator run did not complete because
-it stalled downloading Firestore emulator 1.22.0; CI supplies the passing
-full-suite evidence. Vite reported its existing mixed static/dynamic Firebase
-import and large-chunk warnings.
+**Evidence:** PR #5 merged to `main` as `28849bf`; `Outbound AI CI / validate`
+passed before merge, including the repository suite, Functions check, and
+sideband check. Production preflights passed with
+`OUTBOUND_EXTERNAL_DIALING=disabled` and `PAID_PHONE_SCREENING=disabled`.
+Firestore rules and indexes, Hosting, affected Functions, and the Realtime
+sideband service were deployed to `bitesites-org`. Both new callable endpoints
+returned the expected `UNAUTHENTICATED` response without a signed-in user;
+the sideband health endpoint returned `ok: true`. Hosting served the released
+bundle and its outbound admin chunk. The sideband runs revision
+`bitesites-realtime-sideband-00006-7cs` at 100% traffic. A local emulator run
+did not complete because it stalled downloading Firestore emulator 1.22.0; CI
+supplies the passing full-suite evidence. Vite reported its existing mixed
+static/dynamic Firebase import and large-chunk warnings.
 
-**Release authorization:** the owner explicitly authorized merging PR #5 and
-deploying this follow-up to production on 2026-10-27. Merge and deployment are
-pending. No production profiles, roles, campaign assignments, or dialer records
-have been changed by this release. Alex's display name can be entered by a
-manager from Campaign Builder; the temporary Bergen test account remains
-`Jensy Jimenez` and remains an `outbound_rep`.
+**Release authorization and scope:** the owner explicitly authorized merging
+PR #5 and deploying it to production on 2026-10-27. No production profiles,
+roles, campaign assignments, or dialer records were changed by the release.
+Alex's display name can be entered by a manager from Campaign Builder; the
+temporary Bergen test account remains `Jensy Jimenez` and remains an
+`outbound_rep`. The external-dialing and paid-phone-screening flags remain
+disabled, no campaign was unpaused, and no call was placed. Authenticated
+manager/rep workflow rehearsal remains outstanding.

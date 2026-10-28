@@ -97,27 +97,31 @@ Consequence for the launch plan: §3 (paid screening) is now required *before*
 the internal rehearsal rather than alongside it, because the only provider that
 verifies anything is the paid one.
 
-## What is implemented
+## What is implemented and deployed
 
-Everything below is deployed to the **staging** project
+The core outbound system is deployed to the **staging** project
 `bitesites-outbound-staging` and verified there by `npm run smoke:staging`.
-**Nothing here is deployed to production.** Production still runs the code that
-predates this workstream, with every campaign paused.
+The cumulative PR #5 release was also deployed to production on 2026-10-27.
+Production's external-dialing and paid-screening flags remain disabled, every
+campaign remains as it was before this release, and no production call or
+authenticated rep workflow rehearsal was performed.
 
-**Branch update — 2026-10-27:** per-rep campaign assignment, the human-call
-follow-up pause, and the mobile destroyed-device reconnect correction are
-implemented on `feat/rep-campaign-access-followup-pause`. The frontend build
-passes. The owner authorized merging PR #5 and deploying this branch on
-2026-10-27; `Outbound AI CI / validate` passed on commit `7d673e2`. Merge and
-deployment are pending. No production release or rehearsal of these changes is
-complete yet. The historical deployment statements in this document describe
-the 2026-09-08 readiness checkpoint, not this branch's current release state.
+**Production release — 2026-10-27:** PR #5 was merged to `main` as `28849bf`
+after `Outbound AI CI / validate` passed. The release deployed Firestore rules
+and indexes, Hosting, affected Functions, and the Realtime sideband to
+`bitesites-org`. Preflights, build and CI checks passed. The sideband health
+check returned `ok: true`; new callable endpoints correctly rejected
+unauthenticated requests. Production profile, role, campaign assignment, and
+dialer records were not changed. This release adds the manager assignment
+workflow and rep follow-up pause, but does not open outbound dialing.
+Historical deployment statements below describe their dated checkpoint unless
+they are explicitly marked current.
 
-| Boundary | Current local implementation |
+| Boundary | Current implementation / production state |
 |---|---|
 | Seller separation | Campaigns, profiles, knowledge, research, calls, targets, sessions, and appointments are seller-account bound. Stored role records override stale claims. |
-| Rep campaign access | Managers assign active reps to each campaign. Rep campaign queries are filtered by UID, and session start and dial/refill paths re-check both role scope and assignment. This branch change is not deployed. |
-| Human wrap-up | A terminal human-handled call holds capacity until the rep records an outcome. `interested` pauses auto-dial until the rep sends or skips a composed email to the lead's stored address and explicitly resumes. This branch change is not deployed. |
+| Rep campaign access | **Deployed 2026-10-27.** Managers can assign active reps to each campaign and set display names. Rep campaign queries are filtered by UID, and session start and dial/refill paths re-check both role scope and assignment. |
+| Human wrap-up | **Deployed 2026-10-27.** A terminal human-handled call holds capacity until the rep records an outcome. `interested` pauses auto-dial until the rep sends or skips a composed email to the lead's stored address and explicitly resumes. Authenticated production rehearsal remains outstanding. |
 | Consent | Imported consent-like fields are evidence candidates only. AI admission requires an active, server-issued, seller- and number-specific written-consent grant. Revocation and expiry fail closed. |
 | Recording | Disabled at campaign sanitization and carrier call creation. |
 | Voicemail | No generated or generic voicemail is authorized. New campaigns default to none. |
@@ -322,11 +326,13 @@ Outbound Calls → **Dialer** now opens on `src/admin/outbound/QuickDial.jsx`: o
 phone, category, location, their local time, and their website — as a link plus
 a best-effort inline preview loaded by the rep's own browser, never by a
 screenshot vendor. The 2026-09-08 release refilled after a one-click outcome.
-The current branch changes that flow: a terminal human call waits for a
-disposition, and an `interested` outcome pauses auto-dial until the rep composes
-and sends or skips the email, then explicitly resumes. Managers assign each
-campaign to selected sales reps. These changes are not deployed. The four-step
-guided flow (create plan → review & approve → preflight → start calls) still
+The 2026-10-27 production release changes that flow: a terminal human call
+waits for a disposition, and an `interested` outcome pauses auto-dial until the
+rep composes and sends or skips the email, then explicitly resumes. Managers
+assign each campaign to selected sales reps. These changes are deployed, but
+have not yet been rehearsed with an authenticated production rep. The current
+production external-dialing flag is disabled, so calls cannot start. The
+four-step guided flow (create plan → review & approve → preflight → start calls) still
 exists, one click away under **Advanced**, and remains the only way to reach
 AI-assisted and AI-led modes.
 
@@ -350,22 +356,20 @@ evaluated per leg in `dialNext` regardless of which screen asked for the call.
 session dials the queued target and generates no research doing it, and the
 hybrid session on the same campaign still cannot.
 
-**Human-only dialing was already authorized** — §11 of
-[OUTBOUND_LAUNCH_AUTHORIZATION.md](./OUTBOUND_LAUNCH_AUTHORIZATION.md), granted
-2026-08-25, with `OUTBOUND_EXTERNAL_DIALING=enabled` already in the deployed
-production runtime. The AI call-plan gate applying to human sessions was what
-remained, and is what this change removed. Where dialing is *not* admitted the
-screen names the switch rather than reporting a generic failure. This authorizes
-nothing new: an artificial voice still fails closed on per-number consent and
-pre-dial screening, both of which have zero records in production.
+**Historical human-only dialing authorization:** §11 of
+[OUTBOUND_LAUNCH_AUTHORIZATION.md](./OUTBOUND_LAUNCH_AUTHORIZATION.md) was
+granted 2026-08-25, and the 2026-09-08 production release had
+`OUTBOUND_EXTERNAL_DIALING=enabled`. The 2026-10-27 release deployed with
+`OUTBOUND_EXTERNAL_DIALING=disabled`; the current production runtime therefore
+blocks calls. The rep call-plan gate fix is deployed, but it does not override
+that environment gate. Artificial-voice calls remain separately blocked by
+per-number consent and screening requirements.
 
-**Deployed to production 2026-09-08** under §11 — rules/indexes, Functions and
-Hosting, in that order, after a passing `npm run preflight:production`. The
-deploy notes are in
-[OUTBOUND_OWNER_CHECKLIST.md](./OUTBOUND_OWNER_CHECKLIST.md) §3. Pressing
-**Start dialing** in production now places a real call to a real business, which
-is the point of §11 and is a person's decision at the moment they press it. The
-deploy itself placed none.
+**Production release history:** the base release deployed rules/indexes,
+Functions and Hosting on 2026-09-08 under §11. The cumulative follow-up
+deployed on 2026-10-27; details are in
+[OUTBOUND_OWNER_CHECKLIST.md](./OUTBOUND_OWNER_CHECKLIST.md) §3. Neither release
+placed a call as part of deployment.
 
 **Throughput is capped well below a full calling day.** Every non-mock provider
 is held to one live leg and one attempt by `resolveCampaignOperatingLimits`, so
@@ -390,21 +394,15 @@ UI change.
    including a disposable admin and a runtime assertion that the deployed
    functions still refuse carrier dialing. No production credential is used.
    Rollback has **not** been rehearsed yet.
-4. **Run `npm run preflight:production` and read what it prints.**
-   `functions/.env.bitesites-org` is untracked, so its contents never appear in
-   a diff, a review, or a CI run — and on 2026-08-25 it was found holding
-   `OUTBOUND_EXTERNAL_DIALING=enabled`. The deployed production runtime predates
-   the parameter, so nothing was live, but the next Functions deploy from that
-   machine would have admitted carrier dialing without anyone deciding to. It
-   has since been set back to `disabled`. The preflight exits non-zero when a
-   parameter is open without the matching authorization from
-   [OUTBOUND_LAUNCH_AUTHORIZATION.md](./OUTBOUND_LAUNCH_AUTHORIZATION.md), and
-   names all three authorizations that can open carrier dialing — §11 for
-   human-only rep dialing, §5 for the internal rehearsal, and §9 for the
-   external canary — because the variable itself cannot tell them apart. Set it
-   for the one actually granted and name that section in the deploy notes.
-5. Deploy rules and indexes first; wait for index readiness.
-6. Deploy functions and Realtime sideband with production secrets.
+4. ~~Run `npm run preflight:production` and read what it prints.~~ **Done
+   2026-10-27.** It passed with external dialing and paid screening disabled.
+   Those values were deployed with Functions; calls remain blocked. The
+   preflight refuses an open gate without the matching authorization from
+   [OUTBOUND_LAUNCH_AUTHORIZATION.md](./OUTBOUND_LAUNCH_AUTHORIZATION.md).
+5. ~~Deploy rules and indexes first; wait for index readiness.~~ **Done
+   2026-10-27.** Rules deployed and both new composite indexes reached READY.
+6. ~~Deploy functions and Realtime sideband with production secrets.~~ **Done
+   2026-10-27.** The sideband health check returned `ok: true`.
 7. Seed seller profiles/knowledge using dry-run output, then verify the exact
    production documents.
 8. Keep all campaigns paused and recording disabled.
