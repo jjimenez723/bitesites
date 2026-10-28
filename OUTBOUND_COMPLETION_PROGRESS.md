@@ -3,8 +3,6 @@
 Working document for `OUTBOUND_COMPLETION_GOAL_SPEC.md`. One short entry per
 checkpoint: what changed, what proves it, what is left, and who is blocking.
 
-> **🚧 IN PROGRESS** — 2026-10-27 — PR #3 CI Java runtime compatibility — `.github/workflows/hybrid-v2-ci.yml`, `OUTBOUND_COMPLETION_PROGRESS.md`
-
 **Branch:** `feat/outbound-readiness-closeout`
 **Baseline commit:** `925697f9b62711decaf46c37d4e76e9b5026d060` (`main`)
 
@@ -184,7 +182,8 @@ The CRM setup has changed since Checkpoint 2:
   can use the callable. No production deployment was run.
 - PR #3's required CI check failed before emulator tests because the workflow
   pinned Temurin 17 while the current Firebase CLI requires JDK 21. The
-  workflow is updated to Temurin 21; the PR check must pass before merge.
+  workflow is updated to Temurin 21, and the rerun passed the complete
+  repository suite and both package checks.
 
 ## Checkpoint 3 — the live-model path, built and guarded (milestone 6)
 
