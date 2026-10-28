@@ -4,7 +4,8 @@ Working document for `OUTBOUND_COMPLETION_GOAL_SPEC.md`. One short entry per
 checkpoint: what changed, what proves it, what is left, and who is blocking.
 
 **Current follow-up:** merged to `main` as PR #5, commit `28849bf`
-**Production release:** completed 2026-10-27; outbound dialing flags remain disabled.
+**Production release:** PR #5 shipped 2026-10-27; human-only dialing opened on
+selected functions 2026-10-28. AI dialing remains disabled.
 
 The checkpoints below document the original outbound-readiness branch. The
 2026-10-27 follow-up continues that work from the current `main` head; the old
@@ -458,3 +459,28 @@ temporary Bergen test account remains `Jensy Jimenez` and remains an
 `outbound_rep`. The external-dialing and paid-phone-screening flags remain
 disabled, no campaign was unpaused, and no call was placed. Authenticated
 manager/rep workflow rehearsal remains outstanding.
+
+## Checkpoint 8 — human-only dialing gate
+
+**Changes:** On 2026-10-28, the owner authorized enabling human dialing. The
+external-dialing parameter was enabled only on the browser voice-token,
+human-start, human-refill and terminal call-event Functions used by Quick Dial:
+`getHybridVoiceAccessToken`, `dialHybridTargets`, `endHybridCall`,
+`submitHybridDisposition`, `resumeHybridAutoDial`, and `recordHybridCallEvent`.
+The legacy `runAICampaigns` scheduler was deployed with the gate disabled.
+`dispatchHybridAIToSip` and paid phone screening remain disabled. The local
+production parameter file was returned to `OUTBOUND_EXTERNAL_DIALING=disabled`
+after deployment so a later broad deploy stays fail-closed.
+
+**Evidence:** Production describes all six human Functions as ACTIVE with
+external dialing enabled and paid screening disabled. `runAICampaigns` and
+`dispatchHybridAIToSip` are ACTIVE with external dialing disabled. Production
+Firestore still has zero active dialer sessions and zero reps assigned to the
+authorized running Twilio campaign. Other Twilio campaigns remain paused; the
+other running campaign uses the mock provider. No call was placed and no
+campaign or rep records were modified.
+
+**Scope and next action:** AI consent grants and screening records remain at
+zero. The human campaign assignment workflow is deployed, but a manager must
+assign a rep in Campaign Builder before that rep can dial. An authenticated
+production rep rehearsal remains outstanding.

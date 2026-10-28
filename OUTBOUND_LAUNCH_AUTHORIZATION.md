@@ -160,6 +160,18 @@ state, or legal reliance.
     which hold independently — there are zero `consentGrants` and zero
     `preDialScreenings` in production.
 
+    **Production activation — 2026-10-28:** the owner again authorized
+    human-only dialing. The gate is enabled on the six Quick Dial Functions
+    (`getHybridVoiceAccessToken`, `dialHybridTargets`, `endHybridCall`,
+    `submitHybridDisposition`, `resumeHybridAutoDial`, and
+    `recordHybridCallEvent`). The AI scheduler `runAICampaigns`, AI dispatcher
+    `dispatchHybridAIToSip`, and paid screening remain disabled. The local
+    production parameter file stays disabled after the targeted deployment so
+    a broad future Functions deploy remains fail-closed. At activation the
+    authorized campaign had no assigned reps and there were no active sessions;
+    no campaign was unpaused and no call was placed. A manager must assign a rep
+    in Campaign Builder before that rep can dial.
+
     **The compliance surface this leaves.** Human mode does not consult national
     DNC (that check is reached only under `automatedVoice`). The internal
     suppression ledger is the only automatic stop, so a rep marking a refusal as

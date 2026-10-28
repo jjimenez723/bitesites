@@ -1,6 +1,6 @@
 # Outbound owner checklist
 
-Last updated: 2026-10-27
+Last updated: 2026-10-28
 
 Six stages, in order. Each one is a different question with a different
 decider, and none of them implies the next. The long-form reasoning lives in
@@ -90,9 +90,26 @@ This release changed no production profiles, roles, campaign assignments, or
 dialer records. Alex's display name can be entered by a manager from Campaign
 Builder. The temporary Bergen test account remains `Jensy Jimenez` and remains
 an `outbound_rep`. No campaign was unpaused and no call was placed. **The
-currently deployed external-dialing and paid-screening flags are disabled**, so
-the new manager workflow is live but reps cannot place calls until dialing is
-separately authorized and enabled.
+deployment's external-dialing and paid-screening flags were disabled**, so the
+new manager workflow was live but reps could not place calls until human dialing
+was separately enabled.
+
+**Human-only dialing activation — 2026-10-28:** the owner authorized opening
+human rep dialing under §11. These six ACTIVE Functions now have
+`OUTBOUND_EXTERNAL_DIALING=enabled`:
+`getHybridVoiceAccessToken`, `dialHybridTargets`, `endHybridCall`,
+`submitHybridDisposition`, `resumeHybridAutoDial`, and
+`recordHybridCallEvent`. The AI scheduler `runAICampaigns`, AI dispatcher
+`dispatchHybridAIToSip`, and `PAID_PHONE_SCREENING` remain disabled. The local
+production parameter file remains `OUTBOUND_EXTERNAL_DIALING=disabled` so a
+broad future deploy does not open extra paths; explicitly set the §11 value and
+authorization only when redeploying the approved human functions.
+
+At activation, there were no active dialer sessions and no reps assigned to the
+authorized running Twilio campaign. Other Twilio campaigns were paused. The
+manager assignment workflow is live; a manager must assign a salesperson in
+Campaign Builder before they can dial. No call was placed and no production
+campaign, rep, or role record was changed.
 
 The following notes preserve dated production findings so their historical
 context stays clear alongside the current deployment state.
@@ -107,9 +124,9 @@ historical state, not the current 2026-10-27 release:
   production the whole time this document described it as shut. Nothing dialed,
   because campaigns were paused and the AI path has no consent — but the
   outermost gate was not the thing holding the line.
-- §11 historically authorized **human-only** dialing. The 2026-10-27 release
-  deployed with the external-dialing flag disabled, so calls are currently
-  blocked pending a separate authorization to enable the live gate.
+- §11 authorized **human-only** dialing. The external gate was re-enabled on
+  2026-10-28 only for the six Quick Dial Functions listed above. The AI
+  scheduler, AI dispatcher, and paid screening remain disabled.
 
 A third thing, found 2026-09-08 by trying to use the console the way a rep
 would: with §11 granted and the flag on, the rep dialer **still could not place
@@ -118,8 +135,8 @@ call-plan approval gate, which the dial path applied to human sessions too, so
 the dialer reported "prepare and approve at least one call plan" and offered a
 four-step guided workflow instead of a call. The human-led pickup gate was
 fixed and deployed by 2026-09-08; campaign access and interested-call wrap-up
-were added in the 2026-10-27 release. The environment gate is currently
-disabled, so neither release by itself enables calls.
+were added in the 2026-10-27 release. Human dialing is now enabled for the
+approved campaign, subject to its rep-assignment check.
 
 **Controls applied during the 2026-10-27 production release:**
 

@@ -1,6 +1,6 @@
 # Outbound AI production-readiness plan
 
-Last updated: 2026-10-27
+Last updated: 2026-10-28
 
 ## Decision
 
@@ -101,10 +101,11 @@ verifies anything is the paid one.
 
 The core outbound system is deployed to the **staging** project
 `bitesites-outbound-staging` and verified there by `npm run smoke:staging`.
-The cumulative PR #5 release was also deployed to production on 2026-10-27.
-Production's external-dialing and paid-screening flags remain disabled, every
-campaign remains as it was before this release, and no production call or
-authenticated rep workflow rehearsal was performed.
+The cumulative PR #5 release was deployed to production on 2026-10-27. On
+2026-10-28, the owner authorized human dialing: six Quick Dial Functions now
+have external dialing enabled. The AI scheduler, AI dispatcher, and paid
+screening remain disabled. No production call, campaign change, rep assignment,
+or authenticated rep workflow rehearsal was performed.
 
 **Production release — 2026-10-27:** PR #5 was merged to `main` as `28849bf`
 after `Outbound AI CI / validate` passed. The release deployed Firestore rules
@@ -116,6 +117,18 @@ dialer records were not changed. This release adds the manager assignment
 workflow and rep follow-up pause, but does not open outbound dialing.
 Historical deployment statements below describe their dated checkpoint unless
 they are explicitly marked current.
+
+**Human-only gate — 2026-10-28:** `getHybridVoiceAccessToken`,
+`dialHybridTargets`, `endHybridCall`, `submitHybridDisposition`,
+`resumeHybridAutoDial`, and `recordHybridCallEvent` are ACTIVE in production
+with `OUTBOUND_EXTERNAL_DIALING=enabled` and `PAID_PHONE_SCREENING=disabled`.
+The AI-only `runAICampaigns` scheduler and `dispatchHybridAIToSip` remain
+disabled. The local production parameter file stays disabled to keep a broad
+future Functions deployment fail-closed; a redeploy of these specific human
+Functions must explicitly restore the §11 authorization for that deployment.
+The authorized running Twilio campaign has no reps assigned yet; all other
+Twilio campaigns remain paused. No active sessions or calls were present during
+the activation.
 
 | Boundary | Current implementation / production state |
 |---|---|
@@ -330,8 +343,10 @@ The 2026-10-27 production release changes that flow: a terminal human call
 waits for a disposition, and an `interested` outcome pauses auto-dial until the
 rep composes and sends or skips the email, then explicitly resumes. Managers
 assign each campaign to selected sales reps. These changes are deployed, but
-have not yet been rehearsed with an authenticated production rep. The current
-production external-dialing flag is disabled, so calls cannot start. The
+have not yet been rehearsed with an authenticated production rep. The human
+dialing gate is enabled on the six Quick Dial Functions under §11; a manager
+must assign a rep to the authorized running Twilio campaign before that rep can
+start a call. The
 four-step guided flow (create plan → review & approve → preflight → start calls) still
 exists, one click away under **Advanced**, and remains the only way to reach
 AI-assisted and AI-led modes.
@@ -356,14 +371,14 @@ evaluated per leg in `dialNext` regardless of which screen asked for the call.
 session dials the queued target and generates no research doing it, and the
 hybrid session on the same campaign still cannot.
 
-**Historical human-only dialing authorization:** §11 of
+**Human-only dialing authorization and current gate:** §11 of
 [OUTBOUND_LAUNCH_AUTHORIZATION.md](./OUTBOUND_LAUNCH_AUTHORIZATION.md) was
-granted 2026-08-25, and the 2026-09-08 production release had
-`OUTBOUND_EXTERNAL_DIALING=enabled`. The 2026-10-27 release deployed with
-`OUTBOUND_EXTERNAL_DIALING=disabled`; the current production runtime therefore
-blocks calls. The rep call-plan gate fix is deployed, but it does not override
-that environment gate. Artificial-voice calls remain separately blocked by
-per-number consent and screening requirements.
+granted 2026-08-25. The 2026-10-28 activation enabled the external gate only on
+the human Quick Dial Functions. The AI scheduler and dispatcher still have the
+gate disabled, paid screening is disabled, and production has no consent grants
+or screening records. The rep call-plan gate fix and manager assignment checks
+are deployed; the designated running Twilio campaign currently has no assigned
+reps.
 
 **Production release history:** the base release deployed rules/indexes,
 Functions and Hosting on 2026-09-08 under §11. The cumulative follow-up
