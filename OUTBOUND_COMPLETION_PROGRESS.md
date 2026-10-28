@@ -3,8 +3,6 @@
 Working document for `OUTBOUND_COMPLETION_GOAL_SPEC.md`. One short entry per
 checkpoint: what changed, what proves it, what is left, and who is blocking.
 
-> **🚧 IN PROGRESS** — 2026-10-27 — Twilio destroyed-device recovery and mobile reconnect layout — `src/admin/outbound/voice-client.js`, `src/admin/outbound/LiveCallWorkspace.jsx`, `src/admin/outbound/hybrid.css`, `package.json`, `package-lock.json`, `OUTBOUND_COMPLETION_PROGRESS.md`
-
 **Branch:** `feat/outbound-readiness-closeout`
 **Baseline commit:** `925697f9b62711decaf46c37d4e76e9b5026d060` (`main`)
 
@@ -403,3 +401,18 @@ reports only the *last* command's status, so a failing `npm run test:all`
 followed by three successful `npm audit` calls read as `EXIT=0`. The final run
 records every step's status individually. Five full-suite runs total: three
 green, two failed for the environmental reasons above.
+
+## Checkpoint 6 — destroyed Twilio device recovery and mobile reconnect layout
+
+**Changes:** PR #4 upgrades the browser Voice SDK to 2.18.4, recreates a device
+after Twilio reports it destroyed, and guards token refresh against destroyed
+devices. The live-call workspace now reserves space for audio status and stacks
+the reconnect action on narrow screens.
+
+**Evidence:** `Outbound AI CI / validate` passed on PR #4. The local dashboard
+opens at `/admin/outbound` and shows the sign-in screen when no local session is
+present.
+
+**Production:** Hosting deployment is pending; the GHL read-only audit callable
+from PR #3 is already deployed to `bitesites-org`. The PR #4 changes affect
+Hosting assets only and do not deploy or change dialing functions.
