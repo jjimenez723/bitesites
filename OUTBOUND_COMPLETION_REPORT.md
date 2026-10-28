@@ -329,10 +329,11 @@ Nothing below can be produced from this repository.
 
 **Credentials:**
 
-3. **`GHL_CONTACTS_READ_TOKEN`** — a GoHighLevel Private Integration scoped to
-   `contacts.readonly` with no write scopes. Until it exists the eligibility
-   audit measures Firestore records and refuses the CRM scope with a
-   `failed-precondition` that names the secret.
+3. **`GHL_CONTACTS_READ_TOKEN`** — a separate BiteSites GoHighLevel Private
+   Integration scoped only to `contacts.readonly` was created on 2026-10-27 and
+   stored as a new Firebase Secret Manager version. The admin callable has
+   since been added to the source export list; production still needs an
+   authorized Functions deployment before the admin UI can call it.
 
 **Spend decisions:**
 

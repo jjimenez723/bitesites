@@ -643,7 +643,7 @@ export const ingestPreDialScreeningCall = onCall(
  * its queue is entitled to know which gate is holding it, and the report
  * carries identifiers and verdicts rather than consent text or registry data.
  * Reading the CRM contact book is narrower and needs an owner/admin, because
- * that is a bulk read of every contact in the shared GoHighLevel sub-account
+ * that is a bulk read of every contact in the configured GoHighLevel location
  * rather than a report about records BiteSites already holds.
  *
  * Nothing here dials, enrols, imports, or issues evidence. The only write is
@@ -673,9 +673,16 @@ export const runOutboundEligibilityAudit = onCall(
           'GHL_CONTACTS_READ_TOKEN is not configured. Create a read-only Private Integration '
           + 'in GoHighLevel and set it with `firebase functions:secrets:set GHL_CONTACTS_READ_TOKEN`.');
       }
+      const ghlLocationAccountId = process.env.GHL_LOCATION_ACCOUNT_ID || 'bitesites';
+      if (accountId !== ghlLocationAccountId) {
+        throw new HttpsError('failed-precondition',
+          `The configured GoHighLevel location is mapped to ${ghlLocationAccountId}; it cannot be used for ${accountId}.`);
+      }
       goHighLevel = {
         token,
         locationId: process.env.GHL_LOCATION_ID || 'LDL5wuJlnVnqk9vn6taD',
+        accountId: ghlLocationAccountId,
+        locationAccountId: ghlLocationAccountId,
         criteria: {
           query: str(request.data?.crmQuery, 120),
           tags: idList(request.data?.crmTags, 5)

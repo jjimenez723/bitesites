@@ -577,9 +577,9 @@ async function gatherFirestoreCandidates(db, { campaign, scope, limit }) {
  *
  * Two audit-only reasons are added here. `crm_do_not_disturb` makes the CRM's
  * own opt-out visible as its own bucket instead of disappearing into the
- * generic do-not-call reason, and `crm_account_mismatch` fires when the
- * contact's tags say it belongs to a different seller — the only boundary that
- * exists inside a shared GoHighLevel sub-account.
+ * generic do-not-call reason, and `crm_account_mismatch` fires when an explicit
+ * contact tag conflicts with the configured seller. A dedicated location can
+ * establish seller identity when tags are absent.
  */
 async function gatherGoHighLevelCandidates({ campaign, goHighLevel, limit }) {
   const read = await readGoHighLevelContacts(

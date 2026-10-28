@@ -45,9 +45,9 @@ machine where the Firebase CLI happens to be installed globally
   shell out to `firebase emulators:exec`; nothing installed it. The CLI now
   resolves from `node_modules/.bin` on every machine that ran `npm ci`, and CI
   asserts that with `npx --no-install firebase --version` before the suite.
-- `actions/setup-java@v4` (Temurin 17) added to the workflow. The Firestore and
-  Auth emulators are Java programs; the runner image supplies a JDK today, and
-  a pinned one means the suite does not start failing the week it stops.
+- `actions/setup-java@v4` (Temurin 21) added to the workflow. The Firestore and
+  Auth emulators are Java programs, and the current Firebase CLI requires JDK
+  21 or later for emulator startup.
 - npm caching keyed on all three lockfiles; job timeout raised 30 → 45 minutes.
 - An owner-action note at the top of the workflow: branch protection and a
   required `Outbound AI CI / validate` check. Repository settings were **not**
@@ -160,6 +160,30 @@ the audit runs over Firestore scopes and refuses the CRM scope with a
 `failed-precondition` naming the secret.
 
 ---
+
+## Current-state correction — 2026-10-27
+
+The CRM setup has changed since Checkpoint 2:
+
+- A separate BiteSites GoHighLevel Private Integration was created with only
+  `contacts.readonly`; its credential is stored in Firebase Secret Manager as
+  a new `GHL_CONTACTS_READ_TOKEN` version. A live read of the BiteSites
+  location returned all 157 contacts without a tag filter.
+- The app's admin UI already called `runOutboundEligibilityAudit`, but Firebase
+  did not export that callable. The export is now present in source, and the
+  callable now maps the configured GHL location to the BiteSites account and
+  fails closed for other accounts.
+- The BiteSites GHL location is a distinct sub-account; the earlier statement
+  that all three GHL listings shared one location was wrong. Mappings for other
+  application accounts remain unverified. Location membership is used as the
+  BiteSites boundary; contradictory account tags remain a mismatch.
+- Current production Functions did not contain `runOutboundEligibilityAudit`
+  when checked. A Functions deployment is still required before the admin UI
+  can use the callable. No production deployment was run.
+- PR #3's required CI check failed before emulator tests because the workflow
+  pinned Temurin 17 while the current Firebase CLI requires JDK 21. The
+  workflow is updated to Temurin 21, and the rerun passed the complete
+  repository suite and both package checks.
 
 ## Checkpoint 3 — the live-model path, built and guarded (milestone 6)
 

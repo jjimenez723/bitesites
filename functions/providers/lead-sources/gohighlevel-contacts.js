@@ -265,10 +265,11 @@ export class GoHighLevelContactsSource extends LeadSourceAdapter {
     super(config);
     this.token = String(config.token || '');
     this.locationId = String(config.locationId || '');
-    // Every request is bound to one seller. There is no "read the whole
-    // sub-account" mode, because all three sellers share one GoHighLevel
-    // location and the tag is the only boundary between their books.
+    // Optional explicit mapping for a dedicated GHL location. When present,
+    // the configured application account must match it; location membership
+    // is then a stronger boundary than an optional or missing CRM tag.
     this.accountId = String(config.accountId || '');
+    this.locationAccountId = String(config.locationAccountId || '');
     this.fetchImpl = config.fetchImpl || globalThis.fetch;
     this.sleepImpl = config.sleepImpl
       || (ms => new Promise(resolve => { setTimeout(resolve, ms); }));
@@ -286,6 +287,13 @@ export class GoHighLevelContactsSource extends LeadSourceAdapter {
     if (!this.locationId) errors.push('A GoHighLevel location id is required.');
     try { requireAccountId(this.accountId, { field: 'accountId' }); }
     catch (error) { errors.push(error.message); }
+    if (this.locationAccountId) {
+      try { requireAccountId(this.locationAccountId, { field: 'locationAccountId' }); }
+      catch (error) { errors.push(error.message); }
+      if (this.locationAccountId !== this.accountId) {
+        errors.push('The configured GoHighLevel location is mapped to a different application account.');
+      }
+    }
     return {
       valid: errors.length === 0,
       errors,
@@ -487,7 +495,18 @@ export async function readGoHighLevelContacts(config = {}, criteria = {}) {
   const page = await source.readAll(criteria);
   return {
     ...page,
-    contacts: page.records.map(normalizeGoHighLevelContact),
+    contacts: page.records.map(raw => {
+      const contact = normalizeGoHighLevelContact(raw);
+      // A dedicated location can establish the seller boundary when CRM tags
+      // are absent. Explicit contradictory tags remain a mismatch for review.
+      if (!contact.crmAccountId
+          && source.locationAccountId
+          && source.locationAccountId === source.accountId) {
+        contact.crmAccountId = source.accountId;
+        contact.crmAccountReason = 'location_bound';
+      }
+      return contact;
+    }),
     accountId: source.accountId,
     locationId: source.locationId
   };
