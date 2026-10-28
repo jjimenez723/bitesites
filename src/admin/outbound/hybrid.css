@@ -361,6 +361,19 @@
   backdrop-filter: blur(24px) saturate(150%);
   transition: none;
 }
+.bs-admin .live-call-workspace.has-audio-status { grid-template-rows: auto auto minmax(0, 1fr) auto; }
+.bs-admin .live-call-audio-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0;
+  padding: 9px 20px;
+  border-bottom: 1px solid rgba(255,255,255,.075);
+  background: rgba(255,255,255,.025);
+}
+.bs-admin .live-call-audio-status p { min-width: 0; margin: 0; }
+.bs-admin .live-call-audio-status .btn-admin { flex: none; }
 .bs-admin .live-call-identity { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .bs-admin .live-call-identity h2 { overflow: hidden; font-size: 18px; text-overflow: ellipsis; white-space: nowrap; }
 .bs-admin .live-status-orb { width: 12px; height: 12px; flex: none; border-radius: 50%; background: #777; box-shadow: 0 0 0 5px rgba(255,255,255,.045); }
@@ -610,6 +623,11 @@
   .bs-admin .transfer-waiting .btn-admin { grid-column: 1 / -1; }
   .bs-admin .coach-cue-composer { grid-template-columns: minmax(0,1fr) auto; width: 100%; }
   .bs-admin .coach-cue-composer label { display: none; }
+}
+
+@media (max-width: 540px) {
+  .bs-admin .live-call-audio-status { align-items: stretch; flex-direction: column; padding: 10px 14px; }
+  .bs-admin .live-call-audio-status .btn-admin { width: 100%; justify-content: center; }
 }
 
 @media (prefers-reduced-motion: reduce) {

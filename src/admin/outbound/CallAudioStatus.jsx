@@ -15,7 +15,7 @@ export default function CallAudioStatus({ callId, mode = 'human' }) {
     catch (failure) { setError(failure?.message || 'Could not connect audio.'); }
     finally { setPreparing(false); }
   };
-  return <div className="admin-note" role="status">
+  return <div className="admin-note live-call-audio-status" role="status">
     <p>{error || (voice.callId === callId && voice.error) || (connecting ? 'Connecting call audio…' : 'Your call audio is disconnected.')}</p>
     <button className="btn-admin primary" type="button" disabled={connecting} onClick={reconnect}>
       {connecting ? 'Connecting audio…' : 'Reconnect audio'}

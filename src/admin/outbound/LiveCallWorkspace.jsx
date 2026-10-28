@@ -317,9 +317,12 @@ export default function LiveCallWorkspace({
   };
 
   const needsFollowUp = ['booked_meeting', 'call_later'].includes(outcome);
+  const audioMode = coaching ? 'coach' : assisting ? 'assist' : listening ? 'listen' : 'human';
+  const needsAudioStatus = !demo && !terminal && (humanAudible || coaching || listening)
+    && !(voice.callId === call.id && voice.mode === audioMode && voice.connected);
 
   return (
-    <div className="live-call-workspace" role="dialog" aria-modal="true" aria-labelledby="live-call-title">
+    <div className={`live-call-workspace${needsAudioStatus ? ' has-audio-status' : ''}`} role="dialog" aria-modal="true" aria-labelledby="live-call-title">
       <header className="live-call-topbar">
         <div className="live-call-identity">
           <span className={`live-status-orb controller-${controller}`} />
@@ -337,9 +340,9 @@ export default function LiveCallWorkspace({
         </button>
       </header>
 
-      {!demo && !terminal && (humanAudible || coaching || listening) && <CallAudioStatus
-          callId={call.id} mode={coaching ? 'coach' : assisting ? 'assist' : listening ? 'listen' : 'human'}
-        />}
+      {needsAudioStatus && <CallAudioStatus
+        callId={call.id} mode={audioMode}
+      />}
       <main className="live-call-canvas">
         <aside className="live-context-panel" aria-label="Prospect context">
           <div className="live-contact-card">

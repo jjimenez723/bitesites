@@ -4,6 +4,18 @@ import { createVoiceSession } from './voice-session';
 
 let devicePromise = null;
 
+const deviceIsDestroyed = device => device?.state === 'destroyed';
+
+function forgetDevice(device) {
+  const pending = devicePromise;
+  if (!pending) return;
+  pending.then(current => {
+    if (current === device && devicePromise === pending) devicePromise = null;
+  }).catch(() => {
+    if (devicePromise === pending) devicePromise = null;
+  });
+}
+
 async function buildDevice() {
   const [{ Device }, tokenResult] = await Promise.all([
     import('@twilio/voice-sdk'), outbound.voiceToken()
@@ -16,26 +28,79 @@ async function buildDevice() {
     appVersion: '2'
   });
   device.on('tokenWillExpire', async () => {
-    try { device.updateToken((await outbound.voiceToken()).token); }
-    catch (error) { voice.deviceError(error); }
+    try {
+      const token = (await outbound.voiceToken()).token;
+      if (deviceIsDestroyed(device)) {
+        forgetDevice(device);
+        return;
+      }
+      device.updateToken(token);
+    } catch (error) {
+      if (deviceIsDestroyed(device)) forgetDevice(device);
+      else voice.deviceError(error);
+    }
   });
-  device.on('error', error => voice.deviceError(error));
+  device.on('destroyed', () => forgetDevice(device));
+  device.on('error', error => {
+    if (deviceIsDestroyed(device)) forgetDevice(device);
+    voice.deviceError(error);
+  });
   return device;
 }
 
 export async function hybridVoiceDevice() {
-  if (!devicePromise) devicePromise = buildDevice().catch(error => {
+  const current = devicePromise;
+  if (current) {
+    try {
+      const existing = await current;
+      if (!deviceIsDestroyed(existing)) return existing;
+    } catch (error) {
+      if (devicePromise !== current) return hybridVoiceDevice();
+      devicePromise = null;
+      throw error;
+    }
+    if (devicePromise !== current) return hybridVoiceDevice();
     devicePromise = null;
+  }
+
+  const pending = buildDevice();
+  devicePromise = pending;
+  try {
+    const device = await pending;
+    if (deviceIsDestroyed(device)) {
+      if (devicePromise === pending) devicePromise = null;
+      throw new Error('Call audio closed before connecting. Tap Reconnect audio to try again.');
+    }
+    return device;
+  } catch (error) {
+    if (devicePromise === pending) devicePromise = null;
     throw error;
-  });
-  return devicePromise;
+  }
 }
 
 const voice = createVoiceSession({
   getDevice: async () => {
-    const device = await hybridVoiceDevice();
+    let device = await hybridVoiceDevice();
     // Recovered sessions can sit idle past the 15-minute token lifetime.
-    device.updateToken((await outbound.voiceToken()).token);
+    const token = (await outbound.voiceToken()).token;
+    if (deviceIsDestroyed(device)) {
+      forgetDevice(device);
+      device = await hybridVoiceDevice();
+    }
+    if (deviceIsDestroyed(device)) {
+      throw new Error('Call audio closed before connecting. Tap Reconnect audio to try again.');
+    }
+    try {
+      device.updateToken(token);
+    } catch (error) {
+      if (!deviceIsDestroyed(device)) throw error;
+      forgetDevice(device);
+      device = await hybridVoiceDevice();
+      if (deviceIsDestroyed(device)) {
+        throw new Error('Call audio closed before connecting. Tap Reconnect audio to try again.');
+      }
+      device.updateToken(token);
+    }
     return device;
   }
 });
@@ -61,5 +126,7 @@ export async function destroyHybridVoice() {
   leaveHybridVoice();
   const pending = devicePromise;
   devicePromise = null;
-  if (pending) (await pending).destroy();
+  if (!pending) return;
+  const device = await pending.catch(() => null);
+  if (device && !deviceIsDestroyed(device)) device.destroy();
 }

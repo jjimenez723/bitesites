@@ -100,7 +100,7 @@
     "preflight:production": "node scripts/production-preflight.mjs"
   },
   "dependencies": {
-    "@twilio/voice-sdk": "2.18.3",
+    "@twilio/voice-sdk": "2.18.4",
     "d3-geo": "^3.1.1",
     "express": "^5.1.0",
     "firebase": "^12.16.0",
