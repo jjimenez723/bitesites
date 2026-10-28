@@ -3,6 +3,8 @@
 Working document for `OUTBOUND_COMPLETION_GOAL_SPEC.md`. One short entry per
 checkpoint: what changed, what proves it, what is left, and who is blocking.
 
+> **🚧 IN PROGRESS** — 2026-10-27 — PR #3 CI Java runtime compatibility — `.github/workflows/hybrid-v2-ci.yml`, `OUTBOUND_COMPLETION_PROGRESS.md`
+
 **Branch:** `feat/outbound-readiness-closeout`
 **Baseline commit:** `925697f9b62711decaf46c37d4e76e9b5026d060` (`main`)
 
@@ -45,9 +47,9 @@ machine where the Firebase CLI happens to be installed globally
   shell out to `firebase emulators:exec`; nothing installed it. The CLI now
   resolves from `node_modules/.bin` on every machine that ran `npm ci`, and CI
   asserts that with `npx --no-install firebase --version` before the suite.
-- `actions/setup-java@v4` (Temurin 17) added to the workflow. The Firestore and
-  Auth emulators are Java programs; the runner image supplies a JDK today, and
-  a pinned one means the suite does not start failing the week it stops.
+- `actions/setup-java@v4` (Temurin 21) added to the workflow. The Firestore and
+  Auth emulators are Java programs, and the current Firebase CLI requires JDK
+  21 or later for emulator startup.
 - npm caching keyed on all three lockfiles; job timeout raised 30 → 45 minutes.
 - An owner-action note at the top of the workflow: branch protection and a
   required `Outbound AI CI / validate` check. Repository settings were **not**
@@ -180,6 +182,9 @@ The CRM setup has changed since Checkpoint 2:
 - Current production Functions did not contain `runOutboundEligibilityAudit`
   when checked. A Functions deployment is still required before the admin UI
   can use the callable. No production deployment was run.
+- PR #3's required CI check failed before emulator tests because the workflow
+  pinned Temurin 17 while the current Firebase CLI requires JDK 21. The
+  workflow is updated to Temurin 21; the PR check must pass before merge.
 
 ## Checkpoint 3 — the live-model path, built and guarded (milestone 6)
 
