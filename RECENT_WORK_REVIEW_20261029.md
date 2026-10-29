@@ -26,7 +26,11 @@ without a browser participant. Their call-document reads exceeded Firestore's
 expression limit, and their session check-ins used an admin-only endpoint.
 Both defects were repaired and published at 5:53 PM. The browser test now uses
 actual rep rules and live document subscriptions through the answered-call join.
-The reps must refresh; a post-release real conversation is not yet verified.
+Subsequent production records confirmed Israel and another operator joined
+answered calls. The owner then reported a delay between pickup and audio. The
+6:54 PM release restores audio preparation while ringing, immediate one-line
+human pickup routing, token reuse and inline conference instructions. Reps must
+refresh; the new pickup latency is not yet measured in a real conversation.
 
 David should reload https://bitesites.org/admin/outbound?tab=dialer and press
 **Start dialing**, allowing microphone access if prompted. These are real human
@@ -47,6 +51,7 @@ calls, one at a time. No call was placed while making or testing this change.
 | Today, 4:41–4:42 PM | Completed exemption rollout, repaired campaign query permissions, hid practice for exempt reps, and restored David's original campaign access. | Published and verified. Browser/access checks pass. |
 | Today, 4:51 PM | Approved Israel Garcia and granted the same seller-specific onboarding exemption and campaign assignment. | Stored role, profile, Auth claims and assignment verified. |
 | Today, 5:53 PM | Removed duplicate call-read authorization evaluation that blocked rep audio joins; switched session check-in to the rep-compatible endpoint; exposed connection errors. | Hosting and rules live and byte-verified. Actual-rules/browser join and signed conference endpoint checks pass; real conversation pending. |
+| Today, 6:54 PM | Restored audio preparation during ringing, direct human pickup, voice-token reuse and inline conference instructions; preserved fast/concurrent callback metadata. | Hosting and nine targeted Functions deployed and verified. Earlier access fix now has real browser-participant evidence; new latency still needs a real answered call. |
 
 ## Earlier work preserved locally, but absent from the current frontend
 
@@ -63,7 +68,8 @@ Today's release preserves the current live site's public pages and assets.
   homepage rather than the dedicated FAQ.
 - **October 15–16 dialer work:** dedicated Interested/Call Back Later folders,
   phone-number history search, consented recording controls/playback, and
-  additional audio-start optimizations. Those implementations remain in the
+  additional audio-start optimizations. The audio optimizations are now restored
+  in the 6:54 PM release. The folder/search/recording implementations remain in the
   original workspace; the current frontend does not contain those added folders,
   phone search, or recording UI. Regular History, notes, and Call Later remain.
 - **Other local work:** email mailbox/search/reply features, quick-message
@@ -86,12 +92,14 @@ full rules suite has the same four existing fixture failures on baseline and
 patched code (167 passes in each run). Production audio still requires David's
 own answered call; none was initiated automatically.
 
-Latest Hosting release: `46c11a18ce89bd67`. The custom domain and Firebase origin serve
-the tested entry/admin bundles, and deployed rules match the tested file. The
-six human-call functions retained their revisions and enabled settings.
+Latest verified assets: `index-FtXYefui.js` and `AdminApp-DZJhfVfw.js` (6:54 PM
+release). Both origins serve the tested files, and deployed rules remain the
+tested rep-read fix. The six human-call entry points retain enabled settings;
+the nine targeted latency Functions have new verified source revisions.
 
 Implementation and detailed evidence:
 [REP_LIVE_DIALER_RESTORATION.md](REP_LIVE_DIALER_RESTORATION.md) and
-[REP_CONNECTION_REPAIR_20261029.md](REP_CONNECTION_REPAIR_20261029.md).
+[REP_CONNECTION_REPAIR_20261029.md](REP_CONNECTION_REPAIR_20261029.md) and
+[REP_PICKUP_LATENCY_20261029.md](REP_PICKUP_LATENCY_20261029.md).
 Source branch: `codex/restore-rep-live-dialer`, isolated checkout at
 `/Users/cesaryunda/Bitesites3.0/bitesites-rep-live-dialer`.

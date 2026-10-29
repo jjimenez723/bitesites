@@ -67,6 +67,7 @@ await page.route('**/*',async route=>{
  }})});
  export const hybridVoiceState=voice.getState,subscribeHybridVoice=voice.subscribe,joinHybridCall=voice.join,leaveHybridVoice=voice.leave,setHybridVoiceMuted=voice.setMuted;
  export async function prepareHybridVoice(){}
+ export async function destroyHybridVoice(){voice.leave()}
  `});
  return route.continue();
 });

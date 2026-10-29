@@ -1,8 +1,10 @@
 // Lazy-loaded browser softphone; all credentials remain on the server.
 import { outbound } from './data';
 import { createVoiceSession } from './voice-session';
+import { createVoiceTokenCache } from './voice-token';
 
 let devicePromise = null;
+const tokens = createVoiceTokenCache({ fetchToken: () => outbound.voiceToken() });
 
 const deviceIsDestroyed = device => device?.state === 'destroyed';
 const destroyedDeviceError = error => /device.{0,40}destroyed|destroyed.{0,40}device/i.test(error?.message || '');
@@ -31,7 +33,7 @@ function forgetDevice(device) {
 
 async function buildDevice() {
   const [{ Device }, tokenResult] = await Promise.all([
-    import('@twilio/voice-sdk'), outbound.voiceToken()
+    import('@twilio/voice-sdk'), tokens.get()
   ]);
   const device = new Device(tokenResult.token, {
     edge: 'roaming',
@@ -42,13 +44,14 @@ async function buildDevice() {
   });
   device.on('tokenWillExpire', async () => {
     try {
-      const token = (await outbound.voiceToken()).token;
+      const token = (await tokens.get({ force: true })).token;
       if (!await updateLiveDeviceToken(device, token)) {
         forgetDevice(device);
         voice.deviceError(reconnectError());
         return;
       }
     } catch (error) {
+      tokens.clear();
       if (deviceIsDestroyed(device) || destroyedDeviceError(error)) {
         forgetDevice(device);
         voice.deviceError(reconnectError());
@@ -57,6 +60,7 @@ async function buildDevice() {
   });
   device.on('destroyed', () => forgetDevice(device));
   device.on('error', error => {
+    tokens.clear();
     if (deviceIsDestroyed(device) || destroyedDeviceError(error)) {
       forgetDevice(device);
       voice.deviceError(reconnectError());
@@ -101,8 +105,8 @@ const voice = createVoiceSession({
   getDevice: async () => {
     let device = await hybridVoiceDevice();
     // Recovered sessions can sit idle past the 15-minute token lifetime.
-    const token = (await outbound.voiceToken()).token;
-    if (!await updateLiveDeviceToken(device, token)) {
+    const token = (await tokens.get()).token;
+    if (deviceIsDestroyed(device) || (device.token !== token && !await updateLiveDeviceToken(device, token))) {
       forgetDevice(device);
       device = await hybridVoiceDevice();
       if (!await updateLiveDeviceToken(device, token)) {
@@ -119,9 +123,12 @@ export async function prepareHybridVoice() {
   if (!globalThis.navigator?.mediaDevices?.getUserMedia) {
     throw new Error('This browser does not support microphone access.');
   }
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  stream.getTracks().forEach(track => track.stop());
-  await hybridVoiceDevice();
+  await Promise.all([
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+      stream.getTracks().forEach(track => track.stop());
+    }),
+    hybridVoiceDevice()
+  ]);
   return true;
 }
 
@@ -135,6 +142,7 @@ export async function destroyHybridVoice() {
   leaveHybridVoice();
   const pending = devicePromise;
   devicePromise = null;
+  tokens.clear();
   if (!pending) return;
   const device = await pending.catch(() => null);
   if (device && !deviceIsDestroyed(device)) device.destroy();

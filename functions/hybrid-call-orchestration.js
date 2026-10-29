@@ -100,14 +100,15 @@ async function audit(db, type, {
 }
 
 /**
- * Route a verified human answer without cancelling siblings.
+ * Route pickup immediately for one-line human sessions. Other modes wait for
+ * verified human detection before choosing an operator.
  *
  * Exactly one transaction decides whether this call gets the rep or an isolated
  * AI controller. Simultaneous answers therefore produce at most one human call,
  * while every other answered call remains alive and is assigned to AI.
  */
-export async function routeVerifiedHumanAnswer(db, sessionId, callId, {
-  targetId = '', now = new Date()
+export async function routeAnsweredCall(db, sessionId, callId, {
+  targetId = '', verifiedHuman = false, now = new Date()
 } = {}) {
   const sessionRef = db.doc(`dialerSessions/${sessionId}`);
   const callRef = db.doc(`calls/${callId}`);
@@ -123,6 +124,9 @@ export async function routeVerifiedHumanAnswer(db, sessionId, callId, {
     const session = sessionSnapshot.data();
     const call = callSnapshot.data();
     if (['completed', 'cancelled', 'failed'].includes(call.status)) return { routed: false, reason: 'call_ended' };
+    if (!verifiedHuman && (session.operatingMode !== 'human' || Number(session.concurrency) !== 1)) {
+      return { routed: false, reason: 'awaiting_human_detection' };
+    }
     const current = control(call);
     if (current.controller !== 'unassigned') {
       return { routed: true, controller: current.controller, reason: 'already_routed', idempotent: true };
@@ -132,10 +136,11 @@ export async function routeVerifiedHumanAnswer(db, sessionId, callId, {
     const decision = routeDecision({ session, call });
     const nextRevision = current.revision + 1;
     const stamp = timestamp(now);
+    const answeredBy = verifiedHuman ? 'human' : (call.answeredBy || 'unknown');
 
     if (decision.controller === 'human') {
       transaction.set(callRef, {
-        status: 'connected', answeredBy: 'human', connectedAt: stamp,
+        status: 'connected', answeredBy, connectedAt: stamp,
         operator: 'human', humanHandled: true,
         control: {
           controller: 'human', repUid: clean(session.userUid, 160), aiSessionId: '',
@@ -148,7 +153,7 @@ export async function routeVerifiedHumanAnswer(db, sessionId, callId, {
       }, { merge: true });
     } else if (decision.controller === 'ai') {
       transaction.set(callRef, {
-        status: 'connected', answeredBy: 'human', connectedAt: stamp,
+        status: 'connected', answeredBy, connectedAt: stamp,
         operator: 'ai', aiHandled: true,
         control: {
           controller: 'ai', repUid: '', aiSessionId: '', changedAt: stamp, revision: nextRevision
@@ -156,7 +161,7 @@ export async function routeVerifiedHumanAnswer(db, sessionId, callId, {
       }, { merge: true });
     } else {
       transaction.set(callRef, {
-        status: 'completed', answeredBy: 'human', connectedAt: stamp, endedAt: stamp,
+        status: 'completed', answeredBy, connectedAt: stamp, endedAt: stamp,
         operator: 'none',
         control: {
           controller: 'none', repUid: '', aiSessionId: '', changedAt: stamp, revision: nextRevision
@@ -178,6 +183,10 @@ export async function routeVerifiedHumanAnswer(db, sessionId, callId, {
     });
   }
   return result;
+}
+
+export function routeVerifiedHumanAnswer(db, sessionId, callId, options = {}) {
+  return routeAnsweredCall(db, sessionId, callId, { ...options, verifiedHuman: true });
 }
 
 /** Record the provider/model AI session once the media runtime is attached. */

@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { hybridOutboundEventsUrl } from './hybrid-urls.js';
 import { HybridTwilioDialer } from './providers/calling/hybrid-twilio.js';
 import { TwilioDialer } from './providers/calling/twilio.js';
+import { conferenceName, prospectConferenceTwiml } from './hybrid-conference.js';
 
 test('builds the production Hybrid Twilio callback by default', () => {
   assert.equal(
@@ -53,7 +54,12 @@ test('Hybrid Twilio URLs use Firebase Hosting canonical query order', async () =
   });
 
   const expectedQuery = 'campaignId=campaign-a&legIndex=0&sessionId=session-a&targetId=target-a';
-  assert.equal(params.Url, `https://staging.example.com/api/twilio-prospect-twiml?${expectedQuery}`);
+  assert.equal(params.Url, undefined, 'A Url would override inline TwiML and bring the pickup-time fetch back');
+  assert.equal(params.ApplicationSid, undefined);
+  assert.equal(params.Twiml, prospectConferenceTwiml({ sessionId: 'session-a', targetId: 'target-a', publicUrl: 'https://staging.example.com' }));
+  assert.match(params.Twiml, /statusCallback="https:\/\/staging.example.com\/api\/twilio-conference-events\?sessionId=session-a&amp;targetId=target-a"/);
+  assert.ok(params.Twiml.includes(`>${conferenceName('session-a', 'target-a')}</Conference>`));
+  assert.ok(params.Twiml.length < 4000);
   assert.equal(params.StatusCallback, `https://staging.example.com/api/hybrid-outbound-events?${expectedQuery}`);
   assert.equal(params.AsyncAmdStatusCallback, params.StatusCallback);
 });
@@ -81,6 +87,18 @@ test('Hybrid Twilio never records before the answered party grants consent', asy
   assert.equal(params.Record, undefined);
   assert.equal(params.RecordingStatusCallback, undefined);
   assert.equal(params.TimeLimit, '600');
+  assert.match(params.Twiml, /participantLabel="prospect"/);
+  assert.match(params.Twiml, /beep="false"/);
+  assert.match(params.Twiml, /waitUrl=""/);
+  assert.match(params.Twiml, /endConferenceOnExit="true"/);
+});
+
+test('conference rooms stay isolated by session and target and callback values are escaped', () => {
+  assert.notEqual(conferenceName('session-a', 'target-a'), conferenceName('session-b', 'target-a'));
+  assert.notEqual(conferenceName('session-a', 'target-a'), conferenceName('session-a', 'target-b'));
+  const twiml = prospectConferenceTwiml({ sessionId: 'session&"', targetId: 'target<', publicUrl: 'https://example.com/' });
+  assert.match(twiml, /sessionId=session%26%22&amp;targetId=target%3C/);
+  assert.match(twiml, /statusCallbackEvent="start end join leave mute hold"/);
 });
 
 test('legacy Twilio never records from call creation either', async () => {

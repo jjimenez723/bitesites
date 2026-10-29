@@ -65,6 +65,7 @@ try {
     if (/\/outbound\/voice-client(?:\.js)?$/.test(url.pathname)) return route.fulfill({ contentType: 'application/javascript', body: `
       const state={connected:false,callId:'',muted:false,error:''};
       export const hybridVoiceState=()=>state,subscribeHybridVoice=()=>()=>{},leaveHybridVoice=()=>{},setHybridVoiceMuted=()=>{};
+      export async function destroyHybridVoice(){}
       export const prepareHybridVoice=async()=>{},joinHybridCall=async()=>{};
     ` });
     if (/\/outbound\/agent-preview-client(?:\.js)?$/.test(url.pathname)) return route.fulfill({ contentType: 'application/javascript', body: `

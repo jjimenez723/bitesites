@@ -9,7 +9,7 @@ import { outbound, useAction, useLiveDoc, useSessionHeartbeat } from './data';
 import { Empty } from './SourceBadge';
 import ActiveCallPanel from './ActiveCallPanel';
 import CallPlanFlow from './CallPlanFlow';
-import { leaveHybridVoice, prepareHybridVoice } from './voice-client';
+import { destroyHybridVoice, leaveHybridVoice, prepareHybridVoice } from './voice-client';
 import { primeDialerCue } from './dialer-cue';
 
 const ELIGIBILITY_LABELS = {
@@ -121,7 +121,7 @@ export default function DialerControls({ campaignId, campaigns = [], onSelectCam
     }
   }, [session?.status]);
 
-  useEffect(() => () => leaveHybridVoice(), []);
+  useEffect(() => () => { destroyHybridVoice().catch(() => {}); }, []);
 
   const start = async () => {
     setDialIssue(null);

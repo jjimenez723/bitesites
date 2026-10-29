@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 
 if (!process.env.FIRESTORE_EMULATOR_HOST) throw new Error('Firestore emulator required.');
-process.env.GCLOUD_PROJECT = 'demo-bitesites';
+process.env.GCLOUD_PROJECT = 'demo-hybrid-interested';
 const { initializeApp } = await import('firebase-admin/app');
-initializeApp({ projectId: 'demo-bitesites' });
+initializeApp({ projectId: 'demo-hybrid-interested' });
 const { getFirestore, Timestamp } = await import('firebase-admin/firestore');
 const { submitHybridDisposition } = await import('./hybrid-session-api.js');
 const db = getFirestore();
@@ -37,10 +37,10 @@ async function seed(id, { leadId, answered = true, phoneE164 = '+15005550101' } 
 
 try {
   for (const uid of ['interested-rep', 'interested-other-rep']) {
-    await db.doc(`roles/${uid}`).set({ role: 'outbound_rep', accountIds: ['bitesites'] });
+    await db.doc(`roles/${uid}`).set({ role: 'outbound_rep', accountIds: ['bitesites'], trainingExemptAccountIds:['bitesites'] });
   }
   await db.doc('dialerSessions/interested-session').set({ userUid: 'interested-rep', accountId: 'bitesites', status: 'active' });
-  await db.doc('outboundCampaigns/interested-campaign').set({ accountId: 'bitesites', status: 'running' });
+  await db.doc('outboundCampaigns/interested-campaign').set({ accountId: 'bitesites', status: 'running', allowedRepUids:['interested-rep','interested-other-rep'] });
 
   await seed('interested-new');
   const result = await submit('interested-new');

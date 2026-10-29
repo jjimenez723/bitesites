@@ -38,38 +38,48 @@ async function liveCallsForSession(db, session) {
     .filter(call => !TERMINAL_HYBRID_STATUSES.has(call.status));
 }
 
-async function initializeHybridCalls(db, session, started, actorId) {
+export async function initializeHybridCalls(db, session, started, actorId) {
   const profileId = clean(session.agentProfileId, 200);
   for (const entry of started) {
-    await db.doc(`calls/${entry.callId}`).set({
-      hybridV2: true,
-      // `dialNext` stamps every leg it places as human-operated because it is
-      // also the V1 power/parallel dialer. A Hybrid V2 leg has no operator until
-      // a verified human answer is routed, so undo that guess here and record
-      // the session's ownership mode rather than the transport mode.
-      operator: 'unassigned',
-      humanHandled: false,
-      aiHandled: false,
-      dialerMode: ['human', 'hybrid', 'ai'].includes(session.operatingMode) ? session.operatingMode : 'hybrid',
-      control: { controller: 'unassigned', repUid: '', aiSessionId: '', revision: 0 },
-      handoff: { requestedBy: '', requestedAt: null, state: 'none', priority: 0, completedAt: null },
-      media: {
-        conferenceSid: '', conferenceName: '', prospectParticipantSid: '',
-        aiParticipantSid: '', humanParticipantSid: '', listenerParticipantSid: '', streamSid: '', recordingSid: ''
-      },
-      agent: {
-        profileId,
-        profileName: clean(session.agentProfileName, 120),
-        profileVersion: Math.max(1, Number(session.agentProfileVersion) || 1),
-        effectiveConfigHash: '', model: '', voice: ''
-      },
-      agentSessionOverride: session.agentSessionOverride || {},
-      analytics: {
-        humanTalkSec: 0, aiTalkSec: 0, listenSec: 0,
-        takeoverCount: 0, prospectRequestedHuman: false
-      },
-      updatedAt: FieldValue.serverTimestamp()
-    }, { merge: true });
+    const callRef = db.doc(`calls/${entry.callId}`);
+    await db.runTransaction(async transaction => {
+      const snapshot = await transaction.get(callRef);
+      const current = snapshot.data() || {};
+      const alreadyRouted = current.control?.controller && current.control.controller !== 'unassigned';
+      transaction.set(callRef, {
+        hybridV2: true,
+        // `dialNext` stamps every leg it places as human-operated because it is
+        // also the V1 power/parallel dialer. A Hybrid V2 leg has no operator until
+        // an answer is routed. Carrier/browser callbacks can beat initialization,
+        // so never erase ownership or conference IDs already written by them.
+        ...(!alreadyRouted ? {
+          operator: 'unassigned',
+          humanHandled: false,
+          aiHandled: false,
+          control: { controller: 'unassigned', repUid: '', aiSessionId: '', revision: 0 }
+        } : {}),
+        dialerMode: ['human', 'hybrid', 'ai'].includes(session.operatingMode) ? session.operatingMode : 'hybrid',
+        handoff: { requestedBy: '', requestedAt: null, state: 'none', priority: 0, completedAt: null, ...current.handoff },
+        media: {
+          conferenceSid: '', conferenceName: '', prospectParticipantSid: '',
+          aiParticipantSid: '', humanParticipantSid: '', listenerParticipantSid: '', streamSid: '', recordingSid: '',
+          ...current.media
+        },
+        agent: {
+          profileId,
+          profileName: clean(session.agentProfileName, 120),
+          profileVersion: Math.max(1, Number(session.agentProfileVersion) || 1),
+          effectiveConfigHash: '', model: '', voice: '',
+          ...(current.agent && typeof current.agent === 'object' ? current.agent : {})
+        },
+        agentSessionOverride: session.agentSessionOverride || {},
+        analytics: {
+          humanTalkSec: 0, aiTalkSec: 0, listenSec: 0,
+          takeoverCount: 0, prospectRequestedHuman: false, ...current.analytics
+        },
+        updatedAt: FieldValue.serverTimestamp()
+      }, { merge: true });
+    });
     await recordCallAuditEvent(db, 'call_dialed', {
       callId: entry.callId,
       sessionId: session.id,

@@ -10,6 +10,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { CallingProviderAdapter, callEvent } from './adapter.js';
 import { clean } from '../../prospect-normalization.js';
 import { twilioForm } from './twilio-form.js';
+import { prospectConferenceTwiml } from '../../hybrid-conference.js';
 
 const API_BASE = 'https://api.twilio.com/2010-04-01';
 
@@ -157,15 +158,13 @@ export class HybridTwilioDialer extends CallingProviderAdapter {
       return params;
     }
 
-    const prospectTwiml = this.#hybridUrl('/api/twilio-prospect-twiml', metadata);
     const statusCallback = this.#hybridUrl('/api/hybrid-outbound-events', metadata);
-    if (!prospectTwiml || !statusCallback) throw new HybridTwilioError('Hybrid callback URLs are not configured');
+    if (!statusCallback) throw new HybridTwilioError('Hybrid callback URLs are not configured');
 
     const params = {
       To: target.phoneE164,
       From: campaign.callerId,
-      Url: prospectTwiml,
-      Method: 'POST',
+      Twiml: prospectConferenceTwiml({ sessionId: metadata.sessionId, targetId: metadata.targetId, publicUrl: statusCallback }),
       MachineDetection: 'DetectMessageEnd',
       MachineDetectionTimeout: '15',
       AsyncAmd: 'true',

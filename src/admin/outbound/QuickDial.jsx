@@ -15,8 +15,9 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { outbound, toDate, useAction, useLiveCalls, useLiveDoc, useSessionHeartbeat } from './data';
 import { playDialerCue, primeDialerCue, readDialerSoundPreference, writeDialerSoundPreference, startDialerRingback } from './dialer-cue';
 import { formatPhone } from './SourceBadge';
-import { hybridVoiceState, joinHybridCall, leaveHybridVoice, prepareHybridVoice, setHybridVoiceMuted } from './voice-client';
+import { destroyHybridVoice, hybridVoiceState, joinHybridCall, leaveHybridVoice, prepareHybridVoice, setHybridVoiceMuted } from './voice-client';
 import { useHybridVoice } from './use-hybrid-voice';
+import { shouldPrepareHumanAudio } from './human-audio';
 import CallNotesEditor from './CallNotesEditor';
 import CallbackPresets, { localDateTimeValue } from './CallbackPresets';
 
@@ -176,6 +177,8 @@ function OutcomeRow({ label, busy, onPick }) {
       <button className="btn-admin" type="button" disabled={busy}
         onClick={() => onPick('not_interested')}>Not interested</button>
       <button className="btn-admin" type="button" disabled={busy}
+        onClick={() => onPick('voicemail')}>Voicemail</button>
+      <button className="btn-admin" type="button" disabled={busy}
         onClick={() => onPick('wrong_number')}>Wrong number</button>
       <button className="btn-admin danger" type="button" disabled={busy}
         onClick={() => onPick('do_not_call')}>Do not call</button>
@@ -275,6 +278,7 @@ export default function QuickDial({ campaignId, campaigns = [], campaignsLoading
   const ended = !live && Boolean(wrapUp);
   const controller = call?.control?.controller || '';
   const assignedToRep = controller === 'human' && Boolean(live);
+  const prepareAudio = shouldPrepareHumanAudio(session, live);
   const onCall = assignedToRep && voice.connected && voice.callId === live.id;
   const running = session?.status === 'active';
   const dialing = running && Boolean(session?.autoDial?.enabled);
@@ -335,12 +339,13 @@ export default function QuickDial({ campaignId, campaigns = [], campaignsLoading
     }
   }, [session?.status]);
 
-  useEffect(() => () => leaveHybridVoice(), []);
+  // Dispose cached credentials when leaving the dialer, including sign-out.
+  useEffect(() => () => { destroyHybridVoice().catch(() => {}); }, []);
 
-  // The server decides who owns a call. Once it hands this one to the rep, put
-  // their microphone in it — the browser is following that decision, not making it.
+  // Prepare audio while the single human line rings. Server assignment and
+  // accepted browser audio are still both required to show a connected call.
   useEffect(() => {
-    if (!live || !assignedToRep || session?.rep?.activeCallId !== live.id) return;
+    if (!live || (!prepareAudio && (!assignedToRep || session?.rep?.activeCallId !== live.id))) return;
     const voice = hybridVoiceState();
     if (voice.connected && voice.callId === live.id && voice.mode === 'human') return;
     setVoiceError('');
@@ -349,7 +354,7 @@ export default function QuickDial({ campaignId, campaigns = [], campaignsLoading
       .catch(error => {
         if (hybridVoiceState().callId === live.id) setVoiceError(error?.message || 'Could not connect your microphone to this call.');
       });
-  }, [live?.id, assignedToRep, session?.rep?.activeCallId]);
+  }, [live?.id, prepareAudio, assignedToRep, session?.rep?.activeCallId]);
 
   // Leaving the audio is keyed on the live call ending, not on the card
   // changing — a wrap-up still on screen has no audio to hold, and clearing the
@@ -679,7 +684,7 @@ export default function QuickDial({ campaignId, campaigns = [], campaignsLoading
               <CallNotesEditor key={call.id} call={call} />
               {!ended && (
                 <div className="quickdial-controls-row">
-                  {assignedToRep && !onCall && <button className="btn-admin primary" type="button" disabled={voice.connecting} onClick={reconnectAudio}>
+                  {(assignedToRep || prepareAudio) && !(voice.connected && voice.callId === live?.id) && <button className="btn-admin primary" type="button" disabled={voice.connecting} onClick={reconnectAudio}>
                     {voice.connecting ? 'Connecting audio…' : 'Reconnect audio'}
                   </button>}
                   <button className={`btn-admin ${muted ? 'primary' : ''}`} type="button" disabled={!onCall} onClick={toggleMute}>

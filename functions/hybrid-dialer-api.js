@@ -10,7 +10,7 @@ import { defineSecret } from 'firebase-functions/params';
 import { FieldValue, Timestamp, getFirestore } from 'firebase-admin/firestore';
 
 import {
-  routeVerifiedHumanAnswer,
+  routeAnsweredCall,
   requestHumanHandoff,
   beginSmoothHandoff,
   completeSmoothHandoff,
@@ -30,6 +30,7 @@ import { clean } from './prospect-normalization.js';
 import { LEGACY_ACCOUNT_ID, requireAccountId, readAccountId, getAccount } from './accounts.js';
 import { assertAccountAccess, assertDocumentAccountAccess, assertOutboundAccess, normalizeAccountScope, resolveAccountAccess } from './account-access.js';
 import { maintainHybridCapacity } from './hybrid-capacity.js';
+import { conferenceName, prospectConferenceTwiml } from './hybrid-conference.js';
 import { hybridOutboundEventsUrl } from './hybrid-urls.js';
 import { validHybridTwilioRequest } from './hybrid-twilio-signature.js';
 import { hybridCallProgress } from './hybrid-call-progress.js';
@@ -250,12 +251,6 @@ async function staffIdentity(db, uid, fallback = '') {
 const xml = value => String(value ?? '')
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
-
-const conferenceName = (sessionId, targetId) => {
-  const token = createHmac('sha256', 'bitesites-conference-v2')
-    .update(`${clean(sessionId, 200)}:${clean(targetId, 200)}`).digest('hex').slice(0, 40);
-  return `bs_${token}`;
-};
 
 const base64url = input => Buffer.from(input).toString('base64url');
 
@@ -1241,13 +1236,12 @@ export const twilioHybridProspectTwiML = onRequest({ secrets: [HYBRID_TWILIO_AUT
     const db = getFirestore();
     const call = await findCallByProviderSid(db, callSid);
     if (call) await db.doc(`calls/${call.id}`).set({
-      media: { ...(call.media || {}), conferenceName: room, prospectParticipantSid: callSid },
+      media: { conferenceName: room, prospectParticipantSid: callSid },
       updatedAt: FieldValue.serverTimestamp()
     }, { merge: true });
   }
-  const callback = `${process.env.PUBLIC_APP_URL || `https://${req.get('host')}`}/api/twilio-conference-events?sessionId=${encodeURIComponent(sessionId)}&targetId=${encodeURIComponent(targetId)}`;
   res.status(200).type('text/xml').send(
-    `<?xml version="1.0" encoding="UTF-8"?><Response><Dial><Conference beep="false" startConferenceOnEnter="true" endConferenceOnExit="true" waitUrl="" participantLabel="prospect" statusCallback="${xml(callback)}" statusCallbackMethod="POST" statusCallbackEvent="start end join leave mute hold">${xml(room)}</Conference></Dial></Response>`
+    prospectConferenceTwiml({ sessionId, targetId, publicUrl: process.env.PUBLIC_APP_URL || `https://${req.get('host')}` })
   );
 });
 
@@ -1326,7 +1320,9 @@ export const twilioHybridConferenceEvent = onRequest({ secrets: [HYBRID_TWILIO_A
       if (label.startsWith('coach-') && callSid) {
         update.coachParticipantSid = event === 'participant-leave' ? '' : callSid;
       }
-      await db.doc(`calls/${callId}`).set({ media: { ...media, ...update }, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+      // Merge only this event's fields; simultaneous joins must not overwrite
+      // the other participant with a stale copy of the conference metadata.
+      await db.doc(`calls/${callId}`).set({ media: update, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
       if (event === 'participant-join' && label.startsWith('human-') && callSnapshot.get('control.controller') === 'transitioning') {
         const repUid = clean(label.slice('human-'.length), 160);
         await completeSmoothHandoff(db, sessionId, callId, { repUid, humanParticipantSid: callSid }).catch(() => {});
@@ -1379,17 +1375,28 @@ export const recordHybridCallEvent = onRequest({
   const stamp = Timestamp.fromDate(event.at);
   const common = { updatedAt: FieldValue.serverTimestamp() };
   if (event.type === 'ringing') common.ringingAt = stamp;
-  if (['answered', 'human_answered', 'machine_answered'].includes(event.type)) common.answeredAt = stamp;
+  if (event.type === 'human_answered') common.answeredBy = 'human';
+  if (event.type === 'machine_answered') common.answeredBy = 'machine';
   if (event.recordingUrl) common.recordingUrl = event.recordingUrl;
   if (Number.isFinite(event.durationSec)) common.durationSec = event.durationSec;
   await db.runTransaction(async transaction => {
     const current = await transaction.get(callRef);
     if (['completed', 'cancelled', 'failed'].includes(current.get('status'))) return;
-    transaction.set(callRef, { ...common, ...hybridCallProgress(current.data(), event.type) }, { merge: true });
+    const answered = ['answered', 'human_answered', 'machine_answered'].includes(event.type);
+    transaction.set(callRef, {
+      ...common,
+      ...(answered && !current.get('answeredAt') ? { answeredAt: stamp } : {}),
+      ...hybridCallProgress(current.data(), event.type)
+    }, { merge: true });
   });
 
-  if (event.type === 'human_answered') {
-    const routed = await routeVerifiedHumanAnswer(db, call.sessionId, call.id, { targetId: call.targetId, now: event.at });
+  if (['answered', 'human_answered'].includes(event.type)) {
+    const routed = await routeAnsweredCall(db, call.sessionId, call.id, {
+      targetId: call.targetId, verifiedHuman: event.type === 'human_answered', now: event.at
+    });
+    if (!routed.routed || routed.idempotent) {
+      res.status(200).json({ ok: true, callId: call.id, routed: routed.controller || null, reason: routed.reason }); return;
+    }
     if (routed.controller === 'none') {
       await provider.endCall(call.providerCallId).catch(() => {});
       const campaignSnapshot = call.campaignId ? await db.doc(`outboundCampaigns/${call.campaignId}`).get() : null;
@@ -1485,7 +1492,6 @@ export const recordHybridCallEvent = onRequest({
   }
 
   if (event.type === 'machine_answered') {
-    await callRef.set({ answeredBy: 'machine' }, { merge: true });
     res.status(200).json({ ok: true, callId: call.id, machine: true }); return;
   }
 

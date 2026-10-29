@@ -53,6 +53,12 @@ const wipe = async name => {
 for (const name of ['prospects', 'leads', 'outboundTargets', 'outboundCampaigns',
   'dialerSessions', 'calls', 'leadResearch', 'outboundCallEvents', 'consentGrants']) await wipe(name);
 
+// Legacy engine fixtures still need a current stored operator role under the
+// pre-dial authorization recheck. The assigned-rep case below uses a rep role.
+for (const uid of ['rep-2','rep-3','rep-night','rep-g','rep-hy','rep-hu','account-guard-rep']) {
+  await db.doc(`roles/${uid}`).set({role:'outbound_manager',accountIds:['bitesites']});
+}
+
 // A weekday inside the default 09:00–18:00 window, in New York.
 const NOW = new Date('2026-01-05T15:00:00Z');
 
@@ -168,7 +174,7 @@ const { sessionId } = await startDialerSession(db, {
 check('the session started', Boolean(sessionId));
 check('a legacy campaign starts under the BiteSites account',
   (await db.doc(`dialerSessions/${sessionId}`).get()).get('accountId') === 'bitesites');
-await db.doc('roles/rep-1').set({ role: 'outbound_rep', accountIds: ['bitesites'] });
+await db.doc('roles/rep-1').set({ role: 'outbound_rep', accountIds: ['bitesites'], trainingExemptAccountIds:['bitesites'] });
 await db.doc(`outboundCampaigns/${campaignId}`).set({ allowedRepUids: ['rep-1'] }, { merge: true });
 await db.doc(`dialerSessions/${sessionId}`).set({
   hybridV2: true,
