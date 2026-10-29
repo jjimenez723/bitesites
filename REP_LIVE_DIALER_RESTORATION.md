@@ -85,3 +85,24 @@ The emulator also exposed a pre-existing campaign-list failure: an explicit
 query. Removing that redundant type check lets the query work; `hasAny` still
 requires a list and rejects malformed values. The test exercises the actual
 campaign query, denied unscoped queries, and malformed assignment fields.
+
+
+## Israel Garcia added — October 29, 2026, 4:51 PM Eastern
+
+The owner identified `garc2003` and requested skipping his onboarding too.
+Firebase Auth had exactly one matching account: Israel Garcia,
+`israelgarc2003@gmail.com`, with a pending profile and no staff role.
+
+Approved that existing profile as a BiteSites `outbound_rep`, synchronized the
+Auth claims, granted `trainingExemptAccountIds: ['bitesites']`, and added him to
+`local-business-website-growth-aug-2026`. Firestore changes were committed
+atomically at `2026-10-29T20:51:02.829791Z`, with exemption and assignment audit
+events. Readback verified the profile, stored role, Auth claims, exemption, and
+campaign assignment. David's role and all existing campaign assignments are
+preserved. No training pass, call, email, or new deployment was created.
+
+Israel should sign out and back in, then open
+https://bitesites.org/admin/outbound?tab=dialer. His existing session tokens were
+revoked as part of the normal role-promotion flow so refreshed claims take effect.
+The scoped before/after snapshots and administrative action record are retained
+in `/tmp/bitesites-garc2003-access-20261029`.
