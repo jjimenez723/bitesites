@@ -213,3 +213,10 @@ export const setRole = async (uid, role, accountIds = []) => {
   const { data } = await call({ uid, role, accountIds });
   return data;
 };
+
+export const setRepTrainingExemption = async (uid, accountId, exempt) => {
+  const { httpsCallable, getFunctions } = await import('firebase/functions');
+  const call = httpsCallable(getFunctions(app, 'us-central1'), 'setRepTrainingExemption');
+  const { data } = await call({ uid, accountId, exempt });
+  return data;
+};

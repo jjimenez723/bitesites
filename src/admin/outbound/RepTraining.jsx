@@ -5,7 +5,7 @@ import { startAgentPreview } from './agent-preview-client';
 const transcriptLengthLabel = turns => `${turns.length} transcript turns`;
 
 export default function RepTraining({ accounts = [], loading = false, error = '', onRefresh = () => {} }) {
-  const incomplete = useMemo(() => accounts.filter(account => !account.passed), [accounts]);
+  const incomplete = useMemo(() => accounts.filter(account => !account.passed && !account.trainingExempt), [accounts]);
   const [accountId, setAccountId] = useState('');
   const [state, setState] = useState('idle');
   const [scenario, setScenario] = useState(null);
@@ -116,7 +116,7 @@ export default function RepTraining({ accounts = [], loading = false, error = ''
     <div className="admin-card rep-training-card">
       <div className="card-head">
         <div>
-          <span className="outbound-eyebrow">Required before campaign access</span>
+          <span className="outbound-eyebrow">Training status</span>
           <h2>AI sales practice</h2>
           <p>Role-play fictional prospects, practice objections, and get coaching. Practice never contacts real people or uses live leads.</p>
         </div>
@@ -138,13 +138,15 @@ export default function RepTraining({ accounts = [], loading = false, error = ''
 
       <div className="rep-training-progress-list">
         {accounts.map(account => (
-          <div className={`rep-training-progress ${account.passed ? 'is-passed' : ''}`} key={account.accountId}>
+          <div className={`rep-training-progress ${account.passed || account.trainingExempt ? 'is-passed' : ''}`} key={account.accountId}>
             <div>
               <strong>{account.accountName}</strong>
-              <span>{account.passed ? 'Passed' : `${account.completedScenarioIds.length} of ${account.requiredScenarioCount} scenarios passed`}</span>
+              <span>{account.trainingExempt ? 'Waived by an admin' : account.passed ? 'Passed' : `${account.completedScenarioIds.length} of ${account.requiredScenarioCount} scenarios passed`}</span>
             </div>
-            <span className={`pill ${account.passed ? 'completed' : account.ready ? 'draft' : 'paused'}`}>
-              {account.passed
+            <span className={`pill ${account.passed || account.trainingExempt ? 'completed' : account.ready ? 'draft' : 'paused'}`}>
+              {account.trainingExempt
+                ? account.campaignAssigned ? 'Access granted' : 'Waiting for campaign'
+                : account.passed
                 ? account.campaignAssigned ? 'Access granted' : 'Waiting for campaign'
                 : account.ready ? 'Training required' : 'Training setup needed'}
             </span>
@@ -152,7 +154,16 @@ export default function RepTraining({ accounts = [], loading = false, error = ''
         ))}
       </div>
 
-      {selected?.passed ? (
+      {selected?.trainingExempt ? (
+        <div className="rep-training-ready" role="status">
+          <strong>An admin waived training for this account.</strong>
+          <span>{selected.campaignAssigned
+            ? `Your assigned campaign${selected.defaultCampaign?.name ? `, ${selected.defaultCampaign.name},` : ''} is available in the Dialer tab.`
+            : selected.defaultCampaign
+              ? `A manager still needs to add you to ${selected.defaultCampaign.name || 'the default campaign'} before campaign access is available.`
+              : 'A manager still needs to choose a default campaign before campaign access is available.'}</span>
+        </div>
+      ) : selected?.passed ? (
         <div className="rep-training-ready" role="status">
           <strong>You passed the required training.</strong>
           <span>{selected.campaignAssigned

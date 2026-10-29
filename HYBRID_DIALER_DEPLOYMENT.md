@@ -264,3 +264,21 @@ campaign IDs already returned by the rep-authorized campaign list. The matching
 the existing live indexes not declared in the repository index file. The
 targeted release updated only `getRepTrainingStatus` and Hosting. Firestore
 rules and human-dialing functions were not redeployed.
+
+**Gap found 2026-10-29 — not yet deployed.** `repTrainingProgressId` is also
+called by `createRepTrainingSession` and `completeRepTrainingAttempt`. Each
+Cloud Function keeps its own bundle, so those two still run the pre-fix
+`f6bd355` build deployed 2026-10-28 at 15:52–15:53 UTC, and every training
+session start returns 500 (`hybrid-dialer-api.js:153`). A targeted release must
+cover every deployed function whose bundle contains the changed module, not
+only the one that surfaced the error. The fix needs:
+
+```bash
+# functions/package.json "main" set to hybrid-index.js, as scripts/hybrid.mjs does;
+# functions/.env.bitesites-org present (its five values match the live functions).
+firebase deploy --only functions:createRepTrainingSession,functions:completeRepTrainingAttempt --project bitesites-org
+```
+
+Deployed from `f0d9b19`, this changes exactly the `node:crypto` import line.
+Deployed from a later `main`, it also carries the training-exemption code,
+which has its own release decision. It awaits the owner’s authorization.

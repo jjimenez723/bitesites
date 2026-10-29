@@ -49,6 +49,7 @@ import {
   requiresExternalPreDialScreening, resolvePreDialScreening
 } from './pre-dial-screening.js';
 import { externalDialingAdmission } from './deployment-environment.js';
+import { hasRepTrainingAccess } from './rep-training.js';
 import {
   LEGACY_ACCOUNT_ID, requireAccountId, readAccountId,
   checkAccountAlignment, accountMismatchLabel, sanitizePartnerOutcomes
@@ -188,10 +189,9 @@ async function assertCampaignBindings(db, campaign, { requireTrainingRepUids = [
     }
     const trainingRequired = new Set(requireTrainingRepUids);
     const untrained = roles.filter(snapshot => trainingRequired.has(snapshot.id)
-      && !(Array.isArray(snapshot.get('trainingPassedAccountIds'))
-        && snapshot.get('trainingPassedAccountIds').includes(campaign.accountId)));
+      && !hasRepTrainingAccess(snapshot, campaign.accountId));
     if (untrained.length) {
-      throw new Error('A sales rep must pass the account’s required training before campaign access is granted.');
+      throw new Error('A sales rep must pass the account’s required training or receive an admin exemption before campaign access is granted.');
     }
   }
 
@@ -1022,10 +1022,10 @@ export async function dialNext(db, sessionId, {
       return { started: [], reason: 'rep_not_assigned' };
     }
     if (currentRole === 'outbound_rep'
-        && !(Array.isArray(roleSnapshot.get('trainingPassedAccountIds'))
-          && roleSnapshot.get('trainingPassedAccountIds').includes(
-            readAccountId(campaign.accountId, { fallback: LEGACY_ACCOUNT_ID })
-          ))) {
+        && !hasRepTrainingAccess(
+          roleSnapshot,
+          readAccountId(campaign.accountId, { fallback: LEGACY_ACCOUNT_ID })
+        )) {
       return { started: [], reason: 'rep_training_required' };
     }
   }
@@ -1225,10 +1225,10 @@ export async function dialNext(db, sessionId, {
       else if (currentRole === 'outbound_rep'
           && !(latestCampaign.allowedRepUids || []).includes(session.userUid)) blockedReason = 'rep_not_assigned';
       else if (currentRole === 'outbound_rep'
-          && !(Array.isArray(latestRoleSnapshot.get('trainingPassedAccountIds'))
-            && latestRoleSnapshot.get('trainingPassedAccountIds').includes(
-              readAccountId(latestCampaign.accountId, { fallback: LEGACY_ACCOUNT_ID })
-            ))) blockedReason = 'rep_training_required';
+          && !hasRepTrainingAccess(
+            latestRoleSnapshot,
+            readAccountId(latestCampaign.accountId, { fallback: LEGACY_ACCOUNT_ID })
+          )) blockedReason = 'rep_training_required';
     }
     if (blockedReason) {
       for (const target of claimedTargets) await releaseTarget(db, target.id, { state: 'ready' });

@@ -12,6 +12,7 @@ import { defineSecret } from 'firebase-functions/params';
 import { FieldValue, getFirestore } from 'firebase-admin/firestore';
 
 import { clean } from './prospect-normalization.js';
+import { hasRepTrainingAccess } from './rep-training.js';
 import { ACCOUNT_IDS, LEGACY_ACCOUNT_ID, readAccountId, requireAccountId } from './accounts.js';
 import { assertAccountAccess, assertOutboundAccess, resolveAccountAccess } from './account-access.js';
 import {
@@ -80,8 +81,7 @@ async function assertRepAppointmentCampaign(context, appointment) {
     throw new HttpsError('permission-denied', 'This appointment belongs to a campaign that is not assigned to you.');
   }
   const roleSnapshot = await context.db.doc(`roles/${context.uid}`).get();
-  if (!Array.isArray(roleSnapshot.get('trainingPassedAccountIds'))
-      || !roleSnapshot.get('trainingPassedAccountIds').includes(campaign.accountId)) {
+  if (!hasRepTrainingAccess(roleSnapshot, campaign.accountId)) {
     throw new HttpsError('failed-precondition', 'Pass the required sales practice course before accessing campaign appointments.');
   }
 }

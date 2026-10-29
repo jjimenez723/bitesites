@@ -27,6 +27,7 @@ The one-page summary of which stage we are on is
 | Calendar architecture | Google Calendar plus proprietary booking | Firestore owns holds, policy, attribution, and audit; Google owns live availability, the event, and attendee invitation. |
 | Operating posture | Verify backend first, then simplify UI | Staging and deterministic evaluations precede any external canary. The admin UI exposes blockers and keeps advanced controls out of the primary workflow. |
 | Sales-rep onboarding | Approved and deployed 2026-10-28; auto-assign the manager-selected default only after the rep passes all required scenarios | Practice uses fictional prospects, never production leads or carrier calls. No production default campaign or training record is currently configured. |
+| Rep training exemptions | Owner approved 2026-10-29 for specific reps on the BiteSites account | The admin may grant a per-rep, per-account exemption. It does not mark training as passed or assign a campaign. Other account and call gates remain in force. The code is on `main` and has not been deployed; no production roles or campaigns were changed. |
 
 ## Exact authorizations still required
 
@@ -172,6 +173,13 @@ state, or legal reliance.
     independently verify the speaker or transcript. The owner separately
     approved this production release. No default campaign, training attempt,
     training progress, or rep assignment was created by deployment.
+
+13. **Per-rep training-exemption release — owner approved 2026-10-29; not deployed.**
+    The implementation, on `main` since 2026-10-29, adds an admin-only, account-scoped exemption that
+    remains distinct from a training pass and does not assign campaign access.
+    No production role, campaign, or training record has changed. A production
+    deployment still requires the owner’s explicit authorization under
+    `CLAUDE.md`.
 
     **Production activation — 2026-10-28:** the owner again authorized
     human-only dialing. The gate is enabled on the six Quick Dial Functions

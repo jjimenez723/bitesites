@@ -28,6 +28,7 @@ import {
   sanitizePartnerOutcomes
 } from './accounts.js';
 import { assertDocumentAccountAccess, assertOutboundAccess, resolveAccountAccess } from './account-access.js';
+import { hasRepTrainingAccess } from './rep-training.js';
 import { resolveCampaignOperatingLimits } from './outbound-compliance.js';
 import { buildLeadOutreachTemplate, buildMessage, sendPostmark } from './email.js';
 
@@ -85,11 +86,10 @@ function assertRepCampaignAssignment(role, uid, campaign) {
   }
 }
 
-async function assertRepTrainingPassed(db, uid, role, accountId) {
+async function assertRepTrainingAccess(db, uid, role, accountId) {
   if (role !== 'outbound_rep') return;
   const roleSnapshot = await db.doc(`roles/${uid}`).get();
-  const passedAccounts = roleSnapshot.get('trainingPassedAccountIds');
-  if (!Array.isArray(passedAccounts) || !passedAccounts.includes(accountId)) {
+  if (!hasRepTrainingAccess(roleSnapshot, accountId)) {
     throw new HttpsError('failed-precondition', 'Pass the required sales practice course before accessing campaign leads or dialing.');
   }
 }
@@ -105,7 +105,7 @@ async function assertRepCampaignAccess(db, uid, role, campaignId, accountId) {
     throw new HttpsError('permission-denied', 'This session is not linked to an available campaign in your seller account.');
   }
   assertRepCampaignAssignment(role, uid, campaignSnapshot.data());
-  await assertRepTrainingPassed(db, uid, role, readAccountId(accountId, { fallback: LEGACY_ACCOUNT_ID }));
+  await assertRepTrainingAccess(db, uid, role, readAccountId(accountId, { fallback: LEGACY_ACCOUNT_ID }));
 }
 
 const normalizedEmail = value => clean(value, 200).toLowerCase();
@@ -171,7 +171,7 @@ export const getActiveHybridDialerSession = onCall(callOptions, async request =>
   if (!session) return { session: null };
   try { assertDocumentAccountAccess(access, session, { resource: 'dialer session' }); }
   catch (error) { return { session: null }; }
-  try { await assertRepTrainingPassed(db, uid, role, session.accountId); }
+  try { await assertRepTrainingAccess(db, uid, role, session.accountId); }
   catch { return { session: null }; }
   return {
     session: {
@@ -197,7 +197,7 @@ export const startHybridDialerSession = onCall({ ...callOptions, secrets: HYBRID
   try { assertDocumentAccountAccess(access, campaign, { resource: 'campaign' }); }
   catch (error) { throw new HttpsError('permission-denied', clean(error.message, 300)); }
   assertRepCampaignAssignment(role, uid, campaign);
-  await assertRepTrainingPassed(db, uid, role, campaign.accountId);
+  await assertRepTrainingAccess(db, uid, role, campaign.accountId);
   const concurrency = resolveCampaignOperatingLimits({
     ...campaign,
     concurrency: Math.max(1, Math.min(5, Number(request.data?.concurrency) || 1))
@@ -400,7 +400,7 @@ export const dialHybridTargets = onCall({ ...callOptions, timeoutSeconds: 180, s
   const sessionId = requireId(request.data?.sessionId, 'session id');
   const session = await requireOwnedSession(db, sessionId, uid, access);
   if (session.hybridV2 !== true) throw new HttpsError('failed-precondition', 'This is not a Hybrid Dialer V2 session.');
-  await assertRepTrainingPassed(db, uid, role, session.accountId);
+  await assertRepTrainingAccess(db, uid, role, session.accountId);
   // A session without an explicit mode routes as Hybrid inside `routeDecision`,
   // which silently puts the rep on the first answered call. Sessions started
   // before calling modes existed must be replaced, not guessed at.
@@ -723,7 +723,7 @@ export const resumeHybridAutoDial = onCall({ ...callOptions, secrets: HYBRID_SEC
   const { db, uid, role, access } = await requireDialer(request);
   const sessionId = requireId(request.data?.sessionId, 'session id');
   const session = await requireOwnedSession(db, sessionId, uid, access);
-  await assertRepTrainingPassed(db, uid, role, session.accountId);
+  await assertRepTrainingAccess(db, uid, role, session.accountId);
   if (session.hybridV2 !== true) throw new HttpsError('failed-precondition', 'This is not a Hybrid Dialer V2 session.');
   if (session.wrapUpPendingCallId) {
     throw new HttpsError('failed-precondition', 'Record the last call outcome before resuming.');

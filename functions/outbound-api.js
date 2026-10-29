@@ -56,6 +56,7 @@ import {
 import { loadContactForTarget } from './outbound-contacts.js';
 import { backfillPhoneIntel } from './phone-intelligence.js';
 import { clean } from './prospect-normalization.js';
+import { hasRepTrainingAccess, hasRepTrainingExemption } from './rep-training.js';
 import { hybridOutboundEventsUrl } from './hybrid-urls.js';
 import {
   createConsentEvidenceCandidate, issueConsentGrant, revokeConsentGrant, expireDueConsentGrants
@@ -180,8 +181,7 @@ const requireScopedDocument = async (db, access, path, resource) => {
 const assertRepCampaignAccess = async (db, access, campaign) => {
   if (access.role !== 'outbound_rep') return campaign;
   const roleSnapshot = await db.doc(`roles/${access.uid}`).get();
-  if (!Array.isArray(roleSnapshot.get('trainingPassedAccountIds'))
-      || !roleSnapshot.get('trainingPassedAccountIds').includes(campaign.accountId)) {
+  if (!hasRepTrainingAccess(roleSnapshot, campaign.accountId)) {
     throw new HttpsError('failed-precondition', 'Pass the required sales practice course before accessing campaign leads or dialing.');
   }
   if (!Array.isArray(campaign.allowedRepUids) || !campaign.allowedRepUids.includes(access.uid)) {
@@ -477,7 +477,8 @@ export const listOutboundCampaignReps = onCall(callOptions, async request => {
         displayName,
         name: displayName || email.split('@')[0] || 'Sales rep',
         trainingPassed: Array.isArray(entry.get('trainingPassedAccountIds'))
-          && entry.get('trainingPassedAccountIds').includes(accountId)
+          && entry.get('trainingPassedAccountIds').includes(accountId),
+        trainingExempt: hasRepTrainingExemption(entry, accountId)
       };
     })
   };
@@ -498,7 +499,7 @@ export const getOutboundDefaultCampaign = onCall(callOptions, async request => {
   return { accountId, campaign: { id: campaignId, name: str(campaignSnapshot.get('name'), 120) } };
 });
 
-/** Set or clear the default; only reps who passed this account's course are assigned. */
+/** Set or clear the default; trained or explicitly exempt reps may be assigned. */
 export const setOutboundDefaultCampaign = onCall(callOptions, async request => {
   const { db, uid, access } = await requireAdmin(request);
   const accountId = requireScopedAccount(access, request.data?.accountId);
@@ -519,12 +520,11 @@ export const setOutboundDefaultCampaign = onCall(callOptions, async request => {
   if (repsSnapshot.size > 100) {
     throw new HttpsError('resource-exhausted', 'This account has more than 100 sales reps. Reduce the roster before choosing a default campaign.');
   }
-  const trainedRepUids = repsSnapshot.docs
-    .filter(entry => Array.isArray(entry.get('trainingPassedAccountIds'))
-      && entry.get('trainingPassedAccountIds').includes(accountId))
+  const eligibleRepUids = repsSnapshot.docs
+    .filter(entry => hasRepTrainingAccess(entry, accountId))
     .map(entry => entry.id);
-  if (trainedRepUids.length > 100) {
-    throw new HttpsError('resource-exhausted', 'This account has more trained sales reps than the campaign can assign.');
+  if (eligibleRepUids.length > 100) {
+    throw new HttpsError('resource-exhausted', 'This account has more eligible sales reps than the campaign can assign.');
   }
   const campaignSnapshot = await db.runTransaction(async transaction => {
     const currentCampaign = await transaction.get(campaignRef);
@@ -534,21 +534,21 @@ export const setOutboundDefaultCampaign = onCall(callOptions, async request => {
     }
     const currentlyAssigned = Array.isArray(currentCampaign.get('allowedRepUids'))
       ? currentCampaign.get('allowedRepUids') : [];
-    if (new Set([...currentlyAssigned, ...trainedRepUids]).size > 100) {
+    if (new Set([...currentlyAssigned, ...eligibleRepUids]).size > 100) {
       throw new HttpsError('resource-exhausted', 'This campaign has reached its sales-rep limit. Choose a campaign with room.');
     }
     transaction.set(defaultRef, {
       accountId, campaignId, updatedAt: FieldValue.serverTimestamp(), updatedBy: uid
     });
-    if (trainedRepUids.length) {
+    if (eligibleRepUids.length) {
       transaction.set(campaignRef, {
-        allowedRepUids: FieldValue.arrayUnion(...trainedRepUids),
+        allowedRepUids: FieldValue.arrayUnion(...eligibleRepUids),
         updatedAt: FieldValue.serverTimestamp()
       }, { merge: true });
     }
     return currentCampaign;
   });
-  return { accountId, campaign: { id: campaignId, name: str(campaignSnapshot.get('name'), 120) }, assignedExistingTrainedReps: trainedRepUids.length };
+  return { accountId, campaign: { id: campaignId, name: str(campaignSnapshot.get('name'), 120) }, assignedExistingEligibleReps: eligibleRepUids.length };
 });
 
 /** Managers may set a teammate's visible name, but only within their seller account. */

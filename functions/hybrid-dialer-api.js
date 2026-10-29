@@ -36,8 +36,9 @@ import { hybridCallProgress } from './hybrid-call-progress.js';
 import { aiMediaAttachDeadline, failClosedAIMediaAttachment, isAIMediaAttachPending } from './hybrid-media-failsafe.js';
 import { externalDialingAdmission } from './deployment-environment.js';
 import {
-  buildRepTrainingSession, evaluateRepTrainingTranscript, nextRepTrainingScenario,
-  publicTrainingScenario, repTrainingScenarios
+  buildRepTrainingSession, evaluateRepTrainingTranscript, hasRepTrainingAccess,
+  hasRepTrainingExemption, nextRepTrainingScenario, publicTrainingScenario,
+  repTrainingScenarios
 } from './rep-training.js';
 
 export const HYBRID_TWILIO_ACCOUNT_SID = defineSecret('TWILIO_ACCOUNT_SID');
@@ -152,12 +153,10 @@ async function requireDialer(request, { manageAgents = false } = {}) {
 const repTrainingProgressId = (uid, accountId) =>
   createHash('sha256').update(`${clean(uid, 160)}:${clean(accountId, 80)}`).digest('hex');
 
-async function requireRepTrainingPassed(db, uid, accountId) {
+async function requireRepTrainingAccess(db, uid, accountId) {
   const roleSnapshot = await db.doc(`roles/${uid}`).get();
-  const passedAccounts = roleSnapshot.get('trainingPassedAccountIds');
   if (roleSnapshot.get('role') !== 'outbound_rep'
-      || !Array.isArray(passedAccounts)
-      || !passedAccounts.includes(accountId)) {
+      || !hasRepTrainingAccess(roleSnapshot, accountId)) {
     throw new HttpsError('failed-precondition', 'Pass the required sales practice course before accessing campaign leads or dialing.');
   }
 }
@@ -171,8 +170,7 @@ function assertRepCampaignAssignment(role, uid, campaign) {
 async function repCanAccessCampaign(db, uid, roleSnapshot, campaignId, accountId) {
   const account = readAccountId(accountId, { fallback: LEGACY_ACCOUNT_ID });
   if (roleSnapshot.get('role') !== 'outbound_rep'
-      || !Array.isArray(roleSnapshot.get('trainingPassedAccountIds'))
-      || !roleSnapshot.get('trainingPassedAccountIds').includes(account)) return false;
+      || !hasRepTrainingAccess(roleSnapshot, account)) return false;
   const campaignSnapshot = campaignId
     ? await db.doc(`outboundCampaigns/${campaignId}`).get()
     : null;
@@ -185,9 +183,7 @@ async function repCanAccessCampaign(db, uid, roleSnapshot, campaignId, accountId
 async function assertRepCampaignAccess(db, uid, access, campaignId, accountId) {
   if (access.role !== 'outbound_rep') return;
   const roleSnapshot = await db.doc(`roles/${uid}`).get();
-  const passedAccounts = roleSnapshot.get('trainingPassedAccountIds');
-  if (!Array.isArray(passedAccounts)
-      || !passedAccounts.includes(readAccountId(accountId, { fallback: LEGACY_ACCOUNT_ID }))) {
+  if (!hasRepTrainingAccess(roleSnapshot, readAccountId(accountId, { fallback: LEGACY_ACCOUNT_ID }))) {
     throw new HttpsError('failed-precondition', 'Pass the required sales practice course before accessing campaign leads or dialing.');
   }
   if (!(await repCanAccessCampaign(db, uid, roleSnapshot, campaignId, accountId))) {
@@ -437,7 +433,7 @@ export const listHybridTransferAgents = onCall(callOptions, async request => {
   try { assertDocumentAccountAccess(access, campaign, { resource: 'campaign' }); }
   catch (error) { throw new HttpsError('permission-denied', clean(error.message, 300)); }
   assertRepCampaignAssignment(access.role, uid, campaign);
-  if (access.role === 'outbound_rep') await requireRepTrainingPassed(db, uid, campaign.accountId);
+  if (access.role === 'outbound_rep') await requireRepTrainingAccess(db, uid, campaign.accountId);
   const roles = await db.collection('roles')
     .where('role', 'in', ['admin', 'outbound_rep', 'outbound_manager'])
     .limit(100).get();
@@ -445,8 +441,7 @@ export const listHybridTransferAgents = onCall(callOptions, async request => {
     entry.get('role') === 'admin'
     || (entry.get('role') === 'outbound_rep'
       && normalizeAccountScope(entry.get('accountIds')).includes(campaign.accountId)
-      && Array.isArray(entry.get('trainingPassedAccountIds'))
-      && entry.get('trainingPassedAccountIds').includes(campaign.accountId)
+      && hasRepTrainingAccess(entry, campaign.accountId)
       && (campaign.allowedRepUids || []).includes(entry.id))
     || (entry.get('role') === 'outbound_manager'
       && normalizeAccountScope(entry.get('accountIds')).includes(campaign.accountId))
@@ -504,7 +499,7 @@ export const requestHybridStaffTransfer = onCall(callOptions, async request => {
       throw new HttpsError('failed-precondition', 'This call is not linked to an available campaign.');
     }
     assertRepCampaignAssignment(to.role, toUid, campaignSnapshot.data());
-    await requireRepTrainingPassed(db, toUid, call.accountId);
+    await requireRepTrainingAccess(db, toUid, call.accountId);
   }
   await db.doc(`calls/${callId}`).set({
     staffTransfer: {
@@ -932,6 +927,7 @@ export const getRepTrainingStatus = onCall(callOptions, async request => {
     const passed = Array.isArray(passedAccountIds)
       && passedAccountIds.includes(accountId)
       && requiredScenarioIds.every(id => completedScenarioIds.includes(id));
+    const trainingExempt = hasRepTrainingExemption(roleSnapshot, accountId);
     return {
       accountId,
       accountName: getAccount(accountId)?.label || accountId,
@@ -943,6 +939,7 @@ export const getRepTrainingStatus = onCall(callOptions, async request => {
       completedScenarioIds,
       requiredScenarioCount,
       passed,
+      trainingExempt,
       progress: progressSnapshot.get('status') || 'not_started'
     };
   }));

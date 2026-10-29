@@ -9,6 +9,23 @@ import { clean } from './prospect-normalization.js';
 
 const VOICES = BUILT_IN_REALTIME_VOICES;
 
+/** Training exemptions grant the same scoped access without claiming a pass. */
+export function hasRepTrainingExemption(roleRecord, accountId) {
+  const exemptions = typeof roleRecord?.get === 'function'
+    ? roleRecord.get('trainingExemptAccountIds')
+    : roleRecord?.trainingExemptAccountIds;
+  return Array.isArray(exemptions) && exemptions.includes(accountId);
+}
+
+/** A rep may access a seller account after passing training or explicit exemption. */
+export function hasRepTrainingAccess(roleRecord, accountId) {
+  const passed = typeof roleRecord?.get === 'function'
+    ? roleRecord.get('trainingPassedAccountIds')
+    : roleRecord?.trainingPassedAccountIds;
+  return (Array.isArray(passed) && passed.includes(accountId))
+    || hasRepTrainingExemption(roleRecord, accountId);
+}
+
 const SCENARIOS = Object.freeze({
   bitesites: Object.freeze([
     Object.freeze({ id: 'salon-owner-vendor', niche: 'hair salon', business: 'Juniper & Co. Salon', name: 'Morgan', age: 34, gender: 'woman', voice: 'coral', objection: 'You already have a web designer and do not want to switch.', goal: 'Find out what is working and whether a small improvement is worth discussing.' }),

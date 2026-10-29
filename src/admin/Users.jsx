@@ -12,7 +12,7 @@
 // and an approved account is never left without a role.
 
 import React, { useMemo, useState } from 'react';
-import { useUsers, useRoles, setRole, toDate } from './data';
+import { useUsers, useRoles, setRole, setRepTrainingExemption, toDate } from './data';
 import { Pill } from './Panel';
 import { ACCOUNTS, ACCOUNT_IDS } from '../../functions/accounts.js';
 
@@ -27,6 +27,13 @@ export default function Users() {
   const [busyId, setBusyId] = useState(null);
   const [notice, setNotice] = useState('');
   const [scopeDrafts, setScopeDrafts] = useState({});
+  const exemptionsFor = useMemo(() => {
+    const map = new Map();
+    for (const entry of roles) {
+      map.set(entry.id, Array.isArray(entry.trainingExemptAccountIds) ? entry.trainingExemptAccountIds : []);
+    }
+    return map;
+  }, [roles]);
 
   const roleFor = useMemo(() => {
     const map = new Map();
@@ -74,6 +81,8 @@ export default function Users() {
     role,
     ['outbound_rep', 'outbound_manager'].includes(role) ? scopeFor(user.id) : []
   ));
+  const setTrainingExemption = (user, accountId, exempt) =>
+    act(user.id, () => setRepTrainingExemption(user.id, accountId, exempt));
   const revoke = user => act(user.id, () => setRole(user.id, 'none'));
 
   const pending = users.filter(user => !roleFor.get(user.id));
@@ -117,6 +126,19 @@ export default function Users() {
                       </label>
                     ))}
                   </div>
+                  {role === 'outbound_rep' && (
+                    <div className="chip-row" style={{ marginTop: 8 }} aria-label="Training exemptions">
+                      {ACCOUNT_IDS.map(accountId => (
+                        <label className="checkbox-row" key={`training:${accountId}`} style={{ margin: 0 }}>
+                          <input type="checkbox"
+                            checked={exemptionsFor.get(user.id)?.includes(accountId) || false}
+                            onChange={event => setTrainingExemption(user, accountId, event.target.checked)}
+                            disabled={busy || !scopeFor(user.id).includes(accountId)} />
+                          <span>Skip {ACCOUNTS[accountId].label} training</span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
                 </td>
                 <td className="cell-dim">{when(user.createdAt)}</td>
                 {showActions && (
@@ -226,6 +248,10 @@ export default function Users() {
           and the matching auth claim together, then invalidates the person's existing sessions —
           so a revoke takes effect immediately rather than at the end of their current token.
           You cannot change your own admin access from this screen; use <code>npm run role</code> for that.
+        </p>
+        <p className="admin-note">
+          Training exemptions are admin-only and limited to the selected sales rep and seller account.
+          They do not record a course pass or assign the rep to a campaign.
         </p>
       </div>
     </>

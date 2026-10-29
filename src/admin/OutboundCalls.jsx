@@ -93,7 +93,7 @@ export default function OutboundCalls({ role = 'admin', currentUid = '' }) {
   const accountIds = config.data?.accountIds || [];
   const allAccounts = config.data?.allAccounts === true || role === 'admin';
   const assignedTrainingAccountIds = useMemo(
-    () => repTraining.accounts.filter(account => account.passed && account.campaignAssigned).map(account => account.accountId),
+    () => repTraining.accounts.filter(account => (account.passed || account.trainingExempt) && account.campaignAssigned).map(account => account.accountId),
     [repTraining.accounts]
   );
   const campaignAccountIds = role === 'outbound_rep' ? assignedTrainingAccountIds : accountIds;
@@ -114,7 +114,7 @@ export default function OutboundCalls({ role = 'admin', currentUid = '' }) {
 
   useEffect(() => {
     const repBlocked = role === 'outbound_rep'
-      && (repTraining.loading || repTraining.error || repTraining.accounts.some(account => !account.passed || !account.campaignAssigned));
+      && (repTraining.loading || repTraining.error || repTraining.accounts.some(account => (!(account.passed || account.trainingExempt)) || !account.campaignAssigned));
     if (requestedTab && visibleTabs.some(([key]) => key === requestedTab) && requestedTab !== tab) {
       if (repBlocked && requestedTab !== 'training') return;
       setTabState(requestedTab);
@@ -157,7 +157,7 @@ export default function OutboundCalls({ role = 'admin', currentUid = '' }) {
       if (tab !== 'training') setTab('training');
       return;
     }
-    const needsTrainingOrAssignment = repTraining.accounts.some(account => !account.passed || !account.campaignAssigned);
+    const needsTrainingOrAssignment = repTraining.accounts.some(account => (!(account.passed || account.trainingExempt)) || !account.campaignAssigned);
     if (!repTrainingInitialized.current) {
       repTrainingInitialized.current = true;
       if (needsTrainingOrAssignment && tab !== 'training') setTab('training');
@@ -217,7 +217,7 @@ export default function OutboundCalls({ role = 'admin', currentUid = '' }) {
       </header>
 
       <div className="admin-body">
-        {!(role === 'outbound_rep' && (repTraining.loading || repTraining.error || repTraining.accounts.some(account => !account.passed || !account.campaignAssigned))) && <section className="outbound-workspace-bar" aria-label="Current outbound workspace">
+        {!(role === 'outbound_rep' && (repTraining.loading || repTraining.error || repTraining.accounts.some(account => (!(account.passed || account.trainingExempt)) || !account.campaignAssigned))) && <section className="outbound-workspace-bar" aria-label="Current outbound workspace">
           <div className="outbound-workspace-copy">
             <span className="outbound-eyebrow">Current workspace</span>
             <h2>{activeCampaign?.name || 'Choose a campaign'}</h2>

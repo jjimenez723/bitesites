@@ -214,7 +214,7 @@ export default function CampaignBuilder({ providers = [], campaign = null, onSav
     const result = await outbound.setDefaultCampaign(form.accountId, enabled ? campaign.id : '');
     setAccountDefaultCampaign(result?.campaign || null);
     return result;
-  }, enabled ? 'Default campaign saved. Reps receive it after passing training.' : 'Default campaign cleared.');
+  }, enabled ? 'Default campaign saved. Trained or exempt reps receive it.' : 'Default campaign cleared.');
 
   return (
     <div className="admin-card">
@@ -268,13 +268,13 @@ export default function CampaignBuilder({ providers = [], campaign = null, onSav
                           <input
                             type="checkbox"
                             checked={(form.allowedRepUids || []).includes(rep.uid)}
-                            disabled={action.busy || (!rep.trainingPassed && !(form.allowedRepUids || []).includes(rep.uid))}
+                            disabled={action.busy || (!(rep.trainingPassed || rep.trainingExempt) && !(form.allowedRepUids || []).includes(rep.uid))}
                             onChange={event => set('allowedRepUids', event.target.checked
                               ? [...new Set([...(form.allowedRepUids || []), rep.uid])]
                               : (form.allowedRepUids || []).filter(uid => uid !== rep.uid))}
                           />
                           <span>{rep.name}{rep.email ? <small>{rep.email}</small> : null}
-                            <small>{rep.trainingPassed ? 'Training passed' : 'Required training not passed'}</small>
+                            <small>{rep.trainingExempt ? 'Training exempt by admin' : rep.trainingPassed ? 'Training passed' : 'Required training not passed'}</small>
                           </span>
                         </label>
                         <div className="outbound-rep-name-editor">
@@ -293,7 +293,7 @@ export default function CampaignBuilder({ providers = [], campaign = null, onSav
                     ))}
                   </div>
                 ) : <small>No sales reps are assigned to this account yet.</small>}
-            <small>Only checked reps who passed training can see this campaign or start a session. New campaigns start with no reps assigned.</small>
+            <small>Only checked reps who passed training or have an admin exemption can see this campaign or start a session. New campaigns start with no reps assigned.</small>
           </fieldset>
 
           {campaign?.id && form.accountId && (
@@ -311,7 +311,7 @@ export default function CampaignBuilder({ providers = [], campaign = null, onSav
                 {defaultCampaignLoading ? 'Checking account default…'
                   : accountDefaultCampaign && accountDefaultCampaign.id !== campaign.id
                     ? `Current default: ${accountDefaultCampaign.name}. Choose this campaign to replace it.`
-                    : 'New reps receive this campaign’s access only after passing all required training scenarios.'}
+                    : 'New reps receive this campaign’s access only after passing training or receiving an admin exemption.'}
               </small>
               {defaultCampaignError && <small className="admin-error">{defaultCampaignError}</small>}
             </div>

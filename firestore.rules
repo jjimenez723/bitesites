@@ -85,11 +85,15 @@ service cloud.firestore {
         : request.auth.token.get('accountIds', []);
     }
 
-    function hasPassedRepTraining(accountId) {
+    function hasRepTrainingAccess(accountId) {
       return !isOutboundRep()
         || (hasStoredRole()
-            && get(/databases/$(database)/documents/roles/$(request.auth.uid)).data.get('trainingPassedAccountIds', []) is list
-            && get(/databases/$(database)/documents/roles/$(request.auth.uid)).data.get('trainingPassedAccountIds', []).hasAny([accountId]));
+            && (
+              (get(/databases/$(database)/documents/roles/$(request.auth.uid)).data.get('trainingPassedAccountIds', []) is list
+                && get(/databases/$(database)/documents/roles/$(request.auth.uid)).data.get('trainingPassedAccountIds', []).hasAny([accountId]))
+              || (get(/databases/$(database)/documents/roles/$(request.auth.uid)).data.get('trainingExemptAccountIds', []) is list
+                && get(/databases/$(database)/documents/roles/$(request.auth.uid)).data.get('trainingExemptAccountIds', []).hasAny([accountId]))
+            ));
     }
 
     function canAccessOutboundAccount(accountId) {
@@ -98,7 +102,7 @@ service cloud.firestore {
             && accountId is string
             && accountScope() is list
             && accountScope().hasAny([accountId])
-            && hasPassedRepTraining(accountId));
+            && hasRepTrainingAccess(accountId));
     }
 
     function canReadOutboundCampaign(campaign) {
@@ -694,6 +698,11 @@ service cloud.firestore {
     }
 
     match /consentGrantEvents/{grantId}/events/{eventId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    match /repTrainingExemptionEvents/{eventId} {
       allow read: if isAdmin();
       allow write: if false;
     }

@@ -33,7 +33,7 @@ stranger, or relying on outside approval.
 | Screening evidence can be produced from the console | ✅ 2026-08-25 — the callable existed with no client, so the evidence the dial gate demands had no way to come into existence outside a test |
 | A simulated screening provider cannot write production evidence | ✅ 2026-08-25 — it could until then, and nothing downstream could tell the difference |
 | No-dial eligibility audit reusing the runtime gates | ✅ proven stricter than the dial path, proven side-effect free |
-| Mandatory sales-rep role-play and post-pass default campaign access | ✅ deployed 2026-10-28; no production default campaign selected yet |
+| Mandatory sales-rep role-play and default campaign access | ✅ training deployed 2026-10-28; admin-managed, account-scoped exemptions on `main` 2026-10-29 but not deployed; no production default campaign selected yet |
 | Live-model evaluation adapter, guarded and fake-adapter tested | ✅ built; **not run** |
 | Readiness documents agree with the code | ✅ this pass |
 
@@ -125,6 +125,8 @@ release checks. Production currently has no default campaign or training
 attempt/progress records; reps can practice, but a manager must choose a
 campaign before they can access its leads or dial.
 
+**Rep training exemptions — on `main` 2026-10-29, not deployed:** an admin can grant or revoke a training exemption for a specific rep and seller account. The exemption remains distinct from a completed course, does not grant campaign assignment, and does not change other call gates. No production role or campaign record has been changed by this work. Production has no default campaign, so exempt reps will still need a manager to choose one before they can access campaign leads or dial.
+
 **Rep sign-in correction — 2026-10-28:** production logs identified the
 training-status 500 as a missing `node:crypto` `createHash` import. The
 separate Firestore permission error came from the always-mounted warm-transfer
@@ -136,6 +138,8 @@ live function is ACTIVE, the released app bundle is current, and no post-release
 function errors were present at verification. No Firestore rules or sales
 roles, training, campaign, or dialer records changed, and the human-dialing
 functions were not redeployed.
+
+**Rep training role-play 500 — found 2026-10-29, fix not yet deployed:** the 2026-10-28 correction redeployed only `getRepTrainingStatus`, but the same progress-ID helper is bundled into `createRepTrainingSession` and `completeRepTrainingAttempt`, which kept the pre-fix build from `f6bd355`. Every **Start role-play** therefore fails with `INTERNAL` (`ReferenceError: createHash is not defined`), and finishing an attempt would fail the same way, so no rep can complete training in production. The code fix is already on `main`; the two functions need a targeted redeploy, which awaits the owner’s authorization under `CLAUDE.md`. Steps are in `HYBRID_DIALER_DEPLOYMENT.md` §11.
 
 The following notes preserve dated production findings so their historical
 context stays clear alongside the current deployment state.

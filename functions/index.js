@@ -2789,7 +2789,7 @@ export const setUserRole = onCall(
       // document would make the already-issued token's stale role claim the
       // fallback again until that token expires.
       await db.doc(`roles/${uid}`).set({
-        role: 'revoked', accountIds: [], email: target.email || '',
+        role: 'revoked', accountIds: [], trainingExemptAccountIds: [], email: target.email || '',
         revokedAt: FieldValue.serverTimestamp(), revokedBy: request.auth.uid
       });
       await auth.setCustomUserClaims(uid, Object.keys(preservedClaims).length ? preservedClaims : null);
@@ -2817,12 +2817,19 @@ export const setUserRole = onCall(
     const nextClaims = { ...(target.customClaims || {}), role };
     delete nextClaims.accountIds;
     if (['outbound_rep', 'outbound_manager'].includes(role)) nextClaims.accountIds = accountIds;
+    const existingRole = await db.doc(`roles/${uid}`).get();
+    const trainingExemptAccountIds = role === 'outbound_rep'
+      && existingRole.get('role') === 'outbound_rep'
+      ? normalizeAccountScope(existingRole.get('trainingExemptAccountIds'))
+        .filter(accountId => accountIds.includes(accountId))
+      : [];
     // Write the authoritative document first. Promotions remain blocked by the
     // old document until this succeeds; downgrades take effect before a stale
     // elevated claim can be observed.
     await db.doc(`roles/${uid}`).set({
       role,
       accountIds: ['outbound_rep', 'outbound_manager'].includes(role) ? accountIds : [],
+      trainingExemptAccountIds,
       email: target.email || '',
       grantedAt: FieldValue.serverTimestamp(),
       grantedBy: request.auth.uid
@@ -2859,6 +2866,68 @@ export const setUserRole = onCall(
       uid, role, accountIds: ['outbound_rep', 'outbound_manager'].includes(role) ? accountIds : [],
       email: target.email || ''
     };
+  }
+);
+
+/** Admins may waive training for one sales rep in one assigned seller account. */
+export const setRepTrainingExemption = onCall(
+  { enforceAppCheck: true, maxInstances: 5 },
+  async request => {
+    const db = getFirestore();
+    const auth = getAuth();
+    if (!request.auth?.uid) throw new HttpsError('unauthenticated', 'Sign in first.');
+    if ((await callerRole(db, request.auth)) !== 'admin') {
+      throw new HttpsError('permission-denied', 'Only an admin can change a training exemption.');
+    }
+
+    const uid = str(request.data?.uid, 128);
+    const accountId = normalizeAccountScope([request.data?.accountId])[0] || '';
+    const exempt = request.data?.exempt;
+    if (!uid) throw new HttpsError('invalid-argument', 'A sales rep is required.');
+    if (!accountId) throw new HttpsError('invalid-argument', 'Choose a valid seller account.');
+    if (typeof exempt !== 'boolean') throw new HttpsError('invalid-argument', 'Choose whether training is exempt.');
+
+    const target = await auth.getUser(uid).catch(() => null);
+    if (!target) throw new HttpsError('not-found', 'No account with that uid.');
+    const roleRef = db.doc(`roles/${uid}`);
+    const eventRef = db.collection('repTrainingExemptionEvents').doc();
+    const result = await db.runTransaction(async transaction => {
+      const roleSnapshot = await transaction.get(roleRef);
+      if (!roleSnapshot.exists || roleSnapshot.get('role') !== 'outbound_rep') {
+        throw new HttpsError('failed-precondition', 'Training exemptions apply only to active sales reps.');
+      }
+      if (!normalizeAccountScope(roleSnapshot.get('accountIds')).includes(accountId)) {
+        throw new HttpsError('failed-precondition', 'Assign this seller account to the sales rep first.');
+      }
+      const current = Array.isArray(roleSnapshot.get('trainingExemptAccountIds'))
+        ? roleSnapshot.get('trainingExemptAccountIds') : [];
+      const alreadyExempt = current.includes(accountId);
+      if (alreadyExempt === exempt) return { changed: false };
+
+      transaction.set(roleRef, {
+        trainingExemptAccountIds: exempt
+          ? FieldValue.arrayUnion(accountId)
+          : FieldValue.arrayRemove(accountId),
+        trainingExemptionUpdatedAt: FieldValue.serverTimestamp(),
+        trainingExemptionUpdatedBy: request.auth.uid,
+        updatedAt: FieldValue.serverTimestamp()
+      }, { merge: true });
+      transaction.create(eventRef, {
+        uid,
+        email: target.email || '',
+        accountId,
+        exempt,
+        changedBy: request.auth.uid,
+        changedByEmail: str(request.auth.token?.email, 200),
+        createdAt: FieldValue.serverTimestamp()
+      });
+      return { changed: true };
+    });
+
+    if (result.changed) {
+      console.log(`[rep-training] ${request.auth.token?.email || request.auth.uid} ${exempt ? 'exempted' : 'required training for'} ${target.email || uid} in ${accountId}`);
+    }
+    return { uid, email: target.email || '', accountId, exempt, changed: result.changed };
   }
 );
 

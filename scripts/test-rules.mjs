@@ -987,6 +987,56 @@ await it('nobody can read the call-event ledger', () =>
 await it('nobody can write the call-event ledger', () =>
   assertFails(setDoc(doc(adminByDoc, 'outboundCallEvents', 'evt2'), { type: 'forged' })));
 
+// ---------------------------------------------------------------------------
+// Rep training gate. A rep reaches a seller's campaigns only after passing that
+// seller's course or receiving an admin exemption for that same seller. Both
+// live on the server-written role document, never on anything a rep can write.
+// ---------------------------------------------------------------------------
+
+await testEnv.withSecurityRulesDisabled(async context => {
+  const db = context.firestore();
+  await setDoc(doc(db, 'roles', 'passed_rep'), { role: 'outbound_rep', accountIds: ['bitesites'], trainingPassedAccountIds: ['bitesites'] });
+  await setDoc(doc(db, 'roles', 'exempt_rep'), { role: 'outbound_rep', accountIds: ['bitesites'], trainingExemptAccountIds: ['bitesites'] });
+  await setDoc(doc(db, 'roles', 'untrained_rep'), { role: 'outbound_rep', accountIds: ['bitesites'] });
+  await setDoc(doc(db, 'roles', 'exempt_elsewhere_rep'), { role: 'outbound_rep', accountIds: ['bitesites'], trainingExemptAccountIds: ['stone-bellisimo'] });
+  await setDoc(doc(db, 'outboundCampaigns', 'camp_reps'), {
+    accountId: 'bitesites', name: 'Assigned reps', status: 'draft', mode: 'power',
+    allowedRepUids: ['passed_rep', 'exempt_rep', 'untrained_rep', 'exempt_elsewhere_rep']
+  });
+  await setDoc(doc(db, 'repTrainingExemptionEvents', 'exemption1'), { uid: 'exempt_rep', accountId: 'bitesites', exempt: true });
+});
+
+const repContext = uid => testEnv.authenticatedContext(uid, { email: `${uid}@bitesites.org` }).firestore();
+const passedRep = repContext('passed_rep');
+const exemptRep = repContext('exempt_rep');
+const untrainedRep = repContext('untrained_rep');
+const exemptElsewhereRep = repContext('exempt_elsewhere_rep');
+
+describe('rep training gate — a pass or an admin exemption for that seller');
+
+await it('a rep who passed the seller’s training reads an assigned campaign', () =>
+  assertSucceeds(getDoc(doc(passedRep, 'outboundCampaigns', 'camp_reps'))));
+
+await it('an exempt rep reads an assigned campaign', () =>
+  assertSucceeds(getDoc(doc(exemptRep, 'outboundCampaigns', 'camp_reps'))));
+
+await it('an assigned rep with neither a pass nor an exemption cannot', () =>
+  assertFails(getDoc(doc(untrainedRep, 'outboundCampaigns', 'camp_reps'))));
+
+await it('an exemption for another seller does not open this one', () =>
+  assertFails(getDoc(doc(exemptElsewhereRep, 'outboundCampaigns', 'camp_reps'))));
+
+await it('a rep cannot grant themselves an exemption', () =>
+  assertFails(setDoc(doc(untrainedRep, 'roles', 'untrained_rep'), { trainingExemptAccountIds: ['bitesites'] }, { merge: true })));
+
+await it('only admins read the exemption audit trail', async () => {
+  await assertSucceeds(getDoc(doc(adminByDoc, 'repTrainingExemptionEvents', 'exemption1')));
+  await assertFails(getDoc(doc(exemptRep, 'repTrainingExemptionEvents', 'exemption1')));
+});
+
+await it('nobody writes the exemption audit trail from a browser', () =>
+  assertFails(setDoc(doc(adminByDoc, 'repTrainingExemptionEvents', 'exemption2'), { uid: 'untrained_rep', exempt: true })));
+
 describe('catch-all — undeclared collections are closed');
 await it('nobody can write to an arbitrary collection', () =>
   assertFails(setDoc(doc(anon, 'anything', 'x'), { a: 1 })));
