@@ -1,6 +1,11 @@
 # Outbound owner checklist
 
-Last updated: 2026-10-28
+Last updated: 2026-10-29
+
+Current October 29 checkpoint: David's BiteSites training exemption and original
+campaign assignment are active; the simulator is hidden for exempt reps and
+live human dialing is available. Hosting and rules verification is recorded in
+[REP_LIVE_DIALER_RESTORATION.md](REP_LIVE_DIALER_RESTORATION.md).
 
 Six stages, in order. Each one is a different question with a different
 decider, and none of them implies the next. The long-form reasoning lives in
@@ -33,7 +38,7 @@ stranger, or relying on outside approval.
 | Screening evidence can be produced from the console | ✅ 2026-08-25 — the callable existed with no client, so the evidence the dial gate demands had no way to come into existence outside a test |
 | A simulated screening provider cannot write production evidence | ✅ 2026-08-25 — it could until then, and nothing downstream could tell the difference |
 | No-dial eligibility audit reusing the runtime gates | ✅ proven stricter than the dial path, proven side-effect free |
-| Mandatory sales-rep role-play and default campaign access | ✅ training deployed 2026-10-28; admin-managed, account-scoped exemptions on `main` 2026-10-29 but not deployed; no production default campaign selected yet |
+| Mandatory sales-rep role-play and default campaign access | ✅ training deployed 2026-10-28; account-scoped exemptions deployed October 29; David is exempt and explicitly assigned without a global default |
 | Live-model evaluation adapter, guarded and fake-adapter tested | ✅ built; **not run** |
 | Readiness documents agree with the code | ✅ this pass |
 

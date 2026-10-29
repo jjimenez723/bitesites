@@ -265,7 +265,7 @@ the existing live indexes not declared in the repository index file. The
 targeted release updated only `getRepTrainingStatus` and Hosting. Firestore
 rules and human-dialing functions were not redeployed.
 
-**Gap found 2026-10-29 — not yet deployed.** `repTrainingProgressId` is also
+**Earlier October 29 checkpoint — before the backend redeployment.** `repTrainingProgressId` is also
 called by `createRepTrainingSession` and `completeRepTrainingAttempt`. Each
 Cloud Function keeps its own bundle, so those two still run the pre-fix
 `f6bd355` build deployed 2026-10-28 at 15:52–15:53 UTC, and every training
@@ -282,3 +282,20 @@ firebase deploy --only functions:createRepTrainingSession,functions:completeRepT
 Deployed from `f0d9b19`, this changes exactly the `node:crypto` import line.
 Deployed from a later `main`, it also carries the training-exemption code,
 which has its own release decision. It awaits the owner’s authorization.
+
+
+## 12. David's live-dialer restoration — October 29, 2026
+
+The owner identified David's `555yunda` email and requested removing his
+simulator requirement. The current backend already recognizes account-scoped
+exemptions. Published Hosting and Firestore rules, corrected an assigned-campaign
+query rejection, and applied David's exemption plus original campaign assignment
+in one guarded administrative commit. The rep opens the human dialer directly;
+no default campaign or invented training result is required. The other rep's
+record is unchanged. No call was placed. Exact evidence and known test limitations
+are in [REP_LIVE_DIALER_RESTORATION.md](REP_LIVE_DIALER_RESTORATION.md).
+
+The earlier §11 missing-import checkpoint is historical: both role-play
+functions had been redeployed before this task. Their downloaded October 29
+source archives match main's corrected training helper and API. No real
+role-play or evaluation was run during David's access restoration.

@@ -45,9 +45,9 @@ const BLOCKER_COPY = {
 function startErrorMessage(error) {
   const message = String(error?.message || '');
   if (/accountId[\s\S]*(?:undefined|not a valid Firestore document)|(?:undefined|not a valid Firestore document)[\s\S]*accountId/i.test(message)) {
-    return 'This calling list is missing its account assignment, so dialing could not start. No call was placed. Open Advanced, save the campaign, then try again.';
+    return 'This calling list is missing its account assignment, so dialing could not start. No call was placed. Ask a manager to check this calling list.';
   }
-  return message || 'Dialing could not start. No call was placed. Try again, or open Advanced to check the campaign.';
+  return message || 'Dialing could not start. No call was placed. Try again, or ask a manager to check this calling list.';
 }
 
 const REJECTION_COPY = {
@@ -561,7 +561,7 @@ export default function QuickDial({ campaignId, campaigns = [], campaignsLoading
               Stop dialing
             </button>
           )}
-          <button className="btn-admin" type="button" onClick={onOpenAdvanced}>Advanced</button>
+          {onOpenAdvanced && <button className="btn-admin" type="button" onClick={onOpenAdvanced}>Advanced</button>}
         </div>
       </div>
 

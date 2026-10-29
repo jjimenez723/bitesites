@@ -63,11 +63,16 @@ const MANAGER_TAB_KEYS = new Set([
 export default function OutboundCalls({ role = 'admin', currentUid = '' }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const canManage = role !== 'outbound_rep';
+  const [repTraining, setRepTraining] = useState({ accounts: [], loading: role === 'outbound_rep', error: null });
+  const trainingExempt = role === 'outbound_rep' && repTraining.accounts.length > 0
+    && repTraining.accounts.every(account => account.trainingExempt);
+  const needsRepOnboarding = repTraining.accounts.some(account =>
+    !account.trainingExempt && (!account.passed || !account.campaignAssigned));
   const visibleTabs = useMemo(
     () => canManage
       ? TABS.filter(([key]) => key !== 'training' && (role === 'admin' || MANAGER_TAB_KEYS.has(key)))
-      : TABS.filter(([key]) => REP_TAB_KEYS.has(key)),
-    [canManage, role]
+      : TABS.filter(([key]) => REP_TAB_KEYS.has(key) && !(trainingExempt && key === 'training')),
+    [canManage, role, trainingExempt]
   );
   const orderedTabs = useMemo(() => TAB_GROUPS.flatMap(group => group.tabs
     .map(key => visibleTabs.find(([tabKey]) => tabKey === key))
@@ -86,14 +91,15 @@ export default function OutboundCalls({ role = 'admin', currentUid = '' }) {
   // deliberate detour, not the thing you have to get past to make a call.
   const [dialerAdvanced, setDialerAdvanced] = useState(false);
   const [config, setConfig] = useState({ data: null, loading: true, error: null });
-  const [repTraining, setRepTraining] = useState({ accounts: [], loading: role === 'outbound_rep', error: null });
   const tabRefs = useRef([]);
   const repTrainingInitialized = useRef(false);
 
   const accountIds = config.data?.accountIds || [];
   const allAccounts = config.data?.allAccounts === true || role === 'admin';
   const assignedTrainingAccountIds = useMemo(
-    () => repTraining.accounts.filter(account => (account.passed || account.trainingExempt) && account.campaignAssigned).map(account => account.accountId),
+    // Exempt reps use explicit campaign assignments; a global onboarding
+    // default is not needed. The query and rules still enforce those assignments.
+    () => repTraining.accounts.filter(account => account.trainingExempt || (account.passed && account.campaignAssigned)).map(account => account.accountId),
     [repTraining.accounts]
   );
   const campaignAccountIds = role === 'outbound_rep' ? assignedTrainingAccountIds : accountIds;
@@ -114,12 +120,12 @@ export default function OutboundCalls({ role = 'admin', currentUid = '' }) {
 
   useEffect(() => {
     const repBlocked = role === 'outbound_rep'
-      && (repTraining.loading || repTraining.error || repTraining.accounts.some(account => (!(account.passed || account.trainingExempt)) || !account.campaignAssigned));
+      && (repTraining.loading || repTraining.error || needsRepOnboarding);
     if (requestedTab && visibleTabs.some(([key]) => key === requestedTab) && requestedTab !== tab) {
       if (repBlocked && requestedTab !== 'training') return;
       setTabState(requestedTab);
     }
-  }, [requestedTab, tab, visibleTabs, role, repTraining]);
+  }, [requestedTab, tab, visibleTabs, role, repTraining, needsRepOnboarding]);
 
   const loadConfig = useCallback(() => {
     setConfig(current => ({ ...current, loading: true }));
@@ -153,11 +159,8 @@ export default function OutboundCalls({ role = 'admin', currentUid = '' }) {
 
   useEffect(() => {
     if (role !== 'outbound_rep' || repTraining.loading) return;
-    if (repTraining.error) {
-      if (tab !== 'training') setTab('training');
-      return;
-    }
-    const needsTrainingOrAssignment = repTraining.accounts.some(account => (!(account.passed || account.trainingExempt)) || !account.campaignAssigned);
+    if (repTraining.error) return;
+    const needsTrainingOrAssignment = needsRepOnboarding;
     if (!repTrainingInitialized.current) {
       repTrainingInitialized.current = true;
       if (needsTrainingOrAssignment && tab !== 'training') setTab('training');
@@ -165,7 +168,8 @@ export default function OutboundCalls({ role = 'admin', currentUid = '' }) {
       return;
     }
     if (needsTrainingOrAssignment && tab !== 'training') setTab('training');
-  }, [role, repTraining, tab, setTab]);
+    else if (trainingExempt && tab === 'training') setTab('dialer');
+  }, [role, repTraining, tab, setTab, needsRepOnboarding, trainingExempt]);
 
   useEffect(() => {
     if (!campaignId && campaigns.rows.length) setCampaignId(campaigns.rows[0].id);
@@ -194,6 +198,18 @@ export default function OutboundCalls({ role = 'admin', currentUid = '' }) {
   const campaignStatus = activeCampaign?.status || 'not selected';
   const campaignCounts = activeCampaign?.counts || {};
 
+  if (role === 'outbound_rep' && (repTraining.loading || repTraining.error)) {
+    return <>
+      <header className="admin-topbar"><h1>Outbound Sales</h1></header>
+      <div className="admin-body">
+        {repTraining.error ? <>
+          <p className="admin-error" role="alert">Could not check your calling access. Please try again.</p>
+          <button className="btn-admin" type="button" onClick={loadRepTraining}>Try again</button>
+        </> : <p role="status">Checking your calling access…</p>}
+      </div>
+    </>;
+  }
+
   return (
     <>
       <header className="admin-topbar">
@@ -201,7 +217,7 @@ export default function OutboundCalls({ role = 'admin', currentUid = '' }) {
           <h1>Outbound Sales</h1>
           <p className="admin-topbar-sub">
             {role === 'outbound_rep'
-              ? 'Practice with fictional prospects, then work the campaigns assigned to you.'
+              ? 'Call your assigned prospects, save notes, and follow up after each conversation.'
               : 'Discover prospects, configure AI agents, run human + AI calls, and audit every outcome in one workspace.'}
           </p>
         </div>
@@ -217,7 +233,7 @@ export default function OutboundCalls({ role = 'admin', currentUid = '' }) {
       </header>
 
       <div className="admin-body">
-        {!(role === 'outbound_rep' && (repTraining.loading || repTraining.error || repTraining.accounts.some(account => (!(account.passed || account.trainingExempt)) || !account.campaignAssigned))) && <section className="outbound-workspace-bar" aria-label="Current outbound workspace">
+        {!(role === 'outbound_rep' && needsRepOnboarding) && <section className="outbound-workspace-bar" aria-label="Current outbound workspace">
           <div className="outbound-workspace-copy">
             <span className="outbound-eyebrow">Current workspace</span>
             <h2>{activeCampaign?.name || 'Choose a campaign'}</h2>
@@ -290,7 +306,7 @@ export default function OutboundCalls({ role = 'admin', currentUid = '' }) {
         {config.error && <p className="admin-error" style={{ marginBottom: 14 }}>{config.error}</p>}
 
         <div id="outbound-panel" role="tabpanel" aria-labelledby={`outbound-tab-${tab}`}>
-          {tab === 'training' && <RepTraining
+          {tab === 'training' && !trainingExempt && <RepTraining
             accounts={repTraining.accounts}
             loading={repTraining.loading}
             error={repTraining.error}
@@ -327,7 +343,7 @@ export default function OutboundCalls({ role = 'admin', currentUid = '' }) {
               canManage={canManage}
               onSelectCampaign={setCampaignId} onOpenProspect={canManage ? setProspectId : null} />
           )}
-          {tab === 'dialer' && (dialerAdvanced ? (
+          {tab === 'dialer' && (canManage && dialerAdvanced ? (
             <>
               <div className="outbound-dialer-mode-switch">
                 <button className="btn-admin" type="button" onClick={() => setDialerAdvanced(false)}>
@@ -352,7 +368,7 @@ export default function OutboundCalls({ role = 'admin', currentUid = '' }) {
               campaignsLoading={campaigns.loading}
               role={role}
               onSelectCampaign={setCampaignId}
-              onOpenAdvanced={() => setDialerAdvanced(true)}
+              onOpenAdvanced={canManage ? () => setDialerAdvanced(true) : undefined}
             />
           ))}
           {tab === 'coaching' && <TeamCallCoach accountIds={accountIds} allAccounts={allAccounts} />}

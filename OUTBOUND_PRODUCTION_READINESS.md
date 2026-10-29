@@ -1,6 +1,6 @@
 # Outbound AI production-readiness plan
 
-Last updated: 2026-10-28
+Last updated: 2026-10-29
 
 ## Decision
 
@@ -99,6 +99,13 @@ verifies anything is the paid one.
 
 ## What is implemented and deployed
 
+**Current checkpoint — October 29:** David's simulator requirement is waived
+for BiteSites, his original campaign assignment is active, and exempt reps open
+the live human dialer. Hosting and rules are deployed. See
+[REP_LIVE_DIALER_RESTORATION.md](REP_LIVE_DIALER_RESTORATION.md) for exact changes,
+verification, the corrected campaign-list rule, and existing test failures.
+The dated paragraphs below describe their checkpoint rather than current data.
+
 The core outbound system is deployed to the **staging** project
 `bitesites-outbound-staging` and verified there by `npm run smoke:staging`.
 The cumulative PR #5 release was deployed to production on 2026-10-27. On
@@ -144,7 +151,13 @@ campaign or training attempt/progress records. The app route, training bundle,
 and sideband health endpoint returned success after rollout. The release did
 not modify campaign, role, or training data.
 
-**Admin-managed rep training exemptions — on `main` 2026-10-29, not deployed:** an admin can exempt an active rep for one account without writing a training pass. Firestore rules and server access checks honor the account-scoped exemption; the Users screen exposes it, and campaign assignment remains separately controlled. The production deployment and role updates have not happened. Production has no default campaign, so an exemption alone does not grant campaign access. Verified before merge: build, functions syntax check, `test:rep-training` (new), `test:rules` including seven new training-gate cases, `test:role`, `test:staging-gate`, `test:breaker`, and the hybrid/agent/account unit suites. Six emulator suites already fail on `main` at `f0d9b19`, before this change, because their rep fixtures predate the 2026-10-28 training and assignment gates: four `test:rules` assertions, `test:outbound`, `test:staff-workflows`, `test:callbacks`, `test:interested`, and `test:call-notes`. Their failures are identical with and without this change.
+**Admin-managed rep training exemptions — deployed 2026-10-29:** backend
+support was already ACTIVE at this task's read. This task published the missing
+Hosting/rules support and restored David's BiteSites exemption and original
+campaign assignment. No global default is necessary for an explicitly assigned
+exempt rep. His training pass remains unset; the other rep is unchanged. The
+full rules suite reproduces the same four prior fixture failures on baseline
+and patched rules, while the new end-to-end access and browser checks pass.
 
 **Rep sign-in correction — deployed 2026-10-28:** `getRepTrainingStatus` was
 returning 500 because its progress-ID helper used `createHash` without importing
@@ -157,13 +170,18 @@ verification confirmed the callable ACTIVE, the current Hosting bundle, and no
 post-deploy function errors. This targeted release did not change Firestore
 rules, rep/campaign/training data, or human-dialing gate settings.
 
-**Rep training role-play 500 — found 2026-10-29, fix not yet deployed:** the 2026-10-28 correction redeployed only `getRepTrainingStatus`, but the same progress-ID helper is bundled into `createRepTrainingSession` and `completeRepTrainingAttempt`, which kept the pre-fix build from `f6bd355`. Every **Start role-play** therefore fails with `INTERNAL` (`ReferenceError: createHash is not defined`), and finishing an attempt would fail the same way, so no rep can complete training in production. The code fix is already on `main`; the two functions need a targeted redeploy, which awaits the owner’s authorization under `CLAUDE.md`. Steps are in `HYBRID_DIALER_DEPLOYMENT.md` §11.
+**Training helper redeployment — verified October 29:** the October 28
+sign-in repair initially updated only `getRepTrainingStatus`; the two role-play
+functions still had the missing `createHash` import. Both were redeployed earlier
+October 29, before this task. Their downloaded source archives now match main's
+training helper and API, including the import. This task did not run a real
+training conversation or evaluation.
 
 | Boundary | Current implementation / production state |
 |---|---|
 | Seller separation | Campaigns, profiles, knowledge, research, calls, targets, sessions, and appointments are seller-account bound. Stored role records override stale claims. |
-| Mandatory rep training and default campaign | **Training deployed 2026-10-28; exemption support on `main` 2026-10-29, not deployed.** Three fictional adult-prospect scenarios per seller are practiced in browser-only Realtime sessions. The browser submits the transcript for server-side scoring; the transcript is not retained or independently authenticated, so this is a practice gate, not an identity-proof exam. Admin exemptions are stored separately from course passes and limited to an assigned seller account. Reps still need a manager-selected default campaign and campaign assignment. Production has no default campaign or training record. |
-| Rep campaign access | **Deployed 2026-10-27 and tightened 2026-10-28; exemption support is on `main` but not deployed.** Firestore reads, call history, warm transfers, appointments, session visibility, and dialing are limited to campaigns assigned to trained or explicitly exempted reps. Rep warm-transfer subscriptions are constrained by assigned campaign IDs. |
+| Mandatory rep training and default campaign | **Training deployed 2026-10-28; exemptions deployed 2026-10-29. David is exempt and explicitly assigned.** Three fictional adult-prospect scenarios per seller are practiced in browser-only Realtime sessions. The browser submits the transcript for server-side scoring; the transcript is not retained or independently authenticated, so this is a practice gate, not an identity-proof exam. Admin exemptions are stored separately from course passes and limited to an assigned seller account. Nonexempt onboarding uses a manager-selected default campaign. Exempt reps can use explicitly assigned campaigns without one. No fake training pass was created. |
+| Rep campaign access | **Deployed 2026-10-27 and tightened 2026-10-28; exemptions and campaign-list query correction deployed 2026-10-29.** Firestore reads, call history, warm transfers, appointments, session visibility, and dialing are limited to campaigns assigned to trained or explicitly exempted reps. Rep warm-transfer subscriptions are constrained by assigned campaign IDs. |
 | Human wrap-up | **Deployed 2026-10-27.** A terminal human-handled call holds capacity until the rep records an outcome. `interested` pauses auto-dial until the rep sends or skips a composed email to the lead's stored address and explicitly resumes. Authenticated production rehearsal remains outstanding. |
 | Consent | Imported consent-like fields are evidence candidates only. AI admission requires an active, server-issued, seller- and number-specific written-consent grant. Revocation and expiry fail closed. |
 | Recording | Disabled at campaign sanitization and carrier call creation. |

@@ -1,6 +1,6 @@
 # Outbound AI launch authorization record
 
-Last updated: 2026-10-28
+Last updated: 2026-10-29
 
 This document separates business decisions already supplied by the owner from
 permissions that still require an explicit decision or an outside authority.
@@ -27,7 +27,7 @@ The one-page summary of which stage we are on is
 | Calendar architecture | Google Calendar plus proprietary booking | Firestore owns holds, policy, attribution, and audit; Google owns live availability, the event, and attendee invitation. |
 | Operating posture | Verify backend first, then simplify UI | Staging and deterministic evaluations precede any external canary. The admin UI exposes blockers and keeps advanced controls out of the primary workflow. |
 | Sales-rep onboarding | Approved and deployed 2026-10-28; auto-assign the manager-selected default only after the rep passes all required scenarios | Practice uses fictional prospects, never production leads or carrier calls. No production default campaign or training record is currently configured. |
-| Rep training exemptions | Owner approved 2026-10-29 for specific reps on the BiteSites account | The admin may grant a per-rep, per-account exemption. It does not mark training as passed or assign a campaign. Other account and call gates remain in force. The code is on `main` and has not been deployed; no production roles or campaigns were changed. |
+| Rep training exemptions | Owner approved 2026-10-29 for specific reps on the BiteSites account | The admin may grant a per-rep, per-account exemption. It does not mark training as passed or assign a campaign. Other account and call gates remain in force. Deployed October 29. The owner specifically identified David (`alexander555yunda@gmail.com`); his BiteSites exemption and original campaign assignment are active. See `REP_LIVE_DIALER_RESTORATION.md`. |
 
 ## Exact authorizations still required
 
@@ -174,12 +174,15 @@ state, or legal reliance.
     approved this production release. No default campaign, training attempt,
     training progress, or rep assignment was created by deployment.
 
-13. **Per-rep training-exemption release — owner approved 2026-10-29; not deployed.**
-    The implementation, on `main` since 2026-10-29, adds an admin-only, account-scoped exemption that
-    remains distinct from a training pass and does not assign campaign access.
-    No production role, campaign, or training record has changed. A production
-    deployment still requires the owner’s explicit authorization under
-    `CLAUDE.md`.
+13. **Per-rep training exemptions — deployed 2026-10-29.**
+    The owner requested removing the simulator requirement and restoring live
+    dialing, then identified David (`alexander555yunda@gmail.com`). His BiteSites
+    exemption and assignment to `local-business-website-growth-aug-2026` are now
+    active, with separate audit events. Hosting and Firestore rules recognize
+    the exemption; the current backend had already been deployed earlier today.
+    No training pass, other-rep exemption, global default, or real call was
+    created. Verification and source details are in
+    [REP_LIVE_DIALER_RESTORATION.md](REP_LIVE_DIALER_RESTORATION.md).
 
     **Production activation — 2026-10-28:** the owner again authorized
     human-only dialing. The gate is enabled on the six Quick Dial Functions

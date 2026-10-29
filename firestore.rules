@@ -109,7 +109,8 @@ service cloud.firestore {
       return canAccessOutboundAccount(campaign.accountId)
         && (!isOutboundRep()
             || ('allowedRepUids' in campaign
-                && campaign.allowedRepUids is list
+                // hasAny is list-only and denies malformed values. An explicit
+                // `is list` test cannot be proven by array-contains queries.
                 && campaign.allowedRepUids.hasAny([request.auth.uid])));
     }
 
