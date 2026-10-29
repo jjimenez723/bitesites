@@ -223,8 +223,8 @@ export default function QuickDial({ campaignId, campaigns = [], campaignsLoading
   const voice = useHybridVoice();
 
   const campaign = campaigns.find(entry => entry.id === campaignId) || null;
-  const { data: session } = useLiveDoc(sessionId ? `dialerSessions/${sessionId}` : '');
-  useSessionHeartbeat(session?.status === 'active' ? sessionId : '');
+  const { data: session, error: sessionError } = useLiveDoc(sessionId ? `dialerSessions/${sessionId}` : '');
+  const heartbeatError = useSessionHeartbeat(session?.status === 'active' ? sessionId : '');
   const calls = useLiveCalls(session?.activeCallIds || []);
   const followUpFormCallRef = useRef('');
 
@@ -281,7 +281,8 @@ export default function QuickDial({ campaignId, campaigns = [], campaignsLoading
   const pendingFollowUp = session?.pendingFollowUp || null;
   const followUpContextMatches = followUpContext?.callId === pendingFollowUp?.callId;
   const waitingForTargets = dialing && !live && session?.autoDial?.state === 'waiting_for_targets';
-  const findingNext = dialing && !live && !waitingForTargets;
+  const connectionError = sessionError || calls.error || heartbeatError;
+  const findingNext = dialing && !live && !waitingForTargets && !connectionError;
   const ringing = live?.status === 'ringing' && !live?.answeredAt && !assignedToRep;
   const connecting = Boolean(live) && !ringing && !onCall;
 
@@ -498,7 +499,7 @@ export default function QuickDial({ campaignId, campaigns = [], campaignsLoading
   const place = placeOf(call?.contactLocation);
   const theirTime = localTime(call?.contactLocation?.timezone);
   const ringingSecondsLeft = ringing ? Math.max(0, 25 - seconds) : 0;
-  const statusLabel = onCall ? 'On a call'
+  const statusLabel = connectionError ? 'Connection problem' : onCall ? 'On a call'
     : ringing ? 'Ringing'
       : connecting ? 'Connecting'
       : ended ? 'Wrap up'
@@ -556,7 +557,7 @@ export default function QuickDial({ campaignId, campaigns = [], campaignsLoading
               {dialing ? 'Pause dialing' : 'Resume dialing'}
             </button>
           )}
-          {running && (
+          {sessionId && (
             <button className="btn-admin danger" type="button" disabled={action.busy} onClick={stop}>
               Stop dialing
             </button>
@@ -564,6 +565,12 @@ export default function QuickDial({ campaignId, campaigns = [], campaignsLoading
           {onOpenAdvanced && <button className="btn-admin" type="button" onClick={onOpenAdvanced}>Advanced</button>}
         </div>
       </div>
+
+      {connectionError && (
+        <p className="admin-error" role="alert">
+          Live call updates are interrupted. Stop dialing and refresh this page before continuing. {connectionError}
+        </p>
+      )}
 
       {halted && (
         <p className="admin-error">
@@ -581,7 +588,7 @@ export default function QuickDial({ campaignId, campaigns = [], campaignsLoading
           <button
             className="quickdial-start"
             type="button"
-            disabled={recovering || loadingCampaign || action.busy || halted || wrongProvider || !toCall}
+            disabled={recovering || loadingCampaign || action.busy || halted || wrongProvider || !toCall || Boolean(sessionId)}
             onClick={start}
           >
             <span className="quickdial-start-icon" aria-hidden="true">▸</span>

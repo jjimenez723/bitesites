@@ -3,9 +3,12 @@
 Last updated: 2026-10-29
 
 Current October 29 checkpoint: David's BiteSites training exemption and original
-campaign assignment are active; the simulator is hidden for exempt reps and
-live human dialing is available. Hosting and rules verification is recorded in
-[REP_LIVE_DIALER_RESTORATION.md](REP_LIVE_DIALER_RESTORATION.md).
+campaign assignment are active, and Israel has the same approved access. The
+simulator is hidden for exempt reps. A later rep audio failure was traced to
+excessive Firestore rule evaluation and the wrong heartbeat endpoint; the
+5:53 PM Eastern release repairs both. Browser read/join tests pass; a live
+post-release conversation is still unverified. See
+[REP_CONNECTION_REPAIR_20261029.md](REP_CONNECTION_REPAIR_20261029.md).
 
 Six stages, in order. Each one is a different question with a different
 decider, and none of them implies the next. The long-form reasoning lives in

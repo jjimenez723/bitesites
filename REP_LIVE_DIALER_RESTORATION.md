@@ -1,5 +1,9 @@
 # David's live dialer access — October 29, 2026
 
+Follow-up at 5:53 PM Eastern: session creation alone did not establish audio.
+Rep call-document reads exceeded the Firestore expression limit, and the browser
+used an admin-only heartbeat. Both are repaired in the subsequent release;
+see [REP_CONNECTION_REPAIR_20261029.md](REP_CONNECTION_REPAIR_20261029.md).
 
 The October 28 release requires reps to pass AI role-play training and have a
 campaign assignment. David has an approved BiteSites rep account, but neither

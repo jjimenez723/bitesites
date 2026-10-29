@@ -428,7 +428,7 @@ export const outbound = {
   startParallelSession: (campaignId, concurrency) =>
     callable('startParallelDialerSession', { campaignId, concurrency }),
   dialNext: sessionId => callable('dialNextTargets', { sessionId }),
-  heartbeat: sessionId => callable('heartbeatDialerSession', { sessionId }),
+  heartbeat: sessionId => callable('heartbeatHybridDialerSession', { sessionId }),
   stopSession: (sessionId, reason) => callable('stopDialerSessionCall', { sessionId, reason }),
   disposition: payload => callable('submitCallDisposition', payload),
   callLater: (targetId, minutes, reason) => callable('moveTargetToCallLater', { targetId, minutes, reason }),
@@ -489,15 +489,27 @@ export const outbound = {
 };
 
 export function useSessionHeartbeat(sessionId) {
+  const [error, setError] = useState('');
   const active = useRef(sessionId);
   active.current = sessionId;
   useEffect(() => {
+    setError('');
     if (!sessionId) return undefined;
-    const tick = () => { if (active.current === sessionId) outbound.heartbeat(sessionId).catch(() => {}); };
+    let cancelled = false;
+    const tick = async () => {
+      if (active.current !== sessionId || cancelled) return;
+      try {
+        await outbound.heartbeat(sessionId);
+        if (!cancelled && active.current === sessionId) setError('');
+      } catch (cause) {
+        if (!cancelled && active.current === sessionId) setError(friendlyError(cause));
+      }
+    };
     const timer = setInterval(tick, 45000);
     tick();
-    return () => clearInterval(timer);
+    return () => { cancelled = true; clearInterval(timer); };
   }, [sessionId]);
+  return error;
 }
 
 export function useAction() {

@@ -5,7 +5,7 @@ and deployed function source, live pages, and the older shared workspace.
 Dates below are Eastern time. Repository changes are distinguished from live
 configuration; an old verification note alone is not evidence of today's state.
 
-## David's issue — resolved today
+## Rep access restored; subsequent connection defect repaired
 
 David is the approved BiteSites rep using `alexander555yunda@gmail.com`.
 October 28 introduced mandatory AI sales practice and campaign-assignment
@@ -18,7 +18,15 @@ BiteSites account, and assigns him to **Local Business Website Growth — August
 2026**, the original live campaign. It showed 94 ready prospects during the
 check. His simulator is hidden; old training bookmarks lead to the human dialer.
 An additional rules defect rejecting assigned-campaign list queries is repaired.
-Other representatives' exemptions and assignments were not changed.
+Israel Garcia (`garc2003`) was then approved, exempted and assigned the same
+campaign at the owner's request, at 4:51 PM. Other reps were not changed.
+
+After both reps reported no conversations, live records showed answered calls
+without a browser participant. Their call-document reads exceeded Firestore's
+expression limit, and their session check-ins used an admin-only endpoint.
+Both defects were repaired and published at 5:53 PM. The browser test now uses
+actual rep rules and live document subscriptions through the answered-call join.
+The reps must refresh; a post-release real conversation is not yet verified.
 
 David should reload https://bitesites.org/admin/outbound?tab=dialer and press
 **Start dialing**, allowing microphone access if prompted. These are real human
@@ -37,6 +45,8 @@ calls, one at a time. No call was placed while making or testing this change.
 | October 28 | Fixed a missing hash import in training status and limited rep warm-transfer reads to assigned campaigns. | Live. |
 | Earlier October 29 | Added per-rep, per-seller training exemptions and admin controls. Redeployed training endpoints with the missing-import fix. | Backend was already live when this task began. Downloaded training function sources match current main. Page and rules rollout were incomplete. No real role-play was exercised in this audit. |
 | Today, 4:41–4:42 PM | Completed exemption rollout, repaired campaign query permissions, hid practice for exempt reps, and restored David's original campaign access. | Published and verified. Browser/access checks pass. |
+| Today, 4:51 PM | Approved Israel Garcia and granted the same seller-specific onboarding exemption and campaign assignment. | Stored role, profile, Auth claims and assignment verified. |
+| Today, 5:53 PM | Removed duplicate call-read authorization evaluation that blocked rep audio joins; switched session check-in to the rep-compatible endpoint; exposed connection errors. | Hosting and rules live and byte-verified. Actual-rules/browser join and signed conference endpoint checks pass; real conversation pending. |
 
 ## Earlier work preserved locally, but absent from the current frontend
 
@@ -76,11 +86,12 @@ full rules suite has the same four existing fixture failures on baseline and
 patched code (167 passes in each run). Production audio still requires David's
 own answered call; none was initiated automatically.
 
-Hosting release: `dedd7bc8db4e450e`. The custom domain and Firebase origin serve
+Latest Hosting release: `46c11a18ce89bd67`. The custom domain and Firebase origin serve
 the tested entry/admin bundles, and deployed rules match the tested file. The
 six human-call functions retained their revisions and enabled settings.
 
 Implementation and detailed evidence:
-[REP_LIVE_DIALER_RESTORATION.md](REP_LIVE_DIALER_RESTORATION.md).
+[REP_LIVE_DIALER_RESTORATION.md](REP_LIVE_DIALER_RESTORATION.md) and
+[REP_CONNECTION_REPAIR_20261029.md](REP_CONNECTION_REPAIR_20261029.md).
 Source branch: `codex/restore-rep-live-dialer`, isolated checkout at
 `/Users/cesaryunda/Bitesites3.0/bitesites-rep-live-dialer`.

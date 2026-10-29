@@ -128,9 +128,12 @@ service cloud.firestore {
 
     function canReadOutboundCall(call) {
       return call.direction == 'outbound'
-        && canAccessOutboundAccount(call.accountId)
-        && (!isOutboundRep()
-            || canReadOutboundCampaignForAccount(call.campaignId, call.accountId));
+        // The campaign check already verifies seller scope and training. Doing
+        // both checks exceeds Firestore's expression limit for rep call reads,
+        // preventing the browser from seeing and joining an answered call.
+        && (isOutboundRep()
+            ? canReadOutboundCampaignForAccount(call.campaignId, call.accountId)
+            : canAccessOutboundAccount(call.accountId));
     }
 
     function isOwner(uid) {
