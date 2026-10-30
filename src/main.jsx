@@ -1,7 +1,6 @@
 import React, { Suspense, lazy, useEffect, useId, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { BrowserRouter, Routes, Route, Link, useNavigate } from 'react-router-dom';
-import { submitLead } from './lib/leads';
+import { BrowserRouter, MemoryRouter, Routes, Route, Link, useNavigate } from 'react-router-dom';
 import { analyticsDuration, startAnalytics, trackEvent } from './lib/analytics';
 import Terms from './pages/Terms';
 import Privacy from './pages/Privacy';
@@ -10,8 +9,16 @@ import EmailPreferences from './pages/EmailPreferences';
 import ThankYou from './pages/ThankYou';
 import Book from './pages/Book';
 import Questionnaire from './pages/Questionnaire';
+import Faq from './pages/Faq';
+import ProjectIntake from './components/ProjectIntake';
+import PageMetadata from './components/PageMetadata';
+import { positioning, revenueServices } from './content/revenue';
+import { RevenueSystem, LeadRecovery, ExistingOpportunities, WhoWeHelp, MoreThanAWebsite, AboutValues } from './components/RevenueSections';
+import HoloCard, { RevenueIcon } from './components/HoloCard';
+import ServicePage from './pages/ServicePage';
+import Pricing from './pages/Pricing';
 import { BitMascot } from './components/BitMascot';
-import { InteractiveNebulaShader } from './components/InteractiveNebulaShader';
+import MoltenBackdrop from './components/MoltenBackdrop';
 import { MeshFieldBackdrop } from './components/MeshFieldBackdrop';
 import { TeamSection } from './components/TeamSection';
 import { ByteAvatar, VoiceAIReceptionist, VoiceReceptionistPreview } from './components/VoiceAIReceptionist';
@@ -72,14 +79,14 @@ import './voice-receptionist.css';
 import './agent-duo.css';
 import './legal.css';
 import './thank-you.css';
-
-const aiSolutions = [
-  ['✦', 'AI Receptionists', 'A voice or chat agent that answers every call and message, books appointments, and routes real leads to your team — even after hours.'],
-  ['ϟ', 'Custom AI Automation', 'Workflow builds connecting your CRM, forms, and inbox — so leads move automatically and nothing falls through the cracks.'],
-  ['◉', 'Custom AI Projects', 'Purpose-built AI tools scoped to your business — from internal ops assistants to full custom systems, built end to end.']
-];
+import './faq.css';
+import './revenue.css';
+import './revenue-interactions.css';
+import './molten-sections.css';
 
 const tickerServices = [
+  'Lead Recovery',
+  'Local Search Visibility',
   'Voice AI Receptionists',
   'Web Development',
   'AI Automation',
@@ -98,15 +105,14 @@ const tickerServices = [
   'Ongoing Support & Maintenance'
 ];
 
-const navigationItems =[['Byte & Bit','#ai-receptionist'],['Services','#services'],['Portfolio','#portfolio'],['Pricing','#pricing'],['About','#about'],['Team','#team'],['Consultation','#consultation']];
+const navigationItems =[['The System','#system'],['Services','#services'],['Portfolio','#portfolio'],['Pricing','#pricing'],['About','#about'],['Team','#team'],['Consultation','#consultation'],['FAQ','/faq']];
 
-const services = [
-  { key: 'ai', badge: 'Lead service', title: 'AI Automation', text: 'We identify repetitive work across sales, marketing, and operations, then build AI-assisted workflows that move information faster.', bullets: ['Faster response times for new leads and requests', 'Less repetitive admin work across sales and ops', 'Cleaner handoffs between forms, inboxes, and systems'] },
-  { key: 'web', title: 'Web Development', text: 'Websites that turn your online presence into a working sales asset, from strategy and UX to responsive development and launch support.', bullets: ['A stronger first impression that builds credibility', 'Clearer paths to consultations, quotes, or sales', 'Better speed, mobile experience, and search readiness'] },
-  { key: 'social', title: 'Social Media Management', text: 'Content planning, publishing, and reporting that keeps your brand active and consistent.', bullets: ['A consistent publishing cadence that keeps you visible', 'Stronger alignment between social, web, and campaigns', 'Higher-quality engagement from the right audience'] }
-];
+const services = revenueServices;
 
 const serviceFormValues = {
+  recovery: 'ai_automation',
+  followup: 'ai_automation',
+  tracking: 'ai_automation',
   ai: 'ai_automation',
   web: 'web_development',
   social: 'social_media_management'
@@ -129,6 +135,7 @@ const projects = [
 ];
 
 const detailCopy = {
+  ...Object.fromEntries(revenueServices.map(service => [service.key, [service.label, service.description, service.bullets]])),
   web: ['Web Development', 'We design and build websites that turn your online presence into a working sales asset.', ['Custom site architecture, design direction, and page planning', 'Responsive development for desktop, tablet, and mobile', 'Lead forms, CRM hooks, analytics, and conversion tracking', 'Performance, accessibility, and technical SEO foundations', 'CMS or editable sections for your team', 'Launch support, QA, and optimization recommendations']],
   social: ['Social Media Management', 'We manage the planning, production, and publishing rhythm behind your social channels so your brand stays visible and credible.', ['Monthly content planning tied to your priorities', 'Platform-specific post copy, creative direction, and scheduling', 'Brand voice guidance for consistency', 'Community management support', 'Performance reporting and recommendations', 'Coordination with website and campaign activity']],
   ai: ['AI Automation', 'We identify repetitive work across sales, marketing, and operations, then build AI-assisted workflows that reduce manual effort and move information faster.', ['Workflow mapping to identify high-friction tasks', 'Automation design for intake, lead routing, and alerts', 'AI-assisted summarization, categorization, and response support', 'Integrations across forms, email, CRM, and project systems', 'Fallback logic, QA, and human-review checkpoints', 'Documentation so your team can maintain the system']]
@@ -148,7 +155,7 @@ const logoMorphTravel = () => Math.max(260, window.innerHeight * .34);
 // Cached: this is read inside a non-passive wheel handler, and parsing the query
 // string on every wheel event is latency the compositor waits on.
 let reducedMotionQuery = null;
-const prefersReducedMotion = () =>
+const prefersReducedMotion = () => typeof window === 'undefined' ||
   (reducedMotionQuery ||= window.matchMedia('(prefers-reduced-motion: reduce)')).matches;
 
 // The compact-stage breakpoint from portfolio.css, read from JS so the reveal's
@@ -173,7 +180,7 @@ const isCompactStage = () =>
 // that gets rotated keeps the variant it started on rather than restarting the
 // demo under the visitor.
 let portfolioTierValue = null;
-const portfolioTier = () => (portfolioTierValue ||= (
+const portfolioTier = () => typeof window === 'undefined' ? 'full' : (portfolioTierValue ||= (
   window.matchMedia('(max-aspect-ratio: 1/1)').matches ? 'portrait'
     : window.matchMedia('(max-width: 1100px), (max-height: 500px)').matches ? 'compact'
       : 'full'));
@@ -458,13 +465,12 @@ function MorphingLogo({ location = 'header', onClick }) {
   </a>;
 }
 
-function App() {
+export function App() {
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
   const [tab, setTab] = useState('web');
   const [modal, setModal] = useState(null);
   const [selectedServices, setSelectedServices] = useState([]);
-  const [status, setStatus] = useState({ text: '', kind: '' });
   const [activeProject, setActiveProject] = useState(0);
   const [receptionistOpen, setReceptionistOpen] = useState(false);
   const [voiceAgentOpen, setVoiceAgentOpen] = useState(false);
@@ -1419,37 +1425,10 @@ function App() {
       portfolioRailSyncRef.current = () => {};
     };
   }, [portfolioPhase.expanded]);
-  const submit = async event => {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const data = new FormData(form);
-    const payload = Object.fromEntries(data.entries());
-    payload.services = data.getAll('services');
-    if (!payload.services.length) {
-      trackEvent('form_error', { label: 'Start your project', step: 'services', reason: 'missing_service' });
-      return setStatus({ text: 'Please select at least one service.', kind: 'error' });
-    }
-    if (payload.preferredContactMethod === 'phone' && !payload.phone.trim()) {
-      trackEvent('form_error', { label: 'Start your project', step: 'phone', reason: 'phone_required_for_contact_method' });
-      return setStatus({ text: 'Please include a phone number if you prefer a phone call.', kind: 'error' });
-    }
-    setStatus({ text: 'Sending…', kind: '' });
-    try {
-      const leadId = await submitLead(payload, 'intake_form');
-      form.reset();
-      setSelectedServices([]);
-      trackEvent('lead_created', { label: 'Start your project', leadId, source: 'intake_form' });
-      trackEvent('form_submit', { label: 'Start your project', leadId, source: 'intake_form' });
-      setStatus({ text: 'Thanks — your project request has been received. We’ll be in touch soon.', kind: 'success' });
-      navigate('/thank-you?source=form', { replace: true });
-    } catch (error) {
-      trackEvent('form_error', { label: 'Start your project', step: 'submit', reason: String(error?.code || 'submission_failed').slice(0, 200) });
-      setStatus({ text: error.message || 'Unable to submit the form. Please try again.', kind: 'error' });
-    }
-  };
+
 
   return <>
-    <header className="site-header"><nav><div className="nav-wing nav-wing-left">{navigationItems.slice(0, 4).map(([label, href]) => <a key={label} href={href}>{label}</a>)}</div><MorphingLogo onClick={closeMenu} /><div className="nav-wing nav-wing-right">{navigationItems.slice(4).map(([label, href]) => <a key={label} href={href}>{label}</a>)}<Button href="#start" variant="ai">Start Your Project</Button></div><button className="menu-toggle" onClick={() => setMenuOpen(!menuOpen)} aria-label={menuOpen ? 'Close menu' : 'Open menu'} aria-expanded={menuOpen} aria-controls="mobile-nav"><span className="menu-toggle-bars" aria-hidden="true"><i /><i /><i /></span></button></nav></header>
+    <header className="site-header"><nav><div className="nav-wing nav-wing-left">{navigationItems.slice(0, 4).map(([label, href]) => <a key={label} href={href}>{label}</a>)}</div><MorphingLogo onClick={closeMenu} /><div className="nav-wing nav-wing-right">{navigationItems.slice(4).map(([label, href]) => <a key={label} href={href}>{label}</a>)}<Button href="#start" variant="ai">Get a Free Audit</Button></div><button className="menu-toggle" onClick={() => setMenuOpen(!menuOpen)} aria-label={menuOpen ? 'Close menu' : 'Open menu'} aria-expanded={menuOpen} aria-controls="mobile-nav"><span className="menu-toggle-bars" aria-hidden="true"><i /><i /><i /></span></button></nav></header>
     {/* The drawer sits outside <header> on purpose: the header's backdrop-filter would otherwise
         become the containing block for these fixed panels and collapse them to nothing. */}
     <div className={`nav-drawer-backdrop ${menuOpen ? 'open' : ''}`} onClick={closeMenu} aria-hidden="true" />
@@ -1459,20 +1438,25 @@ function App() {
         <button className="nav-drawer-close" onClick={closeMenu} aria-label="Close menu" tabIndex={menuOpen ? undefined : -1}>×</button>
       </div>
       <nav className="nav-drawer-links">{navigationItems.map(([label, href]) => <a key={label} href={href} onClick={closeMenu} tabIndex={menuOpen ? undefined : -1}>{label}</a>)}</nav>
-      <Button href="#start" variant="ai" onClick={closeMenu} tabIndex={menuOpen ? undefined : -1}>Start Your Project</Button>
+      <Button href="#start" variant="ai" onClick={closeMenu} tabIndex={menuOpen ? undefined : -1}>Get a Free Audit</Button>
     </aside>
     <main id="top">
-      <section className="hero"><div className="hero-bg"><InteractiveNebulaShader /><div className="hero-overlay" /></div><div className="wrap hero-content"><Eyebrow gradient>AI-powered digital solutions</Eyebrow><h1>Intelligence built<br />into your <span className="gradient-text">business.</span></h1><p className="lead">BiteSites builds Voice AI receptionists, websites, and automations that answer faster, capture more leads, and take repetitive work off your team.</p><div className="hero-actions"><Button href="#start" variant="ai">Start Your Project</Button><Button href="#ai-receptionist" variant="ghost">Meet Byte &amp; Bit</Button></div></div></section>
-      <section className="intake" id="start"><div className="wrap intake-grid"><div className="section-head reveal"><Eyebrow gradient>Start your project</Eyebrow><h2>Tell us what you need.</h2><p>Use one form for web development, social media management, or AI automation. We only ask for the details needed to route your project and follow up.</p></div><form className="intake-form reveal" onSubmit={submit}><div className="form-row"><Field label="Name" name="name" required /><Field label="Email" name="email" type="email" required /></div><div className="form-row"><Field label="Phone (optional)" name="phone" type="tel" /><Field label="Business / Company (optional)" name="businessName" /></div><div className="form-row"><Field label="Role in company (optional)" name="roleInCompany" /><label className="field"><span>Business size</span><select name="businessSize" required defaultValue=""><option value="" disabled>Select size</option><option value="solo">Solo / Freelancer</option><option value="small">2-10 employees</option><option value="growing">11-50 employees</option><option value="established">51-200 employees</option><option value="enterprise">200+ employees</option></select></label></div><label className="field"><span>Timeline (optional)</span><select name="urgencyTag" defaultValue=""><option value="">No urgency selected</option><option value="asap">ASAP</option><option value="2_4_weeks">2-4 weeks</option><option value="1_2_months">1-2 months</option><option value="flexible">Flexible</option></select></label><fieldset className="field"><legend>Services <small>(select all that apply)</small></legend><div className="choices">{[['web_development','Web Development'],['social_media_management','Social Media Management'],['ai_automation','AI Automation']].map(([value, label]) => <label className="choice" key={value}><input type="checkbox" name="services" value={value} checked={selectedServices.includes(value)} onChange={() => setSelectedServices(current => current.includes(value) ? current.filter(service => service !== value) : [...current, value])} />{label}</label>)}</div></fieldset><fieldset className="field"><legend>Preferred contact method</legend><div className="choices"><label className="choice"><input type="radio" name="preferredContactMethod" value="email" defaultChecked />Email</label><label className="choice"><input type="radio" name="preferredContactMethod" value="phone" />Phone</label></div></fieldset><label className="field"><span>Project details</span><textarea name="projectDetails" placeholder="What are you looking to accomplish?" /></label><Button variant="ai" type="submit">Start Your Project</Button><p className={`form-status ${status.kind}`}>{status.text}</p></form></div></section>
+      <section className="hero revenue-hero"><div className="hero-bg"><MoltenBackdrop /><div className="hero-overlay" /></div><div className="wrap hero-content"><Eyebrow gradient>{positioning.eyebrow}</Eyebrow><h1>Stop losing leads.<br /><span className="gradient-text">Turn more inquiries into customers.</span></h1><p className="lead">{positioning.description}</p><div className="hero-actions"><Button href="#start" variant="ai">Find My Revenue Leaks</Button><Button href="#system" variant="ghost">See How the System Works</Button></div><p className="revenue-trust">{positioning.trust}</p></div></section>
+      <ProjectIntake selectedServices={selectedServices} setSelectedServices={setSelectedServices} />
       <div className="strip" aria-label="What we do"><div className="ticker"><div className="ticker-track">{[0, 1].map(copy => <div className="ticker-group" key={copy} aria-hidden={copy === 1 ? 'true' : undefined}>{tickerServices.map(service => <span key={service}>{service}</span>)}</div>)}</div></div></div>
+      <RevenueSystem />
+      <section className="pad services-section" id="services"><MeshFieldBackdrop /><div className="wrap"><SectionHead label="What we build" title="Fix the gap. Connect the system.">Start with the place your business loses opportunities. We connect the right website, response, automation, and reporting tools around it.</SectionHead><div className="services-grid revenue-services">{services.map((service, index) => <HoloCard as="article" className={`service-card ${service.key}`} key={service.key} tone={['blue', 'violet', 'teal', 'rose', 'blue'][index]} tiltMax={3} hoverScale={1.015}><div className="holo-card-top"><div className="service-icon" aria-hidden="true">0{index + 1}</div><span className="holo-icon"><RevenueIcon name={['capture', 'search', 'respond', 'followup', 'tracking'][index]} /></span></div><p className="revenue-service-label">{service.label}</p><h3>{service.title}</h3><p className="desc">{service.description}</p><ul>{service.bullets.map(item => <li key={item}>{item}</li>)}</ul><div className="revenue-card-actions"><a className="text-link" href={`/services/${service.slug}`}>Explore {service.label} →</a><button type="button" onClick={() => setModal(service.key)} aria-label={`Discuss ${service.label}`}>Discuss your project ↗</button></div></HoloCard>)}</div><div className="revenue-other-services"><p>Something more specific? We also build custom AI tools and manage social media.</p><a href="#start" onClick={() => setSelectedServices(['Custom AI project'])}>Custom AI projects ↗</a><button type="button" onClick={() => setModal('social')}>Social media management ↗</button></div></div></section>
+      <LeadRecovery />
+      <ExistingOpportunities />
+      <WhoWeHelp />
       <section className="voice-receptionist-section" id="ai-receptionist" aria-labelledby="voice-receptionist-heading">
         <div className="wrap">
           <div className="agent-duo-head reveal">
-            <Eyebrow>Meet the BiteSites AI duo</Eyebrow>
+            <Eyebrow>See the response layer in action</Eyebrow>
             <h2 id="voice-receptionist-heading">Say hi to <span className="agent-name agent-name-byte">Byte</span> <span className="agent-amp" aria-hidden="true">&amp;</span> <span className="agent-name agent-name-bit">Bit</span>.</h2>
-            <p>Byte picks up the phone. Bit picks up the chat. Between the two of them, every caller and every visitor gets a warm hello, a real answer, and a booked appointment — mornings, midnights, and weekends included.</p>
+            <p>Byte handles voice. Bit handles chat. Try the AI receptionists we built for BiteSites: ask a service question, explore an idea, or book a conversation. They’re one part of a connected system for responding to customers.</p>
             <div className="agent-duo-stats">
-              <span><strong>Under 2 rings</strong> to answer</span>
+              <span><strong>Voice & chat</strong> channels</span>
               <span><strong>24/7</strong> — holidays too</span>
               <span>Books into <strong>your calendar</strong></span>
             </div>
@@ -1521,13 +1505,11 @@ function App() {
             <article><h3>Can they work with my calendar and CRM?</h3><p>Yes. BiteSites can connect a custom AI phone or chat agent with business calendars, qualification rules, and CRM follow-up workflows.</p></article>
             <article><h3>Are the agents trained for my business?</h3><p>Yes. Each agent can be trained on your services, common questions, lead qualification criteria, appointment process, and human escalation rules.</p></article>
           </div>
+          <p className="voice-faq-link"><a href="/services/ai-receptionists">Explore custom AI receptionists →</a><br /><Link to="/faq">More questions? Explore the full FAQ →</Link></p>
         </div>
       </section>
-      <section className="pad" id="ai"><div className="wrap"><SectionHead label="Our focus" title="AI that actually runs your business." gradient>This is where we spend most of our time now — designing AI systems that answer the phone, qualify leads, and handle repetitive work, so your team doesn’t have to.</SectionHead><div className="ai-grid">{aiSolutions.map(([icon, title, text]) => <article className="ai-card reveal" key={title}><div className="ai-icon">{icon}</div><h3>{title}</h3><p>{text}</p></article>)}</div></div></section>
-      <section className="pad services-section" id="services"><MeshFieldBackdrop /><div className="wrap"><SectionHead label="What we do" title="Digital services built around growth, not filler.">Three connected service lines that help businesses build a stronger presence, reach the right people, and reduce the manual work holding growth back.</SectionHead><div className="services-grid">{services.map((service, index) => <article className={`service-card reveal ${service.key}`} key={service.key} role="button" tabIndex={0} onClick={() => setModal(service.key)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setModal(service.key); } }} aria-label={`Explore ${service.title}`}>{service.badge && <span className="service-badge">{service.badge}</span>}<div className="service-icon">{['✦','□','↻'][index]}</div><h3>{service.title}</h3><p className="desc">{service.text}</p><ul>{service.bullets.map(item => <li key={item}>{item}</li>)}</ul><span className="text-link">Explore {service.title} →</span></article>)}</div><div className="segments reveal">{[['Small business','Build a credible online presence, stay visible, and reduce repetitive admin work without adding complexity.'],['Medium business','Connect campaigns, service lines, and internal workflows as growing volume creates more moving parts.'],['Large business','Coordinate more stakeholders and more complex processes without sacrificing speed.']].map(([title, text]) => <div className="segment" key={title}><div className="tag">{title}</div><p>{text}</p></div>)}</div></div></section>
-      {/* No inline style object: --portfolio-scrub is written imperatively by
-          writePortfolioProgress so that playback and scrubbing never re-render
-          the page. Adding a style prop back here would fight it. */}
+
+
       <section
         className={`portfolio-section ${portfolioPhase.expanded ? 'portfolio-expanded' : ''} ${portfolioPhase.story ? 'portfolio-story-visible' : ''} ${portfolioSwap ? `portfolio-swap-${portfolioSwap}` : ''}`}
         id="portfolio"
@@ -1535,9 +1517,9 @@ function App() {
       >
         <div className="portfolio-stage">
           <div className="portfolio-intro wrap" aria-hidden={portfolioPhase.expanded}>
-            <Eyebrow>Featured work</Eyebrow>
-            <h2>Work worth stepping into.</h2>
-            <p>Browse sideways, then open a project — it plays, and the full story comes with it. Keep swiping sideways to move through the work, or drag the bar to scrub.</p>
+            <Eyebrow>Real projects. Real systems.</Eyebrow>
+            <h2>Proof, not buzzwords.</h2>
+            <p>Explore the websites, estimate flows, booking connections, and custom tools we’ve built. Open a project to see the work in action.</p>
           </div>
 
           {/* inert, not aria-hidden alone. aria-hidden hides a subtree from assistive
@@ -1721,30 +1703,36 @@ function App() {
           </div>
         </div>
       </section>
-      <section className="pad alt" id="pricing"><div className="wrap"><SectionHead label="Pricing" title="Choose your next growth move.">Clear starting points for stronger visibility, faster lead response, and less manual work. Create a free account to unlock current package pricing.</SectionHead><ProtectedPricing tab={tab} setTab={setTab} /></div></section>
-      <section className="pad" id="about"><div className="wrap"><SectionHead label="About BiteSites" title="Small team. Serious digital work.">We combine thoughtful design, practical engineering, and emerging AI tools to help businesses move forward.</SectionHead><div className="mission reveal"><p>We believe technology should make your business feel lighter — clearer systems, better experiences, and less work lost in the cracks.</p></div><div className="values-grid">{[['Passion for Excellence','Exceptional websites and systems that make a lasting impact.'],['Timely Delivery','We respect your time and deliver projects on schedule.'],['Open Communication','Transparent updates that keep you informed every step of the way.'],['Innovation','We explore new technologies and design trends to stay ahead.']].map(([title, text]) => <div className="value-item reveal" key={title}><h4>{title}</h4><p>{text}</p></div>)}</div></div></section>
+      <section className="pad alt" id="pricing"><div className="wrap"><SectionHead label="Pricing" title="Invest where your business is losing opportunities.">Start with the most urgent gap, then expand the system. Create a free account to view current packages. Custom work is scoped with your team.</SectionHead><ProtectedPricing tab={tab} setTab={setTab} /><MoreThanAWebsite /><p className="revenue-pricing-link"><a href="/pricing">How pricing and project scope work →</a></p></div></section>
+      <section className="pad revenue-about-section" id="about"><div className="wrap"><SectionHead label="About BiteSites" title="The website was just the beginning.">{positioning.about}</SectionHead><div className="mission reveal"><span className="about-mission-label">New Jersey roots. Nationwide reach.</span><p>A good website gets someone interested. What happens next determines whether that interest becomes a customer.</p></div><div className="revenue-about"><p>Our work started with websites. The gaps around them became just as important: calls that went unanswered, inquiries without follow-up, and owners unable to see what their marketing produced.</p><p>Today, we connect the journey from discovery to a real next step. We combine design, engineering, and practical AI around how your business works, with your team involved wherever a person makes the difference.</p></div><AboutValues /></div></section>
       <TeamSection />
       <section className="pad alt" id="consultation"><div className="wrap"><SectionHead label="Consultation" title="Let’s talk through what your business needs.">Tell us what you are trying to solve. We’ll recommend the right service direction and follow up to confirm a conversation.</SectionHead><div className="segments reveal" style={{ marginTop: 0 }}>{[['01 · Tell us what you need','Share your business, goals, preferred services, and the best way to contact you.'],['02 · We review the scope','We identify the right service mix and prepare practical next steps.'],['03 · We follow up','If the fit is right, we confirm the consultation details with you directly.']].map(([title, text]) => <div className="segment" key={title}><div className="tag">{title}</div><p>{text}</p></div>)}</div><div className="hero-actions reveal"><Button href="/book" variant="ai">Schedule a free consultation</Button><Button href="#pricing" variant="ghost">See pricing</Button></div></div></section>
-      <section className="pad"><div className="wrap"><div className="cta-final reveal"><Eyebrow>Get started</Eyebrow><h2>Ready to build what is next?</h2><p>Tell us what you need, choose services, and let us know how you want to be contacted.</p><div className="hero-actions"><Button href="#start" variant="ai">Start Your Project</Button><Button href="#pricing" variant="ghost">View Pricing</Button></div></div></div></section>
+      <section className="pad"><div className="wrap"><div className="cta-final molten-cta reveal"><MoltenBackdrop /><Eyebrow>Find the gap worth fixing first</Eyebrow><h2>Before you buy more leads, make sure you’re not losing the ones you already have.</h2><p>We’ll review how customers find you, what happens when they call or submit a form, how follow-up works, and what you can actually track.</p><div className="hero-actions"><Button href="#start" variant="ai">Get a Free Revenue Leak Audit</Button><Button href="/book" variant="ghost">Talk to BiteSites</Button></div></div></div></section>
     </main>
-    <footer className="site-footer"><div className="wrap footer-inner"><div className="footer-links footer-links-left"><a href="#services">Services</a><a href="#about">About</a><a href="#team">Team</a><a href="#pricing">Pricing</a></div><MorphingLogo location="footer" /><div className="footer-links footer-links-right"><a href="#start">Start a Project</a><Link to="/terms">Terms</Link><Link to="/privacy">Privacy</Link></div><div className="footer-copy">© 2026 BiteSites. All rights reserved.</div></div></footer>
-    {modal && <div className="modal-backdrop" onClick={() => setModal(null)}><div className="detail-panel" role="dialog" aria-modal="true" onClick={event => event.stopPropagation()}><button className="close" onClick={() => setModal(null)} aria-label="Close">×</button><div className="detail-hero"><Eyebrow gradient={modal === 'ai'}>Services</Eyebrow><h2>{detailCopy[modal][0]}</h2><p>{detailCopy[modal][1]}</p></div><div className="detail-content"><h3>What’s included</h3><ul className="detail-list">{detailCopy[modal][2].map(item => <li key={item}>{item}</li>)}</ul><div className="hero-actions"><Button href="#start" variant="ai" onClick={() => { setSelectedServices([serviceFormValues[modal]]); setModal(null); }}>Start Your Project</Button><Button href="#pricing" variant="ghost" onClick={() => { setTab(modal); setModal(null); }}>See pricing</Button></div></div></div></div>}
+    <footer className="site-footer"><div className="wrap footer-inner"><div className="footer-links footer-links-left"><a href="#services">Services</a><a href="#about">About</a><a href="#team">Team</a><a href="#pricing">Pricing</a></div><MorphingLogo location="footer" /><div className="footer-links footer-links-right"><a href="#start">Free Audit</a><Link to="/faq">FAQ</Link><Link to="/terms">Terms</Link><Link to="/privacy">Privacy</Link></div><div className="footer-copy">© 2026 BiteSites. All rights reserved.</div></div></footer>
+    {modal && <div className="modal-backdrop" onClick={() => setModal(null)}><div className="detail-panel" role="dialog" aria-modal="true" onClick={event => event.stopPropagation()}><button className="close" onClick={() => setModal(null)} aria-label="Close">×</button><div className="detail-hero"><Eyebrow gradient={modal === 'ai'}>Services</Eyebrow><h2>{detailCopy[modal][0]}</h2><p>{detailCopy[modal][1]}</p></div><div className="detail-content"><h3>What’s included</h3><ul className="detail-list">{detailCopy[modal][2].map(item => <li key={item}>{item}</li>)}</ul><div className="hero-actions"><Button href="#start" variant="ai" onClick={() => { setSelectedServices([serviceFormValues[modal]]); setModal(null); }}>Start Your Project</Button><Button href="#pricing" variant="ghost" onClick={() => { setTab(['web', 'social'].includes(modal) ? modal : 'ai'); setModal(null); }}>See pricing</Button></div></div></div></div>}
     <VoiceAIReceptionist open={voiceAgentOpen} onClose={() => setVoiceAgentOpen(false)} onComplete={() => navigate('/thank-you?source=byte', { replace: true })} />
     {receptionistOpen && <BitChat origin={chatOrigin} initialAnswer={receptionistInitialAnswer} onClose={closeReceptionist} />}
     {!receptionistOpen && !voiceAgentOpen && !voiceSectionVisible && <div className={`chat-launcher ${receptionistNudge ? 'nudged' : ''}`}><p>Need help scoping a project?</p><button type="button" onClick={openReceptionist} aria-label="Open Bit, the AI receptionist"><BitMascot className="bit-launcher-avatar" /><em>Chat with Bit</em></button></div>}
   </>;
 }
 
-function Field({ label, name, type = 'text', required = false }) { return <label className="field"><span>{label}</span><input name={name} type={type} required={required} /></label>; }
+
 
 // The dashboard is a separate bundle: it pulls in Firebase Auth, the admin
 // stylesheet and every chart, none of which a visitor to the marketing site
 // should have to download. It only loads once someone navigates to /admin.
 const AdminApp = lazy(() => import('./admin/AdminApp'));
 
-createRoot(document.getElementById('root')).render(
+export function HomepageSnapshot() { return <MemoryRouter><App /></MemoryRouter>; }
+
+if (typeof document !== 'undefined') createRoot(document.getElementById('root')).render(
   <BrowserRouter>
+    <PageMetadata />
     <Routes>
+      <Route path="/faq" element={<Faq />} />
+      <Route path="/pricing" element={<Pricing />} />
+      {revenueServices.map(service => <Route key={service.slug} path={`/services/${service.slug}`} element={<ServicePage service={service} />} />)}
       <Route path="/terms" element={<Terms />} />
       <Route path="/privacy" element={<Privacy />} />
       <Route path="/feedback" element={<Feedback />} />

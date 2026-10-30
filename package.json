@@ -98,7 +98,10 @@
     "test:eligibility-audit": "firebase emulators:exec --only firestore --project demo-bitesites \"node functions/outbound-eligibility-audit.test.mjs\"",
     "test:conversation-adapter": "node --test scripts/conversation-eval-model-adapter.test.mjs",
     "preflight:conversation-evals": "node scripts/evaluate-conversations.mjs --preflight",
-    "preflight:production": "node scripts/production-preflight.mjs"
+    "preflight:production": "node scripts/production-preflight.mjs",
+    "postbuild": "node scripts/prerender-seo.mjs && node scripts/check-marketing-build.mjs",
+    "check:marketing": "node scripts/check-marketing-build.mjs",
+    "test:marketing:built": "node scripts/test-marketing-built.mjs"
   },
   "dependencies": {
     "@twilio/voice-sdk": "2.18.4",
@@ -110,7 +113,8 @@
     "react-router-dom": "^7.18.1",
     "three": "^0.185.1",
     "topojson-client": "^3.1.0",
-    "world-atlas": "^2.0.2"
+    "world-atlas": "^2.0.2",
+    "ogl": "1.0.11"
   },
   "devDependencies": {
     "@firebase/rules-unit-testing": "^5.0.1",

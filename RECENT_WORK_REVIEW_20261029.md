@@ -55,6 +55,12 @@ calls, one at a time. No call was placed while making or testing this change.
 
 ## Earlier work preserved locally, but absent from the current frontend
 
+**Later update:** The public marketing/SEO work described below has been
+reconciled with the latest deployed dialer source in
+[MARKETING_RESTORATION_20261029.md](MARKETING_RESTORATION_20261029.md).
+The inventory below describes the 6:54 PM release before that recovery;
+the other older local admin features remain outside the marketing restoration.
+
 There is deployment drift. The original working directory is based on September
 23 and contains extensive uncommitted work. Its October verification notes
 record releases that are no longer reflected in the latest main/Hosting build.

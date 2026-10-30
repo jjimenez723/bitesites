@@ -31,6 +31,9 @@ export default defineConfig({
     }
   },
   build: {
+    manifest: true,
+    // Every SSR image needs a manifest URL, including small portfolio favicons.
+    assetsInlineLimit: 0,
     rollupOptions: {
       output: {
         // Split the vendors that change on a different cadence from our code, so

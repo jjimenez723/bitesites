@@ -9,6 +9,8 @@
   },
   "hosting": {
     "public": "dist",
+    "predeploy": ["node scripts/check-marketing-build.mjs"],
+    "cleanUrls": true,
     "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
     "rewrites": [
       { "source": "/api/visit-location", "function": { "functionId": "recordVisitLocation", "region": "us-central1" } },

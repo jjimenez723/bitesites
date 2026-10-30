@@ -14,7 +14,7 @@
  * message thread. A thread is already white, so the card is deliberately dark:
  * that contrast is what makes the link read as a brand rather than a bookmark.
  *
- *   node scripts/capture-og.mjs           # write public/og-cover-v1.jpg
+ *   node scripts/capture-og.mjs           # write public/og-cover-v2.jpg
  *   node scripts/capture-og.mjs --open    # ...and open it
  *   node scripts/capture-og.mjs --png     # lossless, for inspecting banding
  *
@@ -32,7 +32,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const OG_VERSION = 1;
+const OG_VERSION = 2;
 const AS_PNG = process.argv.includes('--png');
 const OUT = path.join(ROOT, 'public', `og-cover-v${OG_VERSION}.${AS_PNG ? 'png' : 'jpg'}`);
 
@@ -51,7 +51,7 @@ const HEIGHT = 630;
 const DPR = 2;
 const QUALITY = 92;
 
-const SERVICES = ['Voice AI Receptionists', 'Web Development', 'AI Automation', 'Social Media', 'Custom AI'];
+const SERVICES = ['Websites', 'Local visibility', 'Lead recovery', 'Follow-up', 'Tracking'];
 
 const GRADIENT = 'linear-gradient(115deg,#0071e3,#7c3aed 45%,#ff5e9c 75%,#34c9eb)';
 const CONIC = 'conic-gradient(#0071e3,#7c3aed,#ff5e9c,#34c9eb,#0071e3)';
@@ -169,7 +169,7 @@ const html = `<!doctype html>
   .eyebrow .dot { width: 9px; height: 9px; border-radius: 50%; background: #7c3aed; flex: 0 0 auto; }
   .eyebrow span { background: ${GRADIENT}; -webkit-background-clip: text; background-clip: text; color: transparent; }
 
-  h1 { font-size: 76px; font-weight: 400; line-height: 1.07; letter-spacing: -.005em; color: #fff; }
+  h1 { font-size: 72px; font-weight: 400; line-height: 1.07; letter-spacing: -.005em; color: #fff; }
   h1 .g { background: ${GRADIENT}; -webkit-background-clip: text; background-clip: text; color: transparent; }
 
   .pills { display: flex; gap: 10px; margin-top: 40px; }
@@ -186,8 +186,8 @@ const html = `<!doctype html>
     <div class="edge"></div>
 
     <img class="wordmark" src="${logo.uri}" alt="BiteSites">
-    <div class="eyebrow"><i class="dot"></i><span>AI-Powered Digital Solutions</span></div>
-    <h1>Intelligence built<br>into your <span class="g">business.</span></h1>
+    <div class="eyebrow"><i class="dot"></i><span>Revenue Systems for Local Businesses</span></div>
+    <h1>Turn more inquiries<br>into <span class="g">customers.</span></h1>
     <div class="pills">${SERVICES.map(s => `<span class="pill">${s}</span>`).join('')}</div>
   </div>
 </body></html>`;

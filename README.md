@@ -40,6 +40,19 @@ npm run deploy:functions           # deploy all Firebase Functions
 npm run ship                       # commit/push, then deploy Functions, Hosting, and optional Firestore config
 ```
 
+## Public website releases
+
+The public redesign and SEO pages are tracked with the application. Build with
+`npm run build`, which also renders the homepage, five service pages, pricing,
+FAQ and route metadata into HTML. Firebase Hosting runs `check:marketing`'s
+validation before publishing, rejecting bundles that omit this content.
+
+Use `npm run deploy:hosting` for public website changes. Start from current
+`origin/main` so a website release also retains the latest admin frontend.
+Commit and push the source used for a release; deploying uncommitted work from
+an older checkout caused the October 27 regression documented in
+[MARKETING_RESTORATION_20261029.md](MARKETING_RESTORATION_20261029.md).
+
 ## Brand consistency
 
 Every user-facing screen and state—including sign-in, access-denied, empty,
