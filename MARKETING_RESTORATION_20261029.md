@@ -50,4 +50,26 @@ Other older uncommitted admin features are outside this public-site recovery.
 - Desktop and mobile screenshots reviewed. Browser tests block live submissions,
   calls and external API writes. No real lead, call or account was created.
 
-Production release details will be recorded after publishing and live checks.
+## Production release verified
+
+Published October 29 at 10:22:40 PM Eastern as Firebase Hosting version
+`e84ed5813e7537cf`. Application source commit
+`d6f6e3b17a1f86a8cb5ad37d78d36a48a5d8cf67` was pushed to `main` before release.
+The live entry asset is `/assets/index-Ctoq97Yw.js`, carrying release ID
+`d6f6e3b`. Both `https://bitesites.org` and `https://bitesites-org.web.app`
+serve it; the Firebase origin HTML exactly matches the reviewed build.
+The custom domain passes through Cloudflare HTML transformations.
+`https://www.bitesites.org` redirects to the canonical apex with HTTP 301.
+
+The full built-site suite and molten-background suite passed against
+`https://bitesites.org` after deployment, including all 15 direct routes,
+no-JavaScript marketing content, metadata/schema, sitemap, robots, client
+form/pricing behavior, actual animation, responsive layouts and fallbacks.
+Only Hosting was published. No Functions, rules, indexes or campaign settings
+were redeployed. This verifies live technical SEO, not search-engine recrawling
+or refreshed rankings.
+
+The isolated release checkout is
+`/Users/cesaryunda/Bitesites3.0/bitesites-marketing-restoration`.
+The original workspace remains behind `main` with unrelated local work;
+reconcile that work before using it for another full application release.
