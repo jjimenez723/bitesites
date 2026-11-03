@@ -80,7 +80,7 @@ try {
   await page.getByRole('checkbox', { name: /Custom AI project/ }).check();
   await page.locator('.project-next').click();
   await page.getByRole('radio', { name: /Just me/ }).waitFor();
-  assert.equal(await page.locator('.holo-card').count(), 29);
+  assert.equal(await page.locator('.holo-card').count(), 22);
   assert.equal(await page.locator('.electric-brand').count(), 0);
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.evaluate(() => { document.documentElement.style.scrollBehavior = 'auto'; window.scrollTo(0, 0); });

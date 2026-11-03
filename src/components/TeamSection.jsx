@@ -262,7 +262,7 @@ export function TeamSection() {
               <p className="team-card-role">{activeMember.role}</p>
               <h3>{activeMember.name}</h3>
               <p className="team-card-bio">{activeMember.bio}</p>
-              <a className="team-card-link" href="#start">Start a conversation <span aria-hidden="true">↗</span></a>
+              <a className="team-card-link" href="#start">Start a conversation</a>
             </div>
           </article>}
         </div>

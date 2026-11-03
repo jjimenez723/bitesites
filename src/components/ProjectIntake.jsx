@@ -168,9 +168,9 @@ export default function ProjectIntake({ selectedServices, setSelectedServices })
         {error && <p className="project-error" id={`${id}-error`} role="alert">{error}</p>}
         <div className="project-actions">
           {step > 0 ? <button className="project-back" type="button" onClick={() => moveTo(step - 1)} disabled={sending}>← Back</button> : <span className="project-multiple-note">Select all that apply</span>}
-          <button className="btn ai project-next" type="submit" disabled={sending}>{sending ? 'Sending your request…' : step === 4 ? 'Send my project' : step === 3 && !values.projectDetails.trim() ? 'Skip for now' : 'Continue'}{!sending && <span aria-hidden="true">↗</span>}</button>
+          <button className="btn ai project-next" type="submit" disabled={sending}>{sending ? 'Sending your request…' : step === 4 ? 'Send my project' : step === 3 && !values.projectDetails.trim() ? 'Skip for now' : 'Continue'}</button>
         </div>
-        <div className="project-form-footnote"><span>Built around your business.</span><a href="/faq">A few questions first? Read our FAQ ↗</a></div>
+        <div className="project-form-footnote"><span>Built around your business.</span><a href="/faq">A few questions first? Read our FAQ</a></div>
       </form>
     </div>
   </section>;

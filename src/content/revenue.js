@@ -70,6 +70,17 @@ export const revenueServices = [
     example: 'A quote request can be linked to its marketing source and tracked through a scheduled consultation and a recorded sale. If sales data is unavailable, reporting should stop at the last verified stage rather than call an inquiry revenue.',
     related: ['websites-local-seo', 'follow-up-automation'],
     scope: 'Attribution depends on connected systems, data quality, privacy choices, and your team recording outcomes. We agree on what can be measured before promising a dashboard.'
+  },
+  {
+    key: 'consulting', slug: 'ai-consulting', label: 'AI consulting', title: 'Find where AI actually pays off.',
+    heading: 'AI consulting for local and small businesses',
+    description: 'Get a clear plan for where AI fits your business, what it should do, and what it will take to run, before you buy a tool.',
+    problem: 'Most owners hear that AI can answer calls, write follow-ups, and save hours, but not which of those fits their business, what it costs to run, or what could go wrong with customers.',
+    approach: 'We review how your team handles calls, inquiries, estimates, and repetitive work, then recommend where AI helps and where a person should stay in charge. The result is a practical plan: the use cases worth doing first, the tools and integrations involved, the rules the AI follows, and what your team will manage. We can then build it, or your team can take the plan forward.',
+    bullets: ['AI readiness review of your calls, leads, and workflows', 'Use-case plan with tools, costs, and handoff rules', 'Team AI training and implementation support'],
+    example: 'A home-services company might start with an AI receptionist for after-hours calls and automated estimate reminders, while keeping pricing conversations with a person. Byte and Bit, BiteSites’ own voice and chat agents, show what that first step can look like.',
+    related: ['ai-receptionists', 'follow-up-automation'],
+    scope: 'Recommendations are based on the information and access you share. Consulting does not require you to buy a BiteSites build, and no AI tool is configured without your approval of its answers, limits, and human handoffs.'
   }
 ];
 

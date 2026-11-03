@@ -5,7 +5,7 @@ import { chromium } from 'playwright';
 const base = process.env.MARKETING_TEST_URL || 'http://127.0.0.1:5174';
 const browser = await chromium.launch();
 const errors = [];
-const sections = ['system', 'services', 'lead-recovery', 'industries', 'about'];
+const sections = ['system', 'services', 'industries', 'about'];
 async function safePage(options = {}) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1100 }, ...options });
   page.on('pageerror', error => errors.push(error.message));
@@ -24,7 +24,7 @@ async function safePage(options = {}) {
 
 try {
   const page = await safePage();
-  assert.equal(await page.locator('.holo-card').count(), 29);
+  assert.equal(await page.locator('.holo-card').count(), 22);
   for (const section of sections) {
     const card = page.locator(`#${section} .holo-card`).first();
     await card.scrollIntoViewIfNeeded();
@@ -45,19 +45,10 @@ try {
   await page.keyboard.press('Enter');
   await page.waitForURL('**/services/websites-local-seo');
   await page.goBack();
-  await page.locator('.recovery-step').first().waitFor();
-
-  const recovery = page.locator('.recovery-step');
-  for (let i = 0; i < 8; i++) {
-    const button = recovery.nth(i);
-    await button.click();
-    assert.equal(await button.getAttribute('aria-pressed'), 'true');
-    assert.equal(await page.locator('.recovery-step[aria-pressed="true"]').count(), 1);
-    assert.ok((await page.locator('#recovery-detail').textContent()).includes(await button.locator('.recovery-step-name').textContent()));
-  }
-  await recovery.nth(2).focus();
-  await page.keyboard.press('Space');
-  assert.equal(await recovery.nth(2).getAttribute('aria-pressed'), 'true', 'Response steps work from keyboard');
+  await page.locator('.recovery-path li').first().waitFor();
+  assert.equal(await page.locator('.recovery-path li').count(), 4, 'Recovery section shows a four-step path');
+  assert.equal(await page.locator('.holo-card-link, .recovery-step-arrow').count(), 0, 'Cards carry no corner arrows');
+  assert.equal(await page.locator('main, body').first().evaluate(el => el.innerText.includes('\u2197')), false, 'No up-right arrow glyphs on the homepage');
   for (const value of await page.locator('.revenue-values details').all()) {
     await value.locator('summary').focus();
     await page.keyboard.press('Enter');
@@ -93,11 +84,24 @@ try {
   await page.locator('.system-card').first().hover({ position: { x: 70, y: 65 } });
   await page.waitForTimeout(450);
   await page.locator('#system').screenshot({ path: '/tmp/bitesites-holo-desktop-hover.png', animations: 'allow' });
+  // Sticky audit CTA: hidden on the first screen, shown further down, steps aside for the form.
+  await page.evaluate(() => scrollTo(0, 0));
+  await page.waitForTimeout(300);
+  assert.equal(await page.locator('.sticky-audit-cta.is-shown').count(), 0, 'Sticky CTA waits until the visitor scrolls');
+  await page.locator('#industries').scrollIntoViewIfNeeded();
+  await page.locator('.sticky-audit-cta.is-shown').waitFor();
+  await page.locator('#start').scrollIntoViewIfNeeded();
+  await page.waitForFunction(() => !document.querySelector('.sticky-audit-cta').classList.contains('is-shown'));
+  for (const path of ['/faq', '/pricing', '/services/lead-recovery']) {
+    await page.goto(`${base}${path}`);
+    await page.evaluate(() => scrollTo(0, document.body.scrollHeight / 2));
+    const cta = page.locator('.sticky-audit-cta.is-shown');
+    await cta.waitFor();
+    assert.equal(await cta.getAttribute('href'), '/#start', `Sticky CTA on ${path} goes to the audit form`);
+  }
   await page.close();
 
   const touch = await safePage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
-  await touch.locator('.recovery-step').nth(6).tap();
-  assert.equal(await touch.locator('.recovery-step').nth(6).getAttribute('aria-pressed'), 'true');
   await touch.locator('.revenue-values summary').first().tap();
   assert.equal(await touch.locator('.revenue-values details').first().evaluate(el => el.open), true);
   assert.equal(await touch.locator('.holo-card[data-tracking]').count(), 0, 'Touch does not trigger sticky tilt');
@@ -106,7 +110,7 @@ try {
   assert.equal(await touch.getByRole('checkbox', { name: /Custom AI project/ }).count(), 1);
   await touch.close();
   assert.deepEqual(errors, []);
-  console.log('PASS: All five sections have pointer effects; recovery and About work by keyboard/touch; links work; reduced motion, 7 responsive widths and console checks passed. Screenshots saved in /tmp/bitesites-holo-*.png.');
+  console.log('PASS: All four card sections have pointer effects; recovery path renders, no corner arrows, About works by keyboard/touch; links work; reduced motion, 7 responsive widths and console checks passed. Screenshots saved in /tmp/bitesites-holo-*.png.');
 } finally {
   await browser.close();
 }
