@@ -555,7 +555,7 @@ body.portfolio-open .chat-launcher { opacity: 0; pointer-events: none; transitio
 .portfolio-story-copy > p { color: rgba(255,255,255,.86); font-size: clamp(14.5px,1.15vw,17px); line-height: 1.6; }
 .portfolio-story-copy ul { margin: 20px 0 24px; padding: 0; list-style: none; border-top: 1px solid rgba(255,255,255,.11); }
 .portfolio-story-copy li { position: relative; padding: 11px 0 11px 22px; border-bottom: 1px solid rgba(255,255,255,.11); color: rgba(255,255,255,.68); font-size: 13px; line-height: 1.5; }
-.portfolio-story-copy li::before { content: "↗"; position: absolute; top: 11px; left: 0; color: #b3a4ff; }
+.portfolio-story-copy li::before { content: ""; position: absolute; top: 18px; left: 2px; width: 6px; height: 6px; border-radius: 50%; background: #b3a4ff; }
 
 .portfolio-story-visit {
   display: inline-flex;

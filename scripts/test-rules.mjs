@@ -75,7 +75,7 @@ await testEnv.withSecurityRulesDisabled(async context => {
   await setDoc(doc(db, 'roles', 'client_other'), { role: 'client' });
   await setDoc(doc(db, 'roles', 'outbound_rep'), { role: 'outbound_rep' });
   await setDoc(doc(db, 'roles', 'outbound_manager'), { role: 'outbound_manager' });
-  await setDoc(doc(db, 'roles', 'stale_claim_rep'), { role: 'outbound_rep', accountIds: ['bitesites'] });
+  await setDoc(doc(db, 'roles', 'stale_claim_manager'), { role: 'outbound_manager', accountIds: ['bitesites'] });
   await setDoc(doc(db, 'users', 'someone_else'), {
     email: 'someone@example.com',
     status: 'pending'
@@ -119,7 +119,7 @@ const clientOk = testEnv.authenticatedContext('client_ok', { email: 'c1@example.
 const clientOther = testEnv.authenticatedContext('client_other', { email: 'c2@example.com' }).firestore();
 const outboundRep = testEnv.authenticatedContext('outbound_rep', { email: 'rep@bitesites.org' }).firestore();
 const outboundManager = testEnv.authenticatedContext('outbound_manager', { email: 'manager@bitesites.org' }).firestore();
-const staleClaimRep = testEnv.authenticatedContext('stale_claim_rep', {
+const staleClaimManager = testEnv.authenticatedContext('stale_claim_manager', {
   email: 'stale@bitesites.org', role: 'admin', accountIds: ['stone-bellisimo']
 }).firestore();
 
@@ -728,10 +728,10 @@ await it('unscoped outbound roles cannot read another seller’s prospect corpus
 });
 
 await it('a stored outbound scope defeats a stale elevated claim', async () => {
-  await assertSucceeds(getDoc(doc(staleClaimRep, 'prospects', 'p1')));
-  await assertFails(getDoc(doc(staleClaimRep, 'prospects', 'p_stone')));
+  await assertSucceeds(getDoc(doc(staleClaimManager, 'prospects', 'p1')));
+  await assertFails(getDoc(doc(staleClaimManager, 'prospects', 'p_stone')));
   await assertFails(getDocs(query(
-    collection(staleClaimRep, 'prospects'), where('accountId', '==', 'stone-bellisimo')
+    collection(staleClaimManager, 'prospects'), where('accountId', '==', 'stone-bellisimo')
   )));
 });
 
@@ -876,7 +876,7 @@ describe('calendar settings — server-normalized, browser-readable only');
 
 await it('an operator scoped to the seller can read the schedule', async () => {
   await assertSucceeds(getDoc(doc(adminByDoc, 'calendarSettings', 'bitesites')));
-  await assertSucceeds(getDoc(doc(staleClaimRep, 'calendarSettings', 'bitesites')));
+  await assertSucceeds(getDoc(doc(staleClaimManager, 'calendarSettings', 'bitesites')));
   await assertFails(getDoc(doc(anon, 'calendarSettings', 'bitesites')));
 });
 
@@ -888,7 +888,7 @@ await it('no browser can write a meeting location or a cancellation policy', asy
     { location: '1 Forged Street' }));
   await assertFails(updateDoc(doc(adminByDoc, 'calendarSettings', 'bitesites'),
     { cancellationPolicy: { noticeHours: 0, policy: '' } }));
-  await assertFails(setDoc(doc(staleClaimRep, 'calendarSettings', 'stone-bellisimo'),
+  await assertFails(setDoc(doc(staleClaimManager, 'calendarSettings', 'stone-bellisimo'),
     { accountId: 'stone-bellisimo', location: 'Anywhere' }));
 });
 
@@ -898,7 +898,7 @@ await it('an operator scoped to the seller can see why the campaign is halted', 
   await assertSucceeds(getDoc(doc(adminByDoc, 'campaignIncidents', 'incident_1')));
   // Scoped to bitesites by its roles doc: the operator staring at a campaign
   // that will not start is entitled to the reason without asking an admin.
-  await assertSucceeds(getDoc(doc(staleClaimRep, 'campaignIncidents', 'incident_1')));
+  await assertSucceeds(getDoc(doc(staleClaimManager, 'campaignIncidents', 'incident_1')));
   // An unscoped outbound role still fails closed, exactly as it does for the
   // campaign, target and session records the incident refers to.
   await assertFails(getDoc(doc(outboundRep, 'campaignIncidents', 'incident_1')));
@@ -938,13 +938,13 @@ await it('an operator scoped to the seller can read that seller\u2019s audit', a
   await assertSucceeds(getDoc(doc(adminByDoc, 'outboundEligibilityAudits', 'audit_1')));
   // Same reasoning as the incident ledger: an operator looking at a campaign
   // with nothing in its queue is entitled to see why without asking an admin.
-  await assertSucceeds(getDoc(doc(staleClaimRep, 'outboundEligibilityAudits', 'audit_1')));
+  await assertSucceeds(getDoc(doc(staleClaimManager, 'outboundEligibilityAudits', 'audit_1')));
   await assertFails(getDoc(doc(outboundRep, 'outboundEligibilityAudits', 'audit_1')));
   await assertFails(getDoc(doc(anon, 'outboundEligibilityAudits', 'audit_1')));
 });
 
 await it('an audit does not leak across the seller boundary', () =>
-  assertFails(getDoc(doc(staleClaimRep, 'outboundEligibilityAudits', 'audit_other_seller'))));
+  assertFails(getDoc(doc(staleClaimManager, 'outboundEligibilityAudits', 'audit_other_seller'))));
 
 await it('no browser can write an eligibility verdict', async () => {
   await assertFails(setDoc(doc(adminByDoc, 'outboundEligibilityAudits', 'audit_forged'), {

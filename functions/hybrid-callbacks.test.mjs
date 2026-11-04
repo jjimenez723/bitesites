@@ -15,6 +15,7 @@ const campaignId = 'history-callback-campaign';
 const campaign = {
   id: campaignId, accountId: 'bitesites', name: 'History callbacks', provider: 'twilio',
   status: 'running', mode: 'power', callerId: '+15005550006', maxAttempts: 1,
+  allowedRepUids: ['callback-rep'],
   localStartTime: '09:00', localEndTime: '18:00', allowedDays: ['mon', 'tue', 'wed', 'thu', 'fri']
 };
 const submit = (data, uid = 'callback-rep') => submitHybridDisposition.run({
@@ -25,7 +26,7 @@ const targetRef = db.doc('outboundTargets/history-callback');
 const callRef = db.doc('calls/history-callback');
 
 try {
-  for (const uid of ['callback-rep', 'callback-other']) await db.doc(`roles/${uid}`).set({ role: 'outbound_rep', accountIds: ['bitesites'] });
+  for (const uid of ['callback-rep', 'callback-other']) await db.doc(`roles/${uid}`).set({ role: 'outbound_rep', accountIds: ['bitesites'], trainingExemptAccountIds: ['bitesites'] });
   await db.doc('dialerSessions/history-callback-session').set({ userUid: 'callback-rep', accountId: 'bitesites', status: 'ended' });
   await db.doc(`outboundCampaigns/${campaignId}`).set(campaign);
   await db.doc('leads/history-callback').set({

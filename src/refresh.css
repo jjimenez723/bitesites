@@ -1,0 +1,252 @@
+/*
+ * November 2026 refresh. Loaded last, so it adjusts the existing sections
+ * rather than forking them. Direction: bold short headlines, big color tiles,
+ * plain pill actions. Colors come from the existing brand gradient (--gradient).
+ */
+:root {
+  --r-blue: #2f6bff;
+  --r-violet: #7c3aed;
+  --r-pink: #ff5e9c;
+  --r-cyan: #34c9eb;
+  --r-teal: #12a594;
+  --r-ink: #0b1020;
+  --r-radius-tile: 24px;
+  --r-ease: cubic-bezier(.2, .75, .25, 1);
+  --r-fast: .2s;
+  --r-slow: .45s;
+}
+
+/* The page never set a base color, so transparent sections (footer, final CTA)
+   took the browser's default, which is dark in some browsers and embedded views.
+   The site is designed on white (the footer logo is black), so say so. */
+html { color-scheme: light; background: #fff; }
+body { background: #fff; }
+
+/* Headlines: heavier and tighter, so short copy carries the section. */
+.section-head h2,
+.reactivation-layout h2,
+.recovery-section h2,
+#ai-receptionist h2,
+.team-heading h2,
+.cta-final h2 {
+  font-family: var(--font-sans);
+  font-weight: 800;
+  letter-spacing: -.035em;
+  line-height: 1;
+  font-size: clamp(36px, 5.2vw, 68px);
+  text-wrap: balance;
+}
+.refresh-head { max-width: 900px; }
+.refresh-head > p { font-size: clamp(16px, 1.4vw, 19px); max-width: 560px; }
+
+/* 1. Hero: keep the molten backdrop, add brand color through the overlay. */
+.revenue-hero .hero-overlay {
+  background:
+    radial-gradient(ellipse 55% 60% at 88% 18%, rgba(255, 94, 156, .34), transparent 70%),
+    radial-gradient(ellipse 50% 55% at 70% 92%, rgba(52, 201, 235, .28), transparent 70%),
+    radial-gradient(ellipse 60% 70% at 8% 80%, rgba(124, 58, 237, .38), transparent 70%),
+    linear-gradient(110deg, #080c20c7, #080c2066);
+}
+
+/* 2. Intake: a slow color field behind the white form card. */
+.project-intake { position: relative; isolation: isolate; overflow: hidden; background: #f6f5ff; }
+.project-intake::before {
+  content: "";
+  position: absolute;
+  inset: -20%;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 12% 18%, rgba(47, 107, 255, .30), transparent 32%),
+    radial-gradient(circle at 88% 12%, rgba(255, 94, 156, .30), transparent 30%),
+    radial-gradient(circle at 78% 86%, rgba(52, 201, 235, .30), transparent 32%),
+    radial-gradient(circle at 20% 90%, rgba(124, 58, 237, .26), transparent 30%);
+  filter: blur(10px);
+  animation: refresh-drift 24s var(--r-ease) infinite alternate;
+}
+.project-intake .project-wizard { box-shadow: 0 30px 80px rgba(60, 40, 140, .14); }
+@keyframes refresh-drift {
+  from { transform: translate3d(-3%, -2%, 0) rotate(0deg); }
+  to { transform: translate3d(3%, 2%, 0) rotate(6deg); }
+}
+
+/* 3. Six places: full-color tiles, one big number, two lines of copy. */
+.revenue-system { background: #fff; }
+.revenue-steps { gap: 16px; margin: 44px 0 36px; }
+.revenue-steps .system-card.holo-card {
+  --tile: linear-gradient(150deg, #3d7bff, #1d3fc4);
+  min-height: 250px;
+  padding: 28px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 8px;
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--r-radius-tile);
+  background: var(--tile);
+  color: #fff;
+  box-shadow: none;
+}
+.revenue-steps .system-card[data-tone="violet"] { --tile: linear-gradient(150deg, #9b6bff, #5b21b6); }
+.revenue-steps .system-card[data-tone="teal"] { --tile: linear-gradient(150deg, #22c3ad, #0b6f66); }
+.revenue-steps .system-card[data-tone="rose"] { --tile: linear-gradient(150deg, #ff7bb0, #c0186a); }
+.revenue-steps .system-card::after { opacity: .15; }
+.system-card-number {
+  position: absolute;
+  top: 12px;
+  right: 20px;
+  font-family: var(--font-sans);
+  font-size: 104px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -.05em;
+  color: rgba(255, 255, 255, .16);
+}
+.revenue-steps .system-card .holo-icon {
+  position: absolute;
+  top: 28px;
+  left: 28px;
+  background: rgba(255, 255, 255, .16);
+  border-color: rgba(255, 255, 255, .28);
+  color: #fff;
+}
+.revenue-steps .system-card h3 { margin: 0; font-size: clamp(26px, 2.4vw, 32px); font-weight: 800; letter-spacing: -.02em; line-height: 1.1; color: #fff; }
+.revenue-steps .system-card strong { font-size: 15px; font-weight: 500; line-height: 1.5; color: rgba(255, 255, 255, .88); }
+.system-card-tags { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.system-card-tags > span { padding: 4px 12px; border-radius: 999px; background: rgba(255, 255, 255, .16); border: 1px solid rgba(255, 255, 255, .22); font-size: 12px; font-weight: 600; line-height: 1.5; color: #fff; }
+@media (hover: hover) and (pointer: fine) {
+  .revenue-steps .system-card.holo-card:hover { box-shadow: 0 24px 50px rgba(var(--holo-rgb), .35); }
+}
+
+/* 4. Nobody answers: one line of copy and a four-step path. */
+.recovery-section p { max-width: 440px; font-size: clamp(17px, 1.5vw, 20px); }
+.recovery-path { list-style: none; margin: 0; padding: 0; display: grid; gap: 16px; counter-reset: none; }
+.recovery-path li {
+  --step: var(--r-blue);
+  position: relative;
+  display: grid;
+  grid-template-columns: 56px 1fr;
+  align-items: center;
+  gap: 20px;
+  padding: 20px 24px 20px 20px;
+  border: 1px solid rgba(255, 255, 255, .1);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, .05);
+}
+.recovery-path li[data-tone="violet"] { --step: #9b6bff; }
+.recovery-path li[data-tone="teal"] { --step: #22c3ad; }
+.recovery-path li[data-tone="rose"] { --step: var(--r-pink); }
+.recovery-path li:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  left: calc(20px + 28px - 1px); /* centered under the 56px icon */
+  bottom: -16px;
+  width: 2px;
+  height: 16px;
+  background: linear-gradient(var(--step), transparent);
+}
+.recovery-path-icon { width: 56px; height: 56px; display: grid; place-items: center; border-radius: 16px; background: var(--step); color: #fff; box-shadow: 0 10px 30px color-mix(in srgb, var(--step) 40%, transparent); }
+.recovery-path-number { position: absolute; top: 16px; right: 20px; font-size: 12px; font-weight: 700; letter-spacing: .1em; color: rgba(255, 255, 255, .4); }
+.recovery-path-label { color: #fff; font-size: clamp(17px, 1.6vw, 21px); font-weight: 700; line-height: 1.3; padding-right: 32px; }
+
+/* 5. Who we help: icon and name only. */
+#industries { background: #f6f7fb; }
+.industry-list { gap: 16px; margin-top: 40px; }
+.industry-card.holo-card {
+  min-height: 170px;
+  padding: 24px;
+  justify-content: space-between;
+  gap: 24px;
+  border-radius: var(--r-radius-tile);
+  background: radial-gradient(ellipse at 100% 0%, var(--holo-wash), transparent 70%), #fff;
+}
+.industry-list .holo-icon { width: 56px; height: 56px; margin: 0; background: var(--holo-accent); color: #fff; border: 0; }
+.industry-card h3 { margin: 0; font-size: clamp(19px, 1.7vw, 22px); font-weight: 800; letter-spacing: -.01em; line-height: 1.25; }
+
+/* 6. Sticky audit call to action, bottom left; the chat launcher owns the right. */
+.sticky-audit-cta {
+  position: fixed;
+  left: 24px;
+  bottom: 24px;
+  z-index: 90;
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 24px;
+  border-radius: 999px;
+  background: var(--r-ink);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 700;
+  text-decoration: none;
+  box-shadow: 0 14px 34px rgba(11, 16, 32, .28), 0 0 0 1px rgba(255, 255, 255, .08);
+  opacity: 0;
+  transform: translateY(16px);
+  pointer-events: none;
+  transition: opacity var(--r-fast) ease, transform var(--r-slow) var(--r-ease), background var(--r-fast);
+}
+.sticky-audit-cta.is-shown { opacity: 1; transform: none; pointer-events: auto; }
+.sticky-audit-cta:hover { background: #1c2340; }
+.sticky-audit-cta:focus-visible { outline: 3px solid var(--r-cyan); outline-offset: 3px; }
+.sticky-audit-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--gradient); box-shadow: 0 0 0 3px rgba(255, 94, 156, .22); }
+
+@media (max-width: 900px) {
+  .recovery-layout { gap: 40px; }
+}
+@media (max-width: 560px) {
+  .revenue-steps .system-card.holo-card { min-height: 200px; padding: 24px; }
+  .revenue-steps .system-card .holo-icon { top: 24px; left: 24px; }
+  .system-card-number { font-size: 84px; }
+  .recovery-path li { grid-template-columns: 46px 1fr; gap: 16px; padding: 16px 16px 16px 16px; }
+  .recovery-path-icon { width: 46px; height: 46px; border-radius: 14px; }
+  .recovery-path li:not(:last-child)::after { left: calc(16px + 23px - 1px); }
+  .industry-card.holo-card { min-height: 140px; padding: 24px; }
+  .sticky-audit-cta { left: 16px; bottom: 16px; padding: 12px 20px; font-size: 14px; }
+}
+/* On phones the chat launcher and its prompt fill the bottom row, so the CTA sits above them. */
+@media (max-width: 480px) {
+  .sticky-audit-cta { bottom: 96px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .project-intake::before { animation: none; }
+  .sticky-audit-cta { transition: opacity var(--r-fast) ease; transform: none; }
+}
+
+/* Footer social links; profiles not live yet open /coming-soon. */
+.social-links { display: flex; align-items: center; gap: 8px; }
+.social-links a { width: 40px; height: 40px; display: grid; place-items: center; border-radius: 50%; color: inherit; opacity: .72; border: 1px solid currentColor; border-color: color-mix(in srgb, currentColor 22%, transparent); transition: opacity var(--r-fast), background var(--r-fast); }
+.social-links a:hover { opacity: 1; background: color-mix(in srgb, currentColor 8%, transparent); }
+.social-links a:focus-visible { outline: 3px solid var(--r-cyan); outline-offset: 2px; opacity: 1; }
+.footer-social { grid-column: 1 / -1; flex-basis: 100%; width: 100%; justify-content: center; margin: 8px 0 0; }
+.site-footer .social-links a { color: #a1a1a6; }
+/* Room under every footer for the fixed audit pill. */
+.site-footer, .faq-footer { padding-bottom: 96px; }
+@media (max-width: 480px) { .site-footer, .faq-footer { padding-bottom: 168px; } }
+
+/* Coming-soon page. */
+.coming-soon { min-height: 60vh; padding: 96px 0 120px; max-width: 720px; }
+.coming-soon h1 { font-family: var(--font-sans); font-weight: 800; letter-spacing: -.035em; line-height: 1.02; font-size: clamp(40px, 6vw, 72px); margin: 16px 0 24px; }
+.coming-soon .lead { font-size: clamp(18px, 1.6vw, 22px); }
+.coming-soon .hero-actions { margin-top: 32px; }
+
+/* Reactivation: a full-color panel; it had no background and showed the dark page base. */
+.reactivation-section { background: linear-gradient(125deg, #5b21b6 0%, #7c3aed 40%, #c0186a 100%); color: #fff; }
+.reactivation-section .eyebrow { color: rgba(255, 255, 255, .8); }
+.reactivation-section h2 { color: #fff; margin-bottom: 16px; }
+.reactivation-layout p { color: rgba(255, 255, 255, .88); font-size: clamp(17px, 1.5vw, 20px); line-height: 1.6; max-width: 480px; }
+.reactivation-layout .btn { margin-top: 24px; }
+.btn-light { background: #fff; color: var(--r-ink); border: 0; }
+.btn-light:hover { background: #f1ecff; }
+.btn-light:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
+.reactivation-sources { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+.reactivation-sources li { display: flex; align-items: center; gap: 16px; padding: 16px 20px; border-radius: 20px; background: rgba(255, 255, 255, .12); border: 1px solid rgba(255, 255, 255, .2); font-size: clamp(18px, 1.7vw, 22px); font-weight: 700; }
+.reactivation-sources li > span { width: 48px; height: 48px; display: grid; place-items: center; flex-shrink: 0; border-radius: 16px; background: #fff; color: #7c3aed; }
+.reactivation-section .revenue-note { margin-top: 16px; font-size: 13px; color: rgba(255, 255, 255, .72); }
+@media (max-width: 900px) { .reactivation-layout { grid-template-columns: 1fr; gap: 40px; } }
+
+/* Six services now: two even rows of three on desktop, three rows of two on
+   tablets. The old rules widened cards 4-5, and the fifth to full width on tablets. */
+@media (min-width: 1001px) { .revenue-services .service-card:nth-child(n+4) { grid-column: span 2; } }
+@media (max-width: 1000px) and (min-width: 681px) { .revenue-services .service-card:last-child { grid-column: auto; } }
+.reactivation-section h2 { font-size: clamp(34px, 4vw, 56px); }

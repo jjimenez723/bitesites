@@ -7,7 +7,9 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createServer } from 'vite';
 import { revenueServices } from '../src/content/revenue.js';
-import { homeMeta, metadataForPath, serializeSchema } from '../src/content/seo.js';
+import { homeMeta, metadataForPath, serializeSchema, SITE_URL } from '../src/content/seo.js';
+import { faqItems } from '../src/content/faq.js';
+import { positioning } from '../src/content/revenue.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const dist = path.join(root, 'dist');
@@ -62,10 +64,26 @@ try {
   if (!faq.includes('Good questions.') || !faq.includes('application/ld+json')) throw new Error('FAQ pre-render did not produce content and structured data.');
   await writeFile(path.join(dist, 'faq.html'), faq);
   // These routes also need accurate initial metadata on direct requests.
-  for (const route of ['/terms', '/privacy', '/book', '/feedback', '/thank-you', '/questionnaire', '/email-preferences']) {
+  for (const route of ['/terms', '/privacy', '/book', '/feedback', '/thank-you', '/questionnaire', '/email-preferences', '/coming-soon']) {
     await writeFile(path.join(dist, `${route.slice(1)}.html`), withMetadata(template, metadataForPath(route)));
   }
-  console.log('Pre-rendered homepage, 5 service pages, pricing, FAQ, and utility route metadata.');
+  // Plain-text summary for AI assistants and answer engines, built from the
+  // same content as the pages so it cannot drift from what the site says.
+  const llms = [
+    '# BiteSites', '',
+    `> ${positioning.about}`, '',
+    '## Services',
+    ...revenueServices.map(service => `- [${service.label}](${SITE_URL}/services/${service.slug}): ${service.description}`), '',
+    '## Key pages',
+    `- [Free revenue leak audit](${SITE_URL}/#start): five-step project and audit request form`,
+    `- [Pricing](${SITE_URL}/pricing): how pricing and project scope work`,
+    `- [FAQ](${SITE_URL}/faq): ${faqItems.length} answers about services, AI, pricing, ownership and support`,
+    `- [Book a consultation](${SITE_URL}/book)`, '',
+    '## Frequently asked questions',
+    ...faqItems.map(item => `### ${item.question}\n${item.answer}\n`)
+  ].join('\n');
+  await writeFile(path.join(dist, 'llms.txt'), llms + '\n');
+  console.log(`Pre-rendered homepage, ${revenueServices.length} service pages, pricing, FAQ, and utility route metadata.`);
 } finally {
   await vite.close();
 }

@@ -19,6 +19,9 @@ import ServicePage from './pages/ServicePage';
 import Pricing from './pages/Pricing';
 import { BitMascot } from './components/BitMascot';
 import MoltenBackdrop from './components/MoltenBackdrop';
+import StickyAuditCta from './components/StickyAuditCta';
+import SocialLinks from './components/SocialLinks';
+import ComingSoon from './pages/ComingSoon';
 import { MeshFieldBackdrop } from './components/MeshFieldBackdrop';
 import { TeamSection } from './components/TeamSection';
 import { ByteAvatar, VoiceAIReceptionist, VoiceReceptionistPreview } from './components/VoiceAIReceptionist';
@@ -83,6 +86,7 @@ import './faq.css';
 import './revenue.css';
 import './revenue-interactions.css';
 import './molten-sections.css';
+import './refresh.css';
 
 const tickerServices = [
   'Lead Recovery',
@@ -92,6 +96,7 @@ const tickerServices = [
   'AI Automation',
   'Social Media Management',
   'Custom AI Projects',
+  'AI Consulting',
   'CRM Builds & Integrations',
   'Business Dashboards',
   'Corporate AI Training',
@@ -114,6 +119,7 @@ const serviceFormValues = {
   followup: 'ai_automation',
   tracking: 'ai_automation',
   ai: 'ai_automation',
+  consulting: 'ai_automation',
   web: 'web_development',
   social: 'social_media_management'
 };
@@ -1443,73 +1449,6 @@ export function App() {
     <main id="top">
       <section className="hero revenue-hero"><div className="hero-bg"><MoltenBackdrop /><div className="hero-overlay" /></div><div className="wrap hero-content"><Eyebrow gradient>{positioning.eyebrow}</Eyebrow><h1>Stop losing leads.<br /><span className="gradient-text">Turn more inquiries into customers.</span></h1><p className="lead">{positioning.description}</p><div className="hero-actions"><Button href="#start" variant="ai">Find My Revenue Leaks</Button><Button href="#system" variant="ghost">See How the System Works</Button></div><p className="revenue-trust">{positioning.trust}</p></div></section>
       <ProjectIntake selectedServices={selectedServices} setSelectedServices={setSelectedServices} />
-      <div className="strip" aria-label="What we do"><div className="ticker"><div className="ticker-track">{[0, 1].map(copy => <div className="ticker-group" key={copy} aria-hidden={copy === 1 ? 'true' : undefined}>{tickerServices.map(service => <span key={service}>{service}</span>)}</div>)}</div></div></div>
-      <RevenueSystem />
-      <section className="pad services-section" id="services"><MeshFieldBackdrop /><div className="wrap"><SectionHead label="What we build" title="Fix the gap. Connect the system.">Start with the place your business loses opportunities. We connect the right website, response, automation, and reporting tools around it.</SectionHead><div className="services-grid revenue-services">{services.map((service, index) => <HoloCard as="article" className={`service-card ${service.key}`} key={service.key} tone={['blue', 'violet', 'teal', 'rose', 'blue'][index]} tiltMax={3} hoverScale={1.015}><div className="holo-card-top"><div className="service-icon" aria-hidden="true">0{index + 1}</div><span className="holo-icon"><RevenueIcon name={['capture', 'search', 'respond', 'followup', 'tracking'][index]} /></span></div><p className="revenue-service-label">{service.label}</p><h3>{service.title}</h3><p className="desc">{service.description}</p><ul>{service.bullets.map(item => <li key={item}>{item}</li>)}</ul><div className="revenue-card-actions"><a className="text-link" href={`/services/${service.slug}`}>Explore {service.label} →</a><button type="button" onClick={() => setModal(service.key)} aria-label={`Discuss ${service.label}`}>Discuss your project ↗</button></div></HoloCard>)}</div><div className="revenue-other-services"><p>Something more specific? We also build custom AI tools and manage social media.</p><a href="#start" onClick={() => setSelectedServices(['Custom AI project'])}>Custom AI projects ↗</a><button type="button" onClick={() => setModal('social')}>Social media management ↗</button></div></div></section>
-      <LeadRecovery />
-      <ExistingOpportunities />
-      <WhoWeHelp />
-      <section className="voice-receptionist-section" id="ai-receptionist" aria-labelledby="voice-receptionist-heading">
-        <div className="wrap">
-          <div className="agent-duo-head reveal">
-            <Eyebrow>See the response layer in action</Eyebrow>
-            <h2 id="voice-receptionist-heading">Say hi to <span className="agent-name agent-name-byte">Byte</span> <span className="agent-amp" aria-hidden="true">&amp;</span> <span className="agent-name agent-name-bit">Bit</span>.</h2>
-            <p>Byte handles voice. Bit handles chat. Try the AI receptionists we built for BiteSites: ask a service question, explore an idea, or book a conversation. They’re one part of a connected system for responding to customers.</p>
-            <div className="agent-duo-stats">
-              <span><strong>Voice & chat</strong> channels</span>
-              <span><strong>24/7</strong> — holidays too</span>
-              <span>Books into <strong>your calendar</strong></span>
-            </div>
-          </div>
-          <div className="agent-duo-grid">
-            <article className="agent-card agent-card-byte reveal">
-              <div className="agent-card-head">
-                <ByteAvatar />
-                <span className="agent-id"><strong>Byte</strong><small>Voice AI receptionist</small></span>
-                <span className="agent-chip"><i />Ready to talk</span>
-              </div>
-              <VoiceReceptionistPreview onOpen={() => setVoiceAgentOpen(true)} />
-              <p className="agent-card-copy">Byte knows Voice AI inside and out. Ask how an AI phone agent answers calls, qualifies leads, books appointments, and follows up around the clock — then hear it happen live.</p>
-              <ul className="agent-card-points">
-                <li>Answers tailored to your call volume, team, and goals</li>
-                <li>Lead qualification, appointment booking, CRM follow-up</li>
-                <li>The same natural voice your customers would hear</li>
-              </ul>
-              <div className="agent-card-actions">
-                <Button variant="ghost" onClick={() => setVoiceAgentOpen(true)}>Talk to Byte <span aria-hidden="true">&nbsp;→</span></Button>
-                <small>Your browser asks before the microphone turns on.</small>
-              </div>
-            </article>
-            <article className="agent-card agent-card-bit reveal">
-              <div className="agent-card-head">
-                <span className="agent-avatar-bit"><BitMascot /></span>
-                <span className="agent-id"><strong>Bit</strong><small>AI chat receptionist</small></span>
-                <span className="agent-chip"><i />Always up for a chat</span>
-              </div>
-              <BitChatPreview onOpen={openReceptionist} />
-              <p className="agent-card-copy">Bit is our mascot with a job. Ask him anything — what we build, what drives the cost, whether an agent like him would genuinely help your business — and he answers straight, then books the call himself. And yes, his eyes really do follow your cursor.</p>
-              <ul className="agent-card-points">
-                <li>Real answers to hard questions, not a scripted form</li>
-                <li>Books your free 20-minute call in the chat, on the live calendar</li>
-                <li>Honest about what he does not know, and when we are not the fit</li>
-              </ul>
-              <div className="agent-card-actions">
-                <Button variant="ghost" onClick={openReceptionist}>Chat with Bit <span aria-hidden="true">&nbsp;→</span></Button>
-                <small>No microphone, no signup — just say hello.</small>
-              </div>
-            </article>
-          </div>
-          <div className="voice-seo-points reveal" aria-label="AI receptionist questions and answers">
-            <article><h3>What can a Voice AI receptionist do?</h3><p>A Voice AI receptionist can answer inbound calls, respond to common questions, qualify leads, book appointments, route callers, and update connected CRM workflows.</p></article>
-            <article><h3>What does an AI chat agent handle?</h3><p>An AI chat agent greets website visitors, answers service questions, captures contact details, and routes qualified leads straight to your team.</p></article>
-            <article><h3>Can they work with my calendar and CRM?</h3><p>Yes. BiteSites can connect a custom AI phone or chat agent with business calendars, qualification rules, and CRM follow-up workflows.</p></article>
-            <article><h3>Are the agents trained for my business?</h3><p>Yes. Each agent can be trained on your services, common questions, lead qualification criteria, appointment process, and human escalation rules.</p></article>
-          </div>
-          <p className="voice-faq-link"><a href="/services/ai-receptionists">Explore custom AI receptionists →</a><br /><Link to="/faq">More questions? Explore the full FAQ →</Link></p>
-        </div>
-      </section>
-
-
       <section
         className={`portfolio-section ${portfolioPhase.expanded ? 'portfolio-expanded' : ''} ${portfolioPhase.story ? 'portfolio-story-visible' : ''} ${portfolioSwap ? `portfolio-swap-${portfolioSwap}` : ''}`}
         id="portfolio"
@@ -1703,15 +1642,83 @@ export function App() {
           </div>
         </div>
       </section>
+      <div className="strip" aria-label="What we do"><div className="ticker"><div className="ticker-track">{[0, 1].map(copy => <div className="ticker-group" key={copy} aria-hidden={copy === 1 ? 'true' : undefined}>{tickerServices.map(service => <span key={service}>{service}</span>)}</div>)}</div></div></div>
+      <RevenueSystem />
+      <section className="pad services-section" id="services"><MeshFieldBackdrop /><div className="wrap"><SectionHead label="What we build" title="Fix the gap. Connect the system.">Start with the place your business loses opportunities. We connect the right website, response, automation, and reporting tools around it.</SectionHead><div className="services-grid revenue-services">{services.map((service, index) => <HoloCard as="article" className={`service-card ${service.key}`} key={service.key} tone={['blue', 'violet', 'teal', 'rose', 'blue', 'violet'][index]} tiltMax={3} hoverScale={1.015}><div className="holo-card-top"><div className="service-icon" aria-hidden="true">0{index + 1}</div><span className="holo-icon"><RevenueIcon name={['capture', 'search', 'respond', 'followup', 'tracking', 'clarity'][index]} /></span></div><p className="revenue-service-label">{service.label}</p><h3>{service.title}</h3><p className="desc">{service.description}</p><ul>{service.bullets.map(item => <li key={item}>{item}</li>)}</ul><div className="revenue-card-actions"><a className="text-link" href={`/services/${service.slug}`}>Explore {service.label} →</a><button type="button" onClick={() => setModal(service.key)} aria-label={`Discuss ${service.label}`}>Discuss your project</button></div></HoloCard>)}</div><div className="revenue-other-services"><p>Something more specific? We also build custom AI tools and manage social media.</p><a href="#start" onClick={() => setSelectedServices(['Custom AI project'])}>Custom AI projects</a><button type="button" onClick={() => setModal('social')}>Social media management</button></div></div></section>
+      <LeadRecovery />
+      <ExistingOpportunities />
+      <WhoWeHelp />
+      <section className="voice-receptionist-section" id="ai-receptionist" aria-labelledby="voice-receptionist-heading">
+        <div className="wrap">
+          <div className="agent-duo-head reveal">
+            <Eyebrow>See the response layer in action</Eyebrow>
+            <h2 id="voice-receptionist-heading">Say hi to <span className="agent-name agent-name-byte">Byte</span> <span className="agent-amp" aria-hidden="true">&amp;</span> <span className="agent-name agent-name-bit">Bit</span>.</h2>
+            <p>Byte handles voice. Bit handles chat. Try the AI receptionists we built for BiteSites: ask a service question, explore an idea, or book a conversation. They’re one part of a connected system for responding to customers.</p>
+            <div className="agent-duo-stats">
+              <span><strong>Voice & chat</strong> channels</span>
+              <span><strong>24/7</strong> — holidays too</span>
+              <span>Books into <strong>your calendar</strong></span>
+            </div>
+          </div>
+          <div className="agent-duo-grid">
+            <article className="agent-card agent-card-byte reveal">
+              <div className="agent-card-head">
+                <ByteAvatar />
+                <span className="agent-id"><strong>Byte</strong><small>Voice AI receptionist</small></span>
+                <span className="agent-chip"><i />Ready to talk</span>
+              </div>
+              <VoiceReceptionistPreview onOpen={() => setVoiceAgentOpen(true)} />
+              <p className="agent-card-copy">Byte knows Voice AI inside and out. Ask how an AI phone agent answers calls, qualifies leads, books appointments, and follows up around the clock — then hear it happen live.</p>
+              <ul className="agent-card-points">
+                <li>Answers tailored to your call volume, team, and goals</li>
+                <li>Lead qualification, appointment booking, CRM follow-up</li>
+                <li>The same natural voice your customers would hear</li>
+              </ul>
+              <div className="agent-card-actions">
+                <Button variant="ghost" onClick={() => setVoiceAgentOpen(true)}>Talk to Byte <span aria-hidden="true">&nbsp;→</span></Button>
+                <small>Your browser asks before the microphone turns on.</small>
+              </div>
+            </article>
+            <article className="agent-card agent-card-bit reveal">
+              <div className="agent-card-head">
+                <span className="agent-avatar-bit"><BitMascot /></span>
+                <span className="agent-id"><strong>Bit</strong><small>AI chat receptionist</small></span>
+                <span className="agent-chip"><i />Always up for a chat</span>
+              </div>
+              <BitChatPreview onOpen={openReceptionist} />
+              <p className="agent-card-copy">Bit is our mascot with a job. Ask him anything — what we build, what drives the cost, whether an agent like him would genuinely help your business — and he answers straight, then books the call himself. And yes, his eyes really do follow your cursor.</p>
+              <ul className="agent-card-points">
+                <li>Real answers to hard questions, not a scripted form</li>
+                <li>Books your free 20-minute call in the chat, on the live calendar</li>
+                <li>Honest about what he does not know, and when we are not the fit</li>
+              </ul>
+              <div className="agent-card-actions">
+                <Button variant="ghost" onClick={openReceptionist}>Chat with Bit <span aria-hidden="true">&nbsp;→</span></Button>
+                <small>No microphone, no signup — just say hello.</small>
+              </div>
+            </article>
+          </div>
+          <div className="voice-seo-points reveal" aria-label="AI receptionist questions and answers">
+            <article><h3>What can a Voice AI receptionist do?</h3><p>A Voice AI receptionist can answer inbound calls, respond to common questions, qualify leads, book appointments, route callers, and update connected CRM workflows.</p></article>
+            <article><h3>What does an AI chat agent handle?</h3><p>An AI chat agent greets website visitors, answers service questions, captures contact details, and routes qualified leads straight to your team.</p></article>
+            <article><h3>Can they work with my calendar and CRM?</h3><p>Yes. BiteSites can connect a custom AI phone or chat agent with business calendars, qualification rules, and CRM follow-up workflows.</p></article>
+            <article><h3>Are the agents trained for my business?</h3><p>Yes. Each agent can be trained on your services, common questions, lead qualification criteria, appointment process, and human escalation rules.</p></article>
+          </div>
+          <p className="voice-faq-link"><a href="/services/ai-receptionists">Explore custom AI receptionists →</a><br /><Link to="/faq">More questions? Explore the full FAQ →</Link></p>
+        </div>
+      </section>
+
+
       <section className="pad alt" id="pricing"><div className="wrap"><SectionHead label="Pricing" title="Invest where your business is losing opportunities.">Start with the most urgent gap, then expand the system. Create a free account to view current packages. Custom work is scoped with your team.</SectionHead><ProtectedPricing tab={tab} setTab={setTab} /><MoreThanAWebsite /><p className="revenue-pricing-link"><a href="/pricing">How pricing and project scope work →</a></p></div></section>
-      <section className="pad revenue-about-section" id="about"><div className="wrap"><SectionHead label="About BiteSites" title="The website was just the beginning.">{positioning.about}</SectionHead><div className="mission reveal"><span className="about-mission-label">New Jersey roots. Nationwide reach.</span><p>A good website gets someone interested. What happens next determines whether that interest becomes a customer.</p></div><div className="revenue-about"><p>Our work started with websites. The gaps around them became just as important: calls that went unanswered, inquiries without follow-up, and owners unable to see what their marketing produced.</p><p>Today, we connect the journey from discovery to a real next step. We combine design, engineering, and practical AI around how your business works, with your team involved wherever a person makes the difference.</p></div><AboutValues /></div></section>
+      <section className="pad revenue-about-section" id="about"><div className="wrap"><SectionHead label="About BiteSites" title="The website was just the beginning.">{positioning.about}</SectionHead><div className="mission reveal"><span className="about-mission-label">New Jersey roots. Nationwide reach.</span><p>A good website gets someone interested. What happens next determines whether that interest becomes a customer.</p></div><AboutValues /></div></section>
       <TeamSection />
       <section className="pad alt" id="consultation"><div className="wrap"><SectionHead label="Consultation" title="Let’s talk through what your business needs.">Tell us what you are trying to solve. We’ll recommend the right service direction and follow up to confirm a conversation.</SectionHead><div className="segments reveal" style={{ marginTop: 0 }}>{[['01 · Tell us what you need','Share your business, goals, preferred services, and the best way to contact you.'],['02 · We review the scope','We identify the right service mix and prepare practical next steps.'],['03 · We follow up','If the fit is right, we confirm the consultation details with you directly.']].map(([title, text]) => <div className="segment" key={title}><div className="tag">{title}</div><p>{text}</p></div>)}</div><div className="hero-actions reveal"><Button href="/book" variant="ai">Schedule a free consultation</Button><Button href="#pricing" variant="ghost">See pricing</Button></div></div></section>
       <section className="pad"><div className="wrap"><div className="cta-final molten-cta reveal"><MoltenBackdrop /><Eyebrow>Find the gap worth fixing first</Eyebrow><h2>Before you buy more leads, make sure you’re not losing the ones you already have.</h2><p>We’ll review how customers find you, what happens when they call or submit a form, how follow-up works, and what you can actually track.</p><div className="hero-actions"><Button href="#start" variant="ai">Get a Free Revenue Leak Audit</Button><Button href="/book" variant="ghost">Talk to BiteSites</Button></div></div></div></section>
     </main>
-    <footer className="site-footer"><div className="wrap footer-inner"><div className="footer-links footer-links-left"><a href="#services">Services</a><a href="#about">About</a><a href="#team">Team</a><a href="#pricing">Pricing</a></div><MorphingLogo location="footer" /><div className="footer-links footer-links-right"><a href="#start">Free Audit</a><Link to="/faq">FAQ</Link><Link to="/terms">Terms</Link><Link to="/privacy">Privacy</Link></div><div className="footer-copy">© 2026 BiteSites. All rights reserved.</div></div></footer>
+    <footer className="site-footer"><div className="wrap footer-inner"><div className="footer-links footer-links-left"><a href="#services">Services</a><a href="#about">About</a><a href="#team">Team</a><a href="#pricing">Pricing</a></div><MorphingLogo location="footer" /><div className="footer-links footer-links-right"><a href="#start">Free Audit</a><Link to="/faq">FAQ</Link><Link to="/terms">Terms</Link><Link to="/privacy">Privacy</Link></div><SocialLinks className="footer-social" /><div className="footer-copy">© 2026 BiteSites. All rights reserved.</div></div></footer>
     {modal && <div className="modal-backdrop" onClick={() => setModal(null)}><div className="detail-panel" role="dialog" aria-modal="true" onClick={event => event.stopPropagation()}><button className="close" onClick={() => setModal(null)} aria-label="Close">×</button><div className="detail-hero"><Eyebrow gradient={modal === 'ai'}>Services</Eyebrow><h2>{detailCopy[modal][0]}</h2><p>{detailCopy[modal][1]}</p></div><div className="detail-content"><h3>What’s included</h3><ul className="detail-list">{detailCopy[modal][2].map(item => <li key={item}>{item}</li>)}</ul><div className="hero-actions"><Button href="#start" variant="ai" onClick={() => { setSelectedServices([serviceFormValues[modal]]); setModal(null); }}>Start Your Project</Button><Button href="#pricing" variant="ghost" onClick={() => { setTab(['web', 'social'].includes(modal) ? modal : 'ai'); setModal(null); }}>See pricing</Button></div></div></div></div>}
     <VoiceAIReceptionist open={voiceAgentOpen} onClose={() => setVoiceAgentOpen(false)} onComplete={() => navigate('/thank-you?source=byte', { replace: true })} />
+    <StickyAuditCta href="#start" />
     {receptionistOpen && <BitChat origin={chatOrigin} initialAnswer={receptionistInitialAnswer} onClose={closeReceptionist} />}
     {!receptionistOpen && !voiceAgentOpen && !voiceSectionVisible && <div className={`chat-launcher ${receptionistNudge ? 'nudged' : ''}`}><p>Need help scoping a project?</p><button type="button" onClick={openReceptionist} aria-label="Open Bit, the AI receptionist"><BitMascot className="bit-launcher-avatar" /><em>Chat with Bit</em></button></div>}
   </>;
@@ -1738,6 +1745,7 @@ if (typeof document !== 'undefined') createRoot(document.getElementById('root'))
       <Route path="/feedback" element={<Feedback />} />
       <Route path="/email-preferences" element={<EmailPreferences />} />
       <Route path="/thank-you" element={<ThankYou />} />
+      <Route path="/coming-soon" element={<ComingSoon />} />
       <Route path="/book" element={<Book />} />
       <Route path="/questionnaire" element={<Questionnaire />} />
       <Route

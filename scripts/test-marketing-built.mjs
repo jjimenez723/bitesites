@@ -23,11 +23,11 @@ try {
   await page.goto(base + '/');
   assert.match(await page.locator('h1').textContent(), /Stop losing leads/);
   assert.equal(await page.locator('.revenue-steps li').count(), 6);
-  assert.equal(await page.locator('.revenue-services .service-card').count(), 5);
+  assert.equal(await page.locator('.revenue-services .service-card').count(), revenueServices.length);
   assert.equal(await page.locator('h1').count(), 1);
   assert.equal(await page.locator('[src^="/src/"]').count(), 0, 'SSR uses built assets');
   const homeGraph = JSON.parse(await page.locator('#site-structured-data').textContent())['@graph'];
-  assert.equal(homeGraph.filter(node => node['@type'] === 'Service').length, 5);
+  assert.equal(homeGraph.filter(node => node['@type'] === 'Service').length, revenueServices.length);
   assert.match(await page.locator('meta[property="og:image"]').getAttribute('content'), /og-cover-v2.jpg/);
   for (const service of revenueServices) {
     await page.goto(`${base}/services/${service.slug}`);
@@ -68,7 +68,7 @@ try {
   await interactive.getByRole('dialog').waitFor();
   await interactive.getByRole('button', { name: 'Close account dialog' }).click();
   assert.deepEqual(errors, [], 'Built client mounts and runs without uncaught errors');
-  console.log(`PASS: Home, pricing, 5 service pages, FAQ and utility URLs have correct metadata; marketing content and ${faqItems.length} FAQ answers work without JavaScript; structured data, asset paths, robots and sitemap verified; built form and pricing dialog work.`);
+  console.log(`PASS: Home, pricing, ${revenueServices.length} service pages, FAQ and utility URLs have correct metadata; marketing content and ${faqItems.length} FAQ answers work without JavaScript; structured data, asset paths, robots and sitemap verified; built form and pricing dialog work.`);
 } finally {
   await browser.close();
 }

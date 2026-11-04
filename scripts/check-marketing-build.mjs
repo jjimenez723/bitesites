@@ -22,7 +22,7 @@ for (const route of routes) {
   assert.ok(schema?.['@graph']?.length, `${route}: structured data is missing`);
   if (route === '/') {
     assert.match(html, /Stop losing leads/, 'The restored homepage is missing');
-    assert.equal(schema['@graph'].filter(item => item['@type'] === 'Service').length, 5);
+    assert.equal(schema['@graph'].filter(item => item['@type'] === 'Service').length, revenueServices.length);
   }
   if (route === '/faq') {
     assert.equal(schema['@graph'].find(item => item['@type'] === 'FAQPage')?.mainEntity.length, faqItems.length);

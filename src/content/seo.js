@@ -1,8 +1,14 @@
 import { faqItems } from './faq.js';
 import { positioning, revenueServices } from './revenue.js';
+import { socialProfiles } from './social.js';
+
+const liveProfiles = socialProfiles.map(profile => profile.url).filter(Boolean);
 
 export const SITE_URL = 'https://bitesites.org';
-const organization = { '@type': 'Organization', '@id': `${SITE_URL}/#organization`, name: 'BiteSites', url: `${SITE_URL}/`, logo: `${SITE_URL}/apple-touch-icon.png`, description: positioning.about };
+const organization = { '@type': 'Organization', '@id': `${SITE_URL}/#organization`, name: 'BiteSites', url: `${SITE_URL}/`, logo: `${SITE_URL}/apple-touch-icon.png`, description: positioning.about,
+  areaServed: 'US', address: { '@type': 'PostalAddress', addressRegion: 'NJ', addressCountry: 'US' },
+  knowsAbout: ['AI consulting', 'Voice AI receptionists', 'AI chat agents', 'Missed-call and lead recovery', 'Local SEO', 'Website development', 'Follow-up automation', 'CRM integration', 'Lead tracking and revenue attribution', 'Generative engine optimization'],
+  ...(liveProfiles.length ? { sameAs: liveProfiles } : {}) };
 export function breadcrumbSchema(items) {
   return { '@type': 'BreadcrumbList', itemListElement: items.map(([name, path], i) => ({ '@type': 'ListItem', position: i + 1, name, item: `${SITE_URL}${path}` })) };
 }
@@ -43,7 +49,7 @@ export function metadataForPath(pathname) {
   if (route === '/faq') return faqMeta;
   const service = revenueServices.find(item => route === `/services/${item.slug}`);
   if (service) return {
-    title: `${service.key === 'ai' ? 'Voice AI Receptionists & AI Phone Agents' : service.heading} | BiteSites`,
+    title: `${({ ai: 'Voice AI Receptionists & AI Phone Agents', consulting: 'AI Consulting for Local & Small Businesses' })[service.key] || service.heading} | BiteSites`,
     description: service.description, canonical: `${SITE_URL}${route}`,
     schema: { '@context': 'https://schema.org', '@graph': [organization, serviceSchema(service), breadcrumbSchema([['Home', '/'], ['Services', '/#services'], [service.label, route]])] }
   };
@@ -60,7 +66,8 @@ export function metadataForPath(pathname) {
     '/feedback': ['Share Your Feedback', 'Share feedback with the BiteSites team.'],
     '/thank-you': ['Thank You', 'Your next steps with BiteSites.'],
     '/questionnaire': ['Project Questionnaire', 'Share project details with the BiteSites team.'],
-    '/email-preferences': ['Email Preferences', 'Manage your BiteSites email preferences.']
+    '/email-preferences': ['Email Preferences', 'Manage your BiteSites email preferences.'],
+    '/coming-soon': ['Coming Soon', 'This BiteSites page is on the way.']
   };
   const page = pages[route];
   return {

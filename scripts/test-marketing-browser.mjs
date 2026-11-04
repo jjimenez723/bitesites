@@ -193,7 +193,7 @@ try {
   assert.equal(await page.locator('link[rel="canonical"]').getAttribute('href'), 'https://bitesites.org/');
   assert.equal(await page.locator('h1').count(), 1);
   assert.equal(await page.locator('.revenue-steps li').count(), 6);
-  assert.equal(await page.locator('.revenue-services .service-card').count(), 5);
+  assert.equal(await page.locator('.revenue-services .service-card').count(), revenueServices.length);
   await page.locator('.hero a[href="#system"]').click();
   assert.match(page.url(), /#system$/);
   for (const width of [320, 390, 768, 900, 1024, 1280, 1440]) {
