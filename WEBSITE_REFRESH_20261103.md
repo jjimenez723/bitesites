@@ -127,13 +127,16 @@ suites and the build check pass on this code.
 `Outbound AI CI` was already failing on `main` (same four rules tests, since at
 least Oct 29), so `npm run test:all:raw` stopped at `test:rules` and every suite
 after it had not been running in CI. Cause: `f6bd355` added the rep training
-gate to `firestore.rules`, but the `stale_claim_rep` test fixture was never
-given a training pass. The rules were right to deny it. The fix is in the
-fixture only; `firestore.rules` is unchanged.
+gate and closed prospects and eligibility audits to reps, but the test user
+those "operator" checks use was still stored as an `outbound_rep`. The rules
+were right to deny it. That user is now `stale_claim_manager`, a bitesites-scoped
+`outbound_manager` with the same stale admin claim; `firestore.rules` is
+unchanged. A first fix (a training pass on the rep) cleared one of the four
+failures and was replaced.
 
-The Firestore emulator needs Java, which this machine does not have, so the
-fixture fix and the emulator suites are verified by CI only. The 18 later suites
-that need no emulator passed locally.
+The Firestore emulator needs Java, which this machine does not have, so this
+fixture change and the emulator suites are verified by CI only. The 18 later
+suites that need no emulator passed locally.
 
 ## Status
 
