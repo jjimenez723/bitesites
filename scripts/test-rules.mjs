@@ -75,7 +75,7 @@ await testEnv.withSecurityRulesDisabled(async context => {
   await setDoc(doc(db, 'roles', 'client_other'), { role: 'client' });
   await setDoc(doc(db, 'roles', 'outbound_rep'), { role: 'outbound_rep' });
   await setDoc(doc(db, 'roles', 'outbound_manager'), { role: 'outbound_manager' });
-  await setDoc(doc(db, 'roles', 'stale_claim_rep'), { role: 'outbound_rep', accountIds: ['bitesites'] });
+  await setDoc(doc(db, 'roles', 'stale_claim_rep'), { role: 'outbound_rep', accountIds: ['bitesites'], trainingPassedAccountIds: ['bitesites'] });
   await setDoc(doc(db, 'users', 'someone_else'), {
     email: 'someone@example.com',
     status: 'pending'
