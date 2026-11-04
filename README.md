@@ -43,7 +43,7 @@ npm run ship                       # commit/push, then deploy Functions, Hosting
 ## Public website releases
 
 The public redesign and SEO pages are tracked with the application. Build with
-`npm run build`, which also renders the homepage, five service pages, pricing,
+`npm run build`, which also renders the homepage, six service pages, pricing,
 FAQ and route metadata into HTML. Firebase Hosting runs `check:marketing`'s
 validation before publishing, rejecting bundles that omit this content.
 

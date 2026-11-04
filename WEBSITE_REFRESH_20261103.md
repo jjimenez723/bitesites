@@ -14,7 +14,7 @@ Work happens in `bitesites-marketing-restoration`, not the older original checko
 6. Take visual cues from Nike's site: bold, short headlines, big color tiles,
    plain pill buttons. Cues only; no Nike branding, imagery or copy.
 
-## Implemented locally (uncommitted, not deployed)
+## Round 1
 
 - `src/refresh.css`, loaded last: tokens, heavier/tighter section headlines,
   colored hero overlay, slow brand-color field behind the intake (static under
@@ -146,6 +146,22 @@ suites that need no emulator passed locally.
 
 ## Status
 
-Committed on branch `redesign/homepage-nov-2026` after owner review of the
-local preview. Not merged to `main` and not deployed. Production publication
-needs the owner's explicit approval.
+Merged to `main` as `20fde8f` (PR #7) and published to Firebase Hosting on
+November 4, 2026, on the owner's approval, without a second person reviewing
+the PR. Hosting only: no Functions, Firestore rules or dialer changes were
+deployed. CI passed on the merged code.
+
+Verified on `https://bitesites.org` after release: `test-marketing-built.mjs`
+passed against the live domain, and the sticky CTA, section order, four social
+links and no sideways scrolling were checked in a browser at one desktop width.
+No up-right arrows remain. Plain right arrows (→) remain on text links and
+were left in place. Phone widths were not rechecked on the live domain.
+
+## Open: Bit is down until OpenAI credits are added
+
+Since at least November 4, 16:06 UTC, every Bit reply in the logs has failed with
+OpenAI `429 You have no credits remaining`. `OPENAI_API_KEY` is set and enabled
+(version 1), so this is a billing problem, not a missing key. Visitors see Bit's
+generic fallback. `byte-web-session`, the AI SIP dispatch, the dialer API and
+the sideband use the same secret, so they are likely affected too; that was not
+tested. Not fixed: it needs the OpenAI account owner to add credits.
