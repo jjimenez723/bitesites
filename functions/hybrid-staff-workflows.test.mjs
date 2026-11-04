@@ -40,11 +40,15 @@ for (const [uid, role, displayName] of staff) {
   await db.doc(`roles/${uid}`).set({
     role,
     accountIds: ['outbound_rep', 'outbound_manager'].includes(role) ? ['bitesites'] : [],
+    ...(role === 'outbound_rep' ? { trainingExemptAccountIds: ['bitesites'] } : {}),
     email: `${uid}@example.com`
   });
   await db.doc(`users/${uid}`).set({ displayName, email: `${uid}@example.com`, status: 'approved' });
 }
 
+await db.doc('outboundCampaigns/campaign-a').set({
+  accountId: 'bitesites', provider: 'mock', status: 'running', allowedRepUids: ['rep-a', 'rep-b']
+});
 await db.doc('dialerSessions/session-a').set({
   userUid: 'rep-a', status: 'active', campaignId: 'campaign-a',
   accountId: 'bitesites', provider: 'mock',

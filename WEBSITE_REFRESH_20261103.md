@@ -134,8 +134,14 @@ were right to deny it. That user is now `stale_claim_manager`, a bitesites-scope
 unchanged. A first fix (a training pass on the rep) cleared one of the four
 failures and was replaced.
 
-The Firestore emulator needs Java, which this machine does not have, so this
-fixture change and the emulator suites are verified by CI only. The 18 later
+With rules passing (171 of 171 in CI), CI reached `test:callbacks`, which had the
+same kind of gap: its reps had no campaign assignment or training exemption, so
+the server rightly refused them. `test:staff-workflows` had the same gap and no
+campaign record at all. Both now seed what their sibling suites seed. The server
+code is unchanged.
+
+The Firestore emulator needs Java, which this machine does not have, so these
+fixture changes and the emulator suites are verified by CI only. The 18 later
 suites that need no emulator passed locally.
 
 ## Status
