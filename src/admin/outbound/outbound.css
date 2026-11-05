@@ -1142,3 +1142,19 @@
 @media (prefers-reduced-motion: reduce) {
   .bs-admin .quickdial-state-dot::after { animation: none !important; opacity: 0; }
 }
+
+/* Rep course: welcome, lessons and quiz. */
+.bs-admin .rep-course { display: grid; gap: 12px; padding: 16px; border: 1px solid var(--line); border-radius: 13px; background: var(--surface-1); }
+.bs-admin .rep-course h3 { margin: 0; font-size: 20px; }
+.bs-admin .rep-course p, .bs-admin .rep-course li { color: var(--ink-2); font-size: 14px; line-height: 1.55; }
+.bs-admin .rep-course p { margin: 0; }
+.bs-admin .rep-course-summary { font-weight: 600; }
+.bs-admin .rep-course-steps, .bs-admin .rep-course-points { display: grid; gap: 8px; margin: 0; padding-left: 20px; }
+.bs-admin .rep-course-prices { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+.bs-admin .rep-course-prices > div { padding: 12px; border: 1px solid var(--line); border-radius: 9px; }
+.bs-admin .rep-course-prices ul { margin: 8px 0 0; padding: 0; list-style: none; }
+.bs-admin .rep-course-say { display: grid; gap: 8px; padding: 12px; border-left: 3px solid var(--line); }
+.bs-admin .rep-course-question { display: grid; gap: 8px; margin: 0; padding: 12px; border: 1px solid var(--line); border-radius: 9px; }
+.bs-admin .rep-course-question legend { padding: 0 4px; color: var(--ink); font-size: 14px; font-weight: 600; }
+.bs-admin .rep-course-question label { display: flex; gap: 8px; align-items: flex-start; color: var(--ink-2); font-size: 14px; cursor: pointer; }
+.bs-admin .rep-course-question input { flex: none; margin-top: 4px; }

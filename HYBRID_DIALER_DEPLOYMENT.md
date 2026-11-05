@@ -284,6 +284,10 @@ Deployed from a later `main`, it also carries the training-exemption code,
 which has its own release decision. It awaits the owner’s authorization.
 
 
+### Rep onboarding release — not yet authorized
+
+This release needs Hosting plus `getRepTrainingStatus`, `createRepTrainingSession`, `completeRepTrainingAttempt`, and the two new functions `getRepCourse` and `submitRepCourseQuiz`. Every one bundles the changed training modules, so none can be left out. It changes no Firestore rules or indexes and does not touch dialing functions.
+
 ## 12. David's live-dialer restoration — October 29, 2026
 
 The owner identified David's `555yunda` email and requested removing his

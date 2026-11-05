@@ -1,0 +1,20 @@
+.wrap.join-page { max-width: 720px; padding-top: 96px; padding-bottom: 120px; }
+.join-page h1 { font-family: var(--font-sans); font-weight: 800; letter-spacing: -.035em; line-height: 1.02; font-size: clamp(38px, 6vw, 68px); margin: 16px 0 24px; }
+.join-page .lead { font-size: clamp(18px, 1.6vw, 22px); margin-bottom: 16px; }
+.join-steps { list-style: none; display: grid; gap: 16px; margin: 40px 0; padding: 0; }
+.join-steps li { display: flex; gap: 16px; align-items: flex-start; }
+.join-steps li > span { flex: none; display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; border: 1px solid currentColor; font-weight: 700; font-size: 14px; }
+.join-steps strong { display: block; }
+.join-steps p { margin: 4px 0 0; }
+.join-card { display: grid; gap: 16px; padding: 32px; border: 1px solid rgba(127, 127, 127, .3); border-radius: 16px; }
+.join-card h2 { margin: 0; font-family: var(--font-sans); font-size: 28px; font-weight: 700; letter-spacing: -.02em; }
+.join-card p { margin: 0; }
+.join-card form { display: grid; gap: 16px; }
+.join-card label { display: grid; gap: 8px; font-weight: 600; font-size: 14px; }
+.join-card input { min-height: 48px; padding: 0 16px; border: 1px solid rgba(127, 127, 127, .45); border-radius: 8px; background: transparent; color: inherit; font: inherit; }
+.join-card .btn { justify-self: start; }
+.join-google { width: 100%; justify-content: center; }
+.join-card .join-google { justify-self: stretch; }
+.join-error { color: #d92d20; font-size: 14px; }
+.join-switch { justify-self: start; padding: 0; border: 0; background: none; color: inherit; font: inherit; font-size: 14px; text-decoration: underline; cursor: pointer; }
+@media (max-width: 560px) { .wrap.join-page { padding-top: 64px; padding-bottom: 96px; } .join-card { padding: 24px 16px; } }

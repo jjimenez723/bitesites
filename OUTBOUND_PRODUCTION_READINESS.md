@@ -159,6 +159,8 @@ exempt rep. His training pass remains unset; the other rep is unchanged. The
 full rules suite reproduces the same four prior fixture failures on baseline
 and patched rules, while the new end-to-end access and browser checks pass.
 
+**Rep onboarding — built 2026-11-05, not deployed.** Welcome link, lessons, pricing, quiz and yes/no practice calls are on `feat/rep-onboarding`. Status and limits are in `OUTBOUND_OWNER_CHECKLIST.md`.
+
 **Rep sign-in correction — deployed 2026-10-28:** `getRepTrainingStatus` was
 returning 500 because its progress-ID helper used `createHash` without importing
 it from `node:crypto`. The rep portal's always-mounted warm-transfer listener

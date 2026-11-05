@@ -73,7 +73,8 @@ export function metadataForPath(pathname) {
     '/thank-you': ['Thank You', 'Your next steps with BiteSites.'],
     '/questionnaire': ['Project Questionnaire', 'Share project details with the BiteSites team.'],
     '/email-preferences': ['Email Preferences', 'Manage your BiteSites email preferences.'],
-    '/coming-soon': ['Coming Soon', 'This BiteSites page is on the way.']
+    '/coming-soon': ['Coming Soon', 'This BiteSites page is on the way.'],
+    '/join': ['Welcome to the Team', 'Sales team onboarding for BiteSites.']
   };
   const page = pages[route];
   return {

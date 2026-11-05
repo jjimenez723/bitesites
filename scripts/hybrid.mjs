@@ -92,6 +92,8 @@ const HYBRID_FUNCTIONS = [
   'previewAIAgentRuntime',
   'createAIAgentPreviewSession',
   'getRepTrainingStatus',
+  'getRepCourse',
+  'submitRepCourseQuiz',
   'createRepTrainingSession',
   'completeRepTrainingAttempt',
   'listAIKnowledgeBases',

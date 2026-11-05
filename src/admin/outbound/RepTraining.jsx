@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { outbound } from './data';
 import { startAgentPreview } from './agent-preview-client';
+import RepCourse from './RepCourse';
 
 const transcriptLengthLabel = turns => `${turns.length} transcript turns`;
 
@@ -89,8 +90,8 @@ export default function RepTraining({ accounts = [], loading = false, error = ''
           ? `Training passed. You now have access to ${evaluation.assignedCampaign.name}.`
           : 'Training passed. A manager needs to choose a default campaign or free up campaign capacity before access can be assigned.'
         : evaluation.passed
-          ? 'Scenario passed. Continue with the next practice scenario to complete training.'
-          : 'This scenario needs another attempt. Review the coach’s notes and try again.');
+          ? 'Nice work. Keep going with your next practice call.'
+          : 'Not quite yet. Read the coach’s notes and try this call again.');
       await onRefresh();
     } catch (failure) {
       setMessage('');
@@ -117,8 +118,8 @@ export default function RepTraining({ accounts = [], loading = false, error = ''
       <div className="card-head">
         <div>
           <span className="outbound-eyebrow">Training status</span>
-          <h2>AI sales practice</h2>
-          <p>Role-play fictional prospects, practice objections, and get coaching. Practice never contacts real people or uses live leads.</p>
+          <h2>Your sales training</h2>
+          <p>Learn the basics, then practice with fictional business owners. Some will say yes and some will say no. Practice never contacts real people or uses live leads.</p>
         </div>
         <button className="btn-admin" type="button" onClick={onRefresh}>Refresh</button>
       </div>
@@ -141,7 +142,7 @@ export default function RepTraining({ accounts = [], loading = false, error = ''
           <div className={`rep-training-progress ${account.passed || account.trainingExempt ? 'is-passed' : ''}`} key={account.accountId}>
             <div>
               <strong>{account.accountName}</strong>
-              <span>{account.trainingExempt ? 'Waived by an admin' : account.passed ? 'Passed' : `${account.completedScenarioIds.length} of ${account.requiredScenarioCount} scenarios passed`}</span>
+              <span>{account.trainingExempt ? 'Waived by an admin' : account.passed ? 'Passed' : account.courseRequired && !account.quizPassed ? 'Lessons and quiz' : `${account.completedScenarioIds.length} of ${account.requiredScenarioCount} practice calls passed`}</span>
             </div>
             <span className={`pill ${account.passed || account.trainingExempt ? 'completed' : account.ready ? 'draft' : 'paused'}`}>
               {account.trainingExempt
@@ -174,6 +175,8 @@ export default function RepTraining({ accounts = [], loading = false, error = ''
         <div className="rep-training-setup" role="status">
           Training scenarios are not configured for {selected?.accountName || 'this account'} yet. Ask a manager to contact BiteSites support.
         </div>
+      ) : selected?.courseRequired && !selected.quizPassed ? (
+        <RepCourse key={selected.accountId} accountId={selected.accountId} accountName={selected.accountName} onPassed={onRefresh} />
       ) : (
         <section className="rep-training-session" aria-label="Sales practice session">
           <div className="rep-training-scenario">
@@ -181,8 +184,7 @@ export default function RepTraining({ accounts = [], loading = false, error = ''
             {scenario ? <>
               <h3>{scenario.name}, {scenario.age} · {scenario.niche}</h3>
               <p>{scenario.business} · {scenario.gender} · voice: {scenario.voice}</p>
-              <strong>Practice objection</strong>
-              <p>{scenario.objection}</p>
+              <p>You’re calling this business for the first time. Get to yes if you can, and take a no well if you can’t.</p>
             </> : <p>Start a role-play to meet the next prospect in your course.</p>}
           </div>
 
@@ -210,7 +212,7 @@ export default function RepTraining({ accounts = [], loading = false, error = ''
           {message && <p className="rep-training-message" role="status">{message}</p>}
           {problem && <p className="admin-error" role="alert">{problem}</p>}
           {result && <div className={`rep-training-feedback ${result.passed ? 'is-passed' : 'is-retry'}`}>
-            <div><strong>{result.passed ? 'Scenario passed' : 'Try this scenario again'}</strong><span>Score {result.score}/100</span></div>
+            <div><strong>{result.passed ? 'Practice call passed' : 'Try this call again'}</strong><span>Score {result.score}/100</span></div>
             <p>{result.summary}</p>
             {!!result.strengths?.length && <div><strong>What went well</strong><ul>{result.strengths.map((item, index) => <li key={index}>{item}</li>)}</ul></div>}
             {!!result.improvements?.length && <div><strong>Next time</strong><ul>{result.improvements.map((item, index) => <li key={index}>{item}</li>)}</ul></div>}

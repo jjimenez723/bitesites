@@ -41,6 +41,7 @@ import {
   hasRepTrainingExemption, nextRepTrainingScenario, publicTrainingScenario,
   repTrainingScenarios
 } from './rep-training.js';
+import { gradeRepQuiz, hasRepCourse, publicRepCourse } from './rep-course.js';
 
 export const HYBRID_TWILIO_ACCOUNT_SID = defineSecret('TWILIO_ACCOUNT_SID');
 export const HYBRID_TWILIO_AUTH_TOKEN = defineSecret('TWILIO_AUTH_TOKEN');
@@ -935,10 +936,42 @@ export const getRepTrainingStatus = onCall(callOptions, async request => {
       requiredScenarioCount,
       passed,
       trainingExempt,
+      courseRequired: hasRepCourse(accountId),
+      quizPassed: Boolean(progressSnapshot.get('quizPassedAt')),
       progress: progressSnapshot.get('status') || 'not_started'
     };
   }));
   return { accounts };
+});
+
+async function requireRepCourseAccount(request) {
+  const { db, uid, role, access } = await requireDialer(request);
+  if (role !== 'outbound_rep') throw new HttpsError('permission-denied', 'Sales training is available to sales reps.');
+  const accountId = clean(request.data?.accountId, 80);
+  if (!normalizeAccountScope(access.accountIds).includes(accountId)) {
+    throw new HttpsError('permission-denied', 'This seller account is not assigned to you.');
+  }
+  if (!hasRepCourse(accountId)) throw new HttpsError('not-found', 'This seller account has no course.');
+  return { db, uid, accountId };
+}
+
+/** Lessons and quiz questions. The answer key never leaves the server. */
+export const getRepCourse = onCall(callOptions, async request => {
+  const { accountId } = await requireRepCourseAccount(request);
+  return { course: publicRepCourse(accountId) };
+});
+
+/** Grade the quiz on the server; a pass is what unlocks the practice calls. */
+export const submitRepCourseQuiz = onCall(callOptions, async request => {
+  const { db, uid, accountId } = await requireRepCourseAccount(request);
+  const result = gradeRepQuiz(accountId, request.data?.answers);
+  if (result.passed) {
+    await db.doc(`repTrainingProgress/${repTrainingProgressId(uid, accountId)}`).set({
+      uid, accountId, quizPassedAt: FieldValue.serverTimestamp(), quizScore: result.correct,
+      updatedAt: FieldValue.serverTimestamp()
+    }, { merge: true });
+  }
+  return result;
 });
 
 /** Start one fictional prospect role-play for the next required niche. */
@@ -965,6 +998,9 @@ export const createRepTrainingSession = onCall(
     }
     if (repTrainingScenarios(accountId).length === 0) {
       throw new HttpsError('failed-precondition', 'No training scenarios are configured for this seller account yet.');
+    }
+    if (hasRepCourse(accountId) && !progressSnapshot.get('quizPassedAt')) {
+      throw new HttpsError('failed-precondition', 'Finish the lessons and pass the quiz before your practice calls.');
     }
     const requiredScenarioIds = repTrainingScenarios(accountId).map(entry => entry.id);
     let completedScenarioIds = Array.isArray(progressSnapshot.get('completedScenarioIds'))

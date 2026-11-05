@@ -23,6 +23,7 @@ import MoltenBackdrop from './components/MoltenBackdrop';
 import StickyAuditCta from './components/StickyAuditCta';
 import SocialLinks from './components/SocialLinks';
 import ComingSoon from './pages/ComingSoon';
+import Join from './pages/Join';
 import { TeamSection } from './components/TeamSection';
 import { ByteAvatar, VoiceAIReceptionist, VoiceReceptionistPreview } from './components/VoiceAIReceptionist';
 import { BitChatPreview } from './components/BitChatPreview';
@@ -1750,6 +1751,7 @@ if (typeof document !== 'undefined') createRoot(document.getElementById('root'))
       <Route path="/email-preferences" element={<EmailPreferences />} />
       <Route path="/thank-you" element={<ThankYou />} />
       <Route path="/coming-soon" element={<ComingSoon />} />
+      <Route path="/join" element={<Join />} />
       <Route path="/book" element={<Book />} />
       <Route path="/questionnaire" element={<Questionnaire />} />
       <Route
