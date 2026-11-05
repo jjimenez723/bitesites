@@ -230,6 +230,15 @@ from 15,478px to 11,797px at 1440px wide. That content moved rather than
 disappeared, but the homepage now says less about individual services. Rankings
 cannot be verified from here.
 
+Merged as `8b6a05d` (PR #9) and published to Firebase Hosting on November 4, 2026
+(late evening, Eastern), on the owner's approval and without a second reviewer.
+Hosting only. CI passed on the PR. Verified on `https://bitesites.org`: both domains
+serve the new bundle, `test-marketing-built.mjs` passed, the page check at 1440, 375
+and 320px found no new problems, 25 internal links returned 200, `/services` is in
+the sitemap and `llms.txt`, OAI-SearchBot, GPTBot, Googlebot and bingbot get 200,
+old anchors redirect, and form pre-selection works. `/services` still needs
+submitting in Search Console and Bing Webmaster Tools.
+
 ## Status
 
 Merged to `main` as `20fde8f` (PR #7) and published to Firebase Hosting on
