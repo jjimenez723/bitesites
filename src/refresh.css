@@ -61,7 +61,6 @@ body { background: #fff; }
     radial-gradient(circle at 88% 12%, rgba(255, 94, 156, .30), transparent 30%),
     radial-gradient(circle at 78% 86%, rgba(52, 201, 235, .30), transparent 32%),
     radial-gradient(circle at 20% 90%, rgba(124, 58, 237, .26), transparent 30%);
-  filter: blur(10px);
   animation: refresh-drift 24s var(--r-ease) infinite alternate;
 }
 .project-intake .project-wizard { box-shadow: 0 30px 80px rgba(60, 40, 140, .14); }
@@ -250,3 +249,23 @@ body { background: #fff; }
 @media (min-width: 1001px) { .revenue-services .service-card:nth-child(n+4) { grid-column: span 2; } }
 @media (max-width: 1000px) and (min-width: 681px) { .revenue-services .service-card:last-child { grid-column: auto; } }
 .reactivation-section h2 { font-size: clamp(34px, 4vw, 56px); }
+
+/* Scroll performance. See pause-offscreen.js. */
+[data-offscreen],
+[data-offscreen]::before,
+[data-offscreen]::after,
+[data-offscreen] *,
+[data-offscreen] *::before,
+[data-offscreen] *::after {
+  animation-play-state: paused !important;
+}
+
+/* Backdrop blur is recalculated every frame for whatever moves behind it. These
+   sit on near-opaque fills, so the blur was barely visible: the scrolled header
+   is 94% white, and the rail controls sit over playing video. */
+.site-header.scrolled,
+.portfolio-rail-arrow,
+.portfolio-project .project-number {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}

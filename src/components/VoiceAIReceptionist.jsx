@@ -93,8 +93,11 @@ function VoiceWaveform({ intensity = 0, compact = false }) {
     let frame = 0;
     let phase = 0;
     let level = 0;
+    let visible = false;
 
     const draw = () => {
+      frame = 0;
+      if (!visible) return;
       const ratio = Math.min(window.devicePixelRatio || 1, 2);
       const width = canvas.clientWidth;
       const height = canvas.clientHeight;
@@ -129,8 +132,16 @@ function VoiceWaveform({ intensity = 0, compact = false }) {
       frame = window.requestAnimationFrame(draw);
     };
 
-    draw();
-    return () => window.cancelAnimationFrame(frame);
+    // Canvas work has no CSS pause, so the loop stops itself off screen.
+    const observer = new IntersectionObserver(([entry]) => {
+      visible = entry.isIntersecting;
+      if (visible && !frame) draw();
+    });
+    observer.observe(canvas);
+    return () => {
+      observer.disconnect();
+      window.cancelAnimationFrame(frame);
+    };
   }, [compact]);
 
   return <canvas className="voice-waveform" ref={canvasRef} aria-hidden="true" />;

@@ -2,6 +2,7 @@ import React, { Suspense, lazy, useEffect, useId, useRef, useState } from 'react
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter, MemoryRouter, Routes, Route, Link, useNavigate } from 'react-router-dom';
 import { analyticsDuration, startAnalytics, trackEvent } from './lib/analytics';
+import { pauseOffscreenSections } from './lib/pause-offscreen';
 import Terms from './pages/Terms';
 import Privacy from './pages/Privacy';
 import Feedback from './pages/Feedback';
@@ -540,6 +541,7 @@ export function App() {
   // Behavioural capture for the admin dashboard. Started once, for the life of
   // the marketing page — see src/lib/analytics.js for what it records.
   useEffect(() => startAnalytics(), []);
+  useEffect(() => pauseOffscreenSections(), []);
 
   useEffect(() => {
     const header = document.querySelector('.site-header');
@@ -1417,7 +1419,9 @@ export function App() {
       const demo = portfolioVideo.current;
       if (near && demo && demo.preload !== 'auto') demo.preload = 'auto';
       sync();
-    }, { rootMargin: '25% 0px' });
+    // Negative margin: the portfolio sits two screens down, so a positive one
+    // started downloads and decoders while the visitor was still at the form.
+    }, { rootMargin: '-15% 0px' });
 
     observer.observe(section);
     document.addEventListener('visibilitychange', sync);
