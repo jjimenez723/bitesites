@@ -21,6 +21,7 @@
 import { compileAgentRuntime, sanitizeRealtimeSessionConfig } from './agent-runtime.js';
 import { OFFER_TRACK_KEYS } from './offer-tracks.js';
 import { clean } from './prospect-normalization.js';
+import { CRISIS_INSTRUCTION } from './crisis-support.js';
 
 export const BYTE_WEB_IDENTITY = Object.freeze({
   version: 1,
@@ -55,6 +56,7 @@ export const HARD_QUESTION_POLICY = Object.freeze({
 export const WEB_SESSION_CONTEXT = Object.freeze({
   version: 1,
   instructions: [
+    CRISIS_INSTRUCTION,
     'WEB SESSION — this is not a telephone call. A visitor on bitesites.org chose to start a live voice session with you. They can see the screen, and they can mute or leave at any moment.',
     'Open like a person meeting someone at the door: a short greeting, one line of who you are, then ask what brought them in. Never open with a pitch.',
     'This is inbound. Nobody was interrupted, so drop cold-call caution — be direct, curious, and generous with answers.',
