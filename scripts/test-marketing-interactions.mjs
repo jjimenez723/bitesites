@@ -5,7 +5,7 @@ import { chromium } from 'playwright';
 const base = process.env.MARKETING_TEST_URL || 'http://127.0.0.1:5174';
 const browser = await chromium.launch();
 const errors = [];
-const sections = ['system', 'services', 'industries', 'about'];
+const sections = ['system', 'services', 'industries'];
 async function safePage(options = {}) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1100 }, ...options });
   page.on('pageerror', error => errors.push(error.message));
@@ -16,7 +16,7 @@ async function safePage(options = {}) {
     if (url.origin !== new URL(base).origin && !['fonts.googleapis.com', 'fonts.gstatic.com'].includes(url.hostname)) return route.abort();
     return route.continue();
   });
-  await page.goto(base, { waitUntil: 'domcontentloaded' });
+  await page.goto(`${base}/services`, { waitUntil: 'domcontentloaded' });
   await page.locator('.system-card').first().waitFor();
   await page.evaluate(() => document.fonts.ready);
   return page;
@@ -24,16 +24,19 @@ async function safePage(options = {}) {
 
 try {
   const page = await safePage();
-  assert.equal(await page.locator('.holo-card').count(), 22);
+  assert.equal(await page.locator('main, body').first().evaluate(el => el.innerText.includes('\u2197')), false, 'No up-right arrow glyphs on /services');
   for (const section of sections) {
     const card = page.locator(`#${section} .holo-card`).first();
     await card.scrollIntoViewIfNeeded();
+    await page.waitForTimeout(800); // Let the .7s reveal finish: a card sliding in can leave a still pointer behind.
     const before = await card.evaluate(el => getComputedStyle(el).transform);
     await card.hover({ position: { x: 40, y: 40 } });
     await page.waitForFunction(selector => document.querySelector(selector)?.dataset.tracking === 'true', `#${section} .holo-card`);
     await page.waitForTimeout(400);
     assert.notEqual(await card.evaluate(el => getComputedStyle(el).transform), before, `${section} tilts on pointer movement`);
-    assert.ok(Number(await card.evaluate(el => getComputedStyle(el, '::before').opacity)) > .15, `${section} shows foil`);
+    const foil = () => page.waitForFunction(selector => Number(getComputedStyle(document.querySelector(selector), '::before').opacity) > .15, `#${section} .holo-card`, { timeout: 2000 });
+    // A still test pointer can lose :hover if the page shifts; a real mouse moves and regains it.
+    await foil().catch(async () => { await card.hover({ position: { x: 44, y: 44 } }); await foil(); });
     await page.mouse.move(1, 1);
     assert.equal(await card.getAttribute('data-tracking'), null, `${section} resets after leaving`);
   }
@@ -44,7 +47,7 @@ try {
   assert.equal(await systemLink.evaluate(el => getComputedStyle(el).outlineStyle), 'solid');
   await page.keyboard.press('Enter');
   await page.waitForURL('**/services/websites-local-seo');
-  await page.goBack();
+  await page.goto(base, { waitUntil: 'domcontentloaded' });
   await page.locator('.recovery-path li').first().waitFor();
   assert.equal(await page.locator('.recovery-path li').count(), 4, 'Recovery section shows a four-step path');
   assert.equal(await page.locator('.holo-card-link, .recovery-step-arrow').count(), 0, 'Cards carry no corner arrows');
@@ -59,6 +62,7 @@ try {
   }
 
   await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto(`${base}/services`, { waitUntil: 'domcontentloaded' });
   await systemLink.hover();
   assert.equal(await systemLink.getAttribute('data-tracking'), null);
   assert.equal(await systemLink.evaluate(el => getComputedStyle(el).transform), 'none');
@@ -84,15 +88,17 @@ try {
   await page.locator('.system-card').first().hover({ position: { x: 70, y: 65 } });
   await page.waitForTimeout(450);
   await page.locator('#system').screenshot({ path: '/tmp/bitesites-holo-desktop-hover.png', animations: 'allow' });
+  await page.goto(base, { waitUntil: 'domcontentloaded' });
+  await page.locator('.recovery-path li').first().waitFor();
   // Sticky audit CTA: hidden on the first screen, shown further down, steps aside for the form.
   await page.evaluate(() => scrollTo(0, 0));
   await page.waitForTimeout(300);
   assert.equal(await page.locator('.sticky-audit-cta.is-shown').count(), 0, 'Sticky CTA waits until the visitor scrolls');
-  await page.locator('#industries').scrollIntoViewIfNeeded();
+  await page.locator('#pricing').scrollIntoViewIfNeeded();
   await page.locator('.sticky-audit-cta.is-shown').waitFor();
   await page.locator('#start').scrollIntoViewIfNeeded();
   await page.waitForFunction(() => !document.querySelector('.sticky-audit-cta').classList.contains('is-shown'));
-  for (const path of ['/faq', '/pricing', '/services/lead-recovery']) {
+  for (const path of ['/faq', '/pricing', '/services', '/services/lead-recovery']) {
     await page.goto(`${base}${path}`);
     await page.evaluate(() => scrollTo(0, document.body.scrollHeight / 2));
     const cta = page.locator('.sticky-audit-cta.is-shown');
@@ -102,15 +108,17 @@ try {
   await page.close();
 
   const touch = await safePage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  await touch.goto(base, { waitUntil: 'domcontentloaded' });
   await touch.locator('.revenue-values summary').first().tap();
   assert.equal(await touch.locator('.revenue-values details').first().evaluate(el => el.open), true);
   assert.equal(await touch.locator('.holo-card[data-tracking]').count(), 0, 'Touch does not trigger sticky tilt');
+  await touch.goto(`${base}/services`, { waitUntil: 'domcontentloaded' });
   await touch.locator('.industry-card').first().tap();
   await touch.waitForURL('**/#start');
   assert.equal(await touch.getByRole('checkbox', { name: /Custom AI project/ }).count(), 1);
   await touch.close();
   assert.deepEqual(errors, []);
-  console.log('PASS: All four card sections have pointer effects; recovery path renders, no corner arrows, About works by keyboard/touch; links work; reduced motion, 7 responsive widths and console checks passed. Screenshots saved in /tmp/bitesites-holo-*.png.');
+  console.log('PASS: All three /services card sections have pointer effects; recovery path renders, no corner arrows, About works by keyboard/touch; links work; reduced motion, 7 responsive widths and console checks passed. Screenshots saved in /tmp/bitesites-holo-*.png.');
 } finally {
   await browser.close();
 }

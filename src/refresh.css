@@ -74,11 +74,10 @@ body { background: #fff; }
 .revenue-steps { gap: 16px; margin: 44px 0 36px; }
 .revenue-steps .system-card.holo-card {
   --tile: linear-gradient(150deg, #3d7bff, #1d3fc4);
-  min-height: 250px;
+  min-height: 280px;
   padding: 28px;
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
   gap: 8px;
   overflow: hidden;
   border: 0;
@@ -91,25 +90,9 @@ body { background: #fff; }
 .revenue-steps .system-card[data-tone="teal"] { --tile: linear-gradient(150deg, #22c3ad, #0b6f66); }
 .revenue-steps .system-card[data-tone="rose"] { --tile: linear-gradient(150deg, #ff7bb0, #c0186a); }
 .revenue-steps .system-card::after { opacity: .15; }
-.system-card-number {
-  position: absolute;
-  top: 12px;
-  right: 20px;
-  font-family: var(--font-sans);
-  font-size: 104px;
-  font-weight: 800;
-  line-height: 1;
-  letter-spacing: -.05em;
-  color: rgba(255, 255, 255, .16);
-}
-.revenue-steps .system-card .holo-icon {
-  position: absolute;
-  top: 28px;
-  left: 28px;
-  background: rgba(255, 255, 255, .16);
-  border-color: rgba(255, 255, 255, .28);
-  color: #fff;
-}
+.system-card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: auto; padding-bottom: 28px; }
+.system-card-icon { display: block; width: 72px; height: 72px; flex: none; }
+.system-card-number { padding: 4px 10px; border: 1px solid rgba(255, 255, 255, .4); border-radius: 999px; font-size: 12px; font-weight: 700; line-height: 1.4; letter-spacing: .08em; color: #fff; }
 .revenue-steps .system-card h3 { margin: 0; font-size: clamp(26px, 2.4vw, 32px); font-weight: 800; letter-spacing: -.02em; line-height: 1.1; color: #fff; }
 .revenue-steps .system-card strong { font-size: 15px; font-weight: 500; line-height: 1.5; color: rgba(255, 255, 255, .88); }
 .system-card-tags { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
@@ -196,7 +179,6 @@ body { background: #fff; }
 @media (max-width: 560px) {
   .revenue-steps .system-card.holo-card { min-height: 200px; padding: 24px; }
   .revenue-steps .system-card .holo-icon { top: 24px; left: 24px; }
-  .system-card-number { font-size: 84px; }
   .recovery-path li { grid-template-columns: 46px 1fr; gap: 16px; padding: 16px 16px 16px 16px; }
   .recovery-path-icon { width: 46px; height: 46px; border-radius: 14px; }
   .recovery-path li:not(:last-child)::after { left: calc(16px + 23px - 1px); }
@@ -268,4 +250,48 @@ body { background: #fff; }
 .portfolio-project .project-number {
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
+}
+
+/* Homepage footer: keeps a crawlable link to every service page. */
+.footer-services { grid-column: 1 / -1; flex-basis: 100%; display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 22px; margin-top: 12px; font-size: 13px; }
+.footer-services a { color: var(--dim); }
+.footer-services a:hover { color: var(--text); }
+
+/* /services */
+.services-overview-intro { padding-top: clamp(40px, 7vw, 88px); padding-bottom: clamp(24px, 4vw, 48px); }
+.services-overview-intro h1 { font-family: var(--font-sans); font-weight: 800; letter-spacing: -.035em; line-height: 1; font-size: clamp(44px, 7vw, 88px); margin: 12px 0 18px; }
+.services-overview-intro .lead { max-width: 640px; }
+.revenue-card-actions a:not(.text-link) { color: inherit; font-size: 12px; text-decoration: underline; text-underline-offset: 3px; }
+.services-overview-intro .revenue-breadcrumb { display: flex; justify-content: flex-start; gap: 8px; margin: 0 0 18px; }
+.services-overview .services-section .section-head h2 { color: #fff; }
+.services-overview .services-section .section-head p { color: #d5dcf1; }
+/* Grid rows only: the phone footer is a flex column and already stacks in order. */
+.site-footer .footer-services { grid-row: 2; }
+.site-footer .footer-social { grid-row: 3; }
+.site-footer .footer-copy { grid-row: 4; }
+
+/* Custom icons: colors per background. See CustomIcons.jsx. */
+.ci { display: block; width: 100%; height: 100%; overflow: visible; --ci-soft: rgba(var(--holo-rgb, 68, 116, 231), .16); --ci-acc: var(--holo-accent, #315ecc); --ci-on: #fff; color: #16213a; }
+.ci-soft { fill: var(--ci-soft); }
+.ci-acc { fill: var(--ci-acc); }
+.ci-on { stroke: var(--ci-on); fill: none; }
+.system-card-icon .ci { --ci-soft: rgba(255, 255, 255, .2); --ci-acc: #ffd866; --ci-on: #16213a; color: #fff; }
+.holo-icon .ci { width: 100%; height: 100%; }
+.revenue-services .holo-icon { width: 72px; height: 72px; padding: 10px; border-radius: 20px; }
+.industry-list .holo-icon { width: 84px; height: 84px; padding: 13px; border-radius: 24px; }
+.industry-list .holo-icon .ci { --ci-soft: rgba(255, 255, 255, .2); --ci-acc: #ffd866; --ci-on: #16213a; color: #fff; }
+
+/* Custom icons on the homepage. */
+.project-service-icon { width: 60px; height: 60px; }
+.project-service--web { --holo-rgb: 0, 113, 210; --holo-accent: #0071d2; }
+.project-service--ai { --holo-rgb: 116, 53, 206; --holo-accent: #7435ce; }
+.project-service--social { --holo-rgb: 188, 56, 124; --holo-accent: #bc387c; }
+.project-service--custom { --holo-rgb: 20, 132, 120; --holo-accent: #148478; }
+.recovery-path-icon { padding: 9px; }
+.recovery-path-icon .ci { --ci-soft: rgba(255, 255, 255, .2); --ci-acc: #ffd866; --ci-on: #16213a; color: #fff; }
+.reactivation-sources li > span { width: 60px; height: 60px; padding: 9px; --holo-rgb: 124, 58, 237; --holo-accent: #7c3aed; }
+.revenue-values .holo-icon { width: 64px; height: 64px; padding: 9px; border-radius: 18px; }
+@media (max-width: 560px) {
+  .project-service-icon { width: 46px; height: 46px; }
+  .recovery-path-icon { padding: 7px; }
 }

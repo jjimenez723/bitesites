@@ -9,7 +9,7 @@ import { metadataForPath } from '../src/content/seo.js';
 
 const dist = resolve(process.argv[2] || fileURLToPath(new URL('../dist', import.meta.url)));
 const read = file => readFile(resolve(dist, file), 'utf8');
-const routes = ['/', '/pricing', '/faq', ...revenueServices.map(service => `/services/${service.slug}`)];
+const routes = ['/', '/services', '/pricing', '/faq', ...revenueServices.map(service => `/services/${service.slug}`)];
 for (const route of routes) {
   const html = await read(route === '/' ? 'index.html' : `${route.slice(1)}.html`);
   const meta = metadataForPath(route);

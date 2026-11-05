@@ -51,7 +51,13 @@ export function metadataForPath(pathname) {
   if (service) return {
     title: `${({ ai: 'Voice AI Receptionists & AI Phone Agents', consulting: 'AI Consulting for Local & Small Businesses' })[service.key] || service.heading} | BiteSites`,
     description: service.description, canonical: `${SITE_URL}${route}`,
-    schema: { '@context': 'https://schema.org', '@graph': [organization, serviceSchema(service), breadcrumbSchema([['Home', '/'], ['Services', '/#services'], [service.label, route]])] }
+    schema: { '@context': 'https://schema.org', '@graph': [organization, serviceSchema(service), breadcrumbSchema([['Home', '/'], ['Services', '/services'], [service.label, route]])] }
+  };
+  if (route === '/services') return {
+    title: 'Services: Websites, Local SEO, AI Receptionists & Lead Recovery | BiteSites',
+    description: 'See what BiteSites builds for local businesses: websites, local SEO, lead recovery, AI receptionists, follow-up automation, revenue tracking, and AI consulting.',
+    canonical: `${SITE_URL}/services`,
+    schema: { '@context': 'https://schema.org', '@graph': [organization, breadcrumbSchema([['Home', '/'], ['Services', '/services']]), ...revenueServices.map(serviceSchema)] }
   };
   if (route === '/pricing') return {
     title: 'Website & Revenue System Pricing | BiteSites',

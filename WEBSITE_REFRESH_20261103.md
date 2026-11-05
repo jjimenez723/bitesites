@@ -195,6 +195,41 @@ off screen and resume on screen, portfolio videos play on screen, with no page
 errors. The ten-route check at 1440, 375 and 320px was repeated with no new
 findings. The owner has not yet confirmed the scroll feel.
 
+## Round 5: simpler homepage, new `/services` page
+
+Owner request: keep the homepage to the sections they like and move the rest off it.
+
+- **Homepage order:** hero, form, portfolio, consultation, nobody answers,
+  reactivation, Byte & Bit, pricing, about, team, final CTA. Team was not in the
+  owner's list and stayed by default; that is theirs to confirm.
+- **New `/services` page:** "One system. Six places", "Fix the gap" and "Built for
+  businesses" moved here. Service cards lost their bullets, which repeat on each
+  service page. The page is in the sitemap, `llms.txt` and the prerender.
+- **Service detail modal removed.** "Discuss your project" now links to
+  `/?service=<key>#start`, which pre-selects the form as the modal did.
+- **Links:** the homepage footer now lists all six service pages, so they stay one
+  click from the homepage. "The System" left the top menu. Old `#system`,
+  `#services` and `#industries` links redirect to `/services`, which also covers
+  Bit's `/#services` link in `functions/bit-persona.js` without a Functions deploy.
+
+- **Custom icons:** 33 hand-drawn SVGs in `src/components/CustomIcons.jsx`: 18 on
+  `/services` (steps, services, industries) and 15 on the homepage (form, recovery
+  path, reactivation, About), with no repeats. `RevenueIcon` and the form's
+  `ServiceIcon` were removed. Controls (arrows, checkmarks, mic) and the Byte and
+  Bit mascots were left alone. Drawn in code, not Canva, so they
+  stay sharp and take their colors from each card. The six-step tiles no longer
+  float a large number behind the text: icon and a small numbered pill share a top row.
+
+- **Hover test:** the card hover check failed about 1 run in 8 on `/services`. In the
+  one failure captured, the still test pointer had lost `:hover` while the card sat
+  at the expected spot. The exact trigger was not proven. The test now waits out the
+  reveal and re-hovers once, as a moving mouse would; it then passed 10 of 10.
+
+Homepage visible text fell from about 1,990 words to about 1,390 and its height
+from 15,478px to 11,797px at 1440px wide. That content moved rather than
+disappeared, but the homepage now says less about individual services. Rankings
+cannot be verified from here.
+
 ## Status
 
 Merged to `main` as `20fde8f` (PR #7) and published to Firebase Hosting on

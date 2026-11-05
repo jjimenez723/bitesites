@@ -117,10 +117,10 @@ try {
 
   await page.goto(base, { waitUntil: 'domcontentloaded' });
   await page.locator('#start').screenshot({ path: '/tmp/bitesites-intake-mobile.png' });
-  // Existing service modal still seeds the new form.
-  await page.getByRole('button', { name: 'Discuss Websites & local visibility', exact: true }).click();
-  await page.getByRole('dialog').getByRole('link', { name: 'Start Your Project' }).click();
-  assert.equal(await page.getByRole('checkbox', { name: /Web development/ }).isChecked(), true);
+  // A service card on /services seeds the homepage form.
+  await page.goto(`${base}/services`, { waitUntil: 'domcontentloaded' });
+  await page.getByRole('link', { name: 'Discuss Websites & local visibility', exact: true }).click();
+  await page.getByRole('checkbox', { name: /Web development/, checked: true }).waitFor();
   await next(); await choice(/Just me/); await next(); await choice(/Just exploring/); await next();
   await page.getByRole('button', { name: 'Skip for now' }).click();
   await page.getByRole('textbox', { name: 'Name', exact: true }).fill('Email Client');
@@ -192,10 +192,19 @@ try {
   assert.equal(await page.title(), homeMeta.title);
   assert.equal(await page.locator('link[rel="canonical"]').getAttribute('href'), 'https://bitesites.org/');
   assert.equal(await page.locator('h1').count(), 1);
+  assert.equal(await page.locator('.revenue-steps, .revenue-services, #industries').count(), 0, 'Moved sections stay off the homepage');
+  assert.equal(await page.locator(`.footer-services a`).count(), revenueServices.length, 'Homepage still links every service page');
+  await page.locator('.hero a[href="/services"]').click();
+  await page.waitForURL('**/services');
+  await page.locator('.revenue-steps').waitFor();
   assert.equal(await page.locator('.revenue-steps li').count(), 6);
   assert.equal(await page.locator('.revenue-services .service-card').count(), revenueServices.length);
-  await page.locator('.hero a[href="#system"]').click();
-  assert.match(page.url(), /#system$/);
+  assert.equal(await page.locator('#industries').count(), 1);
+  assert.equal(await page.locator('h1').count(), 1);
+  for (const anchor of ['#system', '#services', '#industries']) {
+    await page.goto(`${base}/${anchor}`);
+    await page.waitForURL('**/services');
+  }
   for (const width of [320, 390, 768, 900, 1024, 1280, 1440]) {
     await page.setViewportSize({ width, height: 950 });
     await page.goto(base);

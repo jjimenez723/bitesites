@@ -57,6 +57,8 @@ try {
     const html = withMetadata(template, metadataForPath(`/services/${service.slug}`)).replace('<div id="root"></div>', () => `<div id="root">${renderToStaticMarkup(React.createElement(ServicePage, { service }))}</div>`);
     await writeFile(path.join(dist, 'services', `${service.slug}.html`), html);
   }
+  const { default: ServicesOverview } = await vite.ssrLoadModule('/src/pages/ServicesOverview.jsx');
+  await writeFile(path.join(dist, 'services.html'), withMetadata(template, metadataForPath('/services')).replace('<div id="root"></div>', () => `<div id="root">${renderToStaticMarkup(React.createElement(ServicesOverview))}</div>`));
   const { default: Pricing } = await vite.ssrLoadModule('/src/pages/Pricing.jsx');
   await writeFile(path.join(dist, 'pricing.html'), withMetadata(template, metadataForPath('/pricing')).replace('<div id="root"></div>', () => `<div id="root">${renderToStaticMarkup(React.createElement(Pricing))}</div>`));
   const { default: Faq } = await vite.ssrLoadModule('/src/pages/Faq.jsx');
@@ -73,6 +75,7 @@ try {
     '# BiteSites', '',
     `> ${positioning.about}`, '',
     '## Services',
+    `- [All services](${SITE_URL}/services): what BiteSites builds and who it helps`,
     ...revenueServices.map(service => `- [${service.label}](${SITE_URL}/services/${service.slug}): ${service.description}`), '',
     '## Key pages',
     `- [Free revenue leak audit](${SITE_URL}/#start): five-step project and audit request form`,
