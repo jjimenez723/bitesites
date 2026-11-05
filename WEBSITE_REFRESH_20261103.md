@@ -187,6 +187,14 @@ canonical tag points to the homepage, which limits the SEO cost.
 
 All four marketing suites and the build check pass on this code.
 
+Merged as `ce5abb3` (PR #8) and published to Firebase Hosting on November 4, 2026
+(evening, Eastern), on the owner's approval and without a second reviewer. Hosting
+only. CI passed on the PR. Verified on `https://bitesites.org`: both domains serve
+the new bundle, `test-marketing-built.mjs` passed, and in a browser sections pause
+off screen and resume on screen, portfolio videos play on screen, with no page
+errors. The ten-route check at 1440, 375 and 320px was repeated with no new
+findings. The owner has not yet confirmed the scroll feel.
+
 ## Status
 
 Merged to `main` as `20fde8f` (PR #7) and published to Firebase Hosting on
