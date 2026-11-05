@@ -1,5 +1,7 @@
 # Outbound owner checklist
 
+> **🚧 IN PROGRESS** — 2026-11-05 — rep onboarding: welcome link, lessons, pricing, quiz, yes/no practice calls — `functions/rep-training.js`, `functions/rep-course.js`, `functions/hybrid-dialer-api.js`, `src/admin/outbound/RepTraining.jsx`, `src/pages/Join.jsx`
+
 Last updated: 2026-10-29
 
 Current October 29 checkpoint: David's BiteSites training exemption and original
