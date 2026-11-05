@@ -144,6 +144,49 @@ The Firestore emulator needs Java, which this machine does not have, so these
 fixture changes and the emulator suites are verified by CI only. The 18 later
 suites that need no emulator passed locally.
 
+## Round 4: scroll performance
+
+The owner reported slow, sluggish scrolling on the live site. Fixes:
+
+- `src/lib/pause-offscreen.js` marks off-screen homepage sections; `refresh.css`
+  pauses their looping animations. Several run on the main thread (SVG mascots,
+  animated shadows), so they were competing with scrolling from anywhere on the page.
+- The Byte waveform canvas stops drawing while off screen.
+- Removed the `blur(10px)` on the moving color field behind the form. It came
+  from Round 1, and the gradients are already soft.
+- Removed backdrop blur from the scrolled header (94% white, so barely visible)
+  and from the portfolio arrows and project numbers, which sit over playing video.
+- Portfolio videos now start once the section is on screen. They started a quarter
+  screen early, which became a problem when Round 3 moved the portfolio up.
+
+Measured on the old and new builds side by side: Chrome, 1440×900 at 2x, CPU
+throttled 4x, one full wheel scroll, median of three runs.
+
+| | Before | After |
+|---|---|---|
+| Main-thread work | 11.5s | 7.6s |
+| Layout passes | 1,113 | 293 |
+| Paint passes | 3,614 | 1,326 |
+| Animations running at page end | 32 | 1 |
+| Frames per second | 57.9 | 58.6 |
+
+Frame rate barely moved because this test machine was already near 60 in headless
+Chrome, so the result is less work per scroll, not a measured frame-rate gain. The
+first scroll of a fresh browser was much slower in both early runs (about 26 fps
+once, and 30 fps in the hero) and was not compared before and after. It has not
+been confirmed on the owner's screen. A full scroll still downloads 14.5 MB of
+video; the change delays it, it does not shrink it.
+
+Health check of the live site (Nov 4, before this change): ten routes at 1440, 375
+and 320px had no console errors, failed same-origin requests, broken images or
+sideways scrolling, and 16 internal links returned 200. External services were
+blocked during the check, so forms, booking and Bit were not exercised.
+
+Known and left alone: unknown URLs return the homepage with a 200, not a 404. The
+canonical tag points to the homepage, which limits the SEO cost.
+
+All four marketing suites and the build check pass on this code.
+
 ## Status
 
 Merged to `main` as `20fde8f` (PR #7) and published to Firebase Hosting on
@@ -155,7 +198,7 @@ Verified on `https://bitesites.org` after release: `test-marketing-built.mjs`
 passed against the live domain, and the sticky CTA, section order, four social
 links and no sideways scrolling were checked in a browser at one desktop width.
 No up-right arrows remain. Plain right arrows (→) remain on text links and
-were left in place. Phone widths were not rechecked on the live domain.
+were left in place. Phone widths were rechecked on the live domain in Round 4.
 
 ## Open: Bit is down until OpenAI credits are added
 
