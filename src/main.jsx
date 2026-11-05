@@ -14,16 +14,15 @@ import Faq from './pages/Faq';
 import ProjectIntake from './components/ProjectIntake';
 import PageMetadata from './components/PageMetadata';
 import { positioning, revenueServices } from './content/revenue';
-import { RevenueSystem, LeadRecovery, ExistingOpportunities, WhoWeHelp, MoreThanAWebsite, AboutValues } from './components/RevenueSections';
-import HoloCard, { RevenueIcon } from './components/HoloCard';
+import { LeadRecovery, ExistingOpportunities, MoreThanAWebsite, AboutValues } from './components/RevenueSections';
 import ServicePage from './pages/ServicePage';
+import ServicesOverview from './pages/ServicesOverview';
 import Pricing from './pages/Pricing';
 import { BitMascot } from './components/BitMascot';
 import MoltenBackdrop from './components/MoltenBackdrop';
 import StickyAuditCta from './components/StickyAuditCta';
 import SocialLinks from './components/SocialLinks';
 import ComingSoon from './pages/ComingSoon';
-import { MeshFieldBackdrop } from './components/MeshFieldBackdrop';
 import { TeamSection } from './components/TeamSection';
 import { ByteAvatar, VoiceAIReceptionist, VoiceReceptionistPreview } from './components/VoiceAIReceptionist';
 import { BitChatPreview } from './components/BitChatPreview';
@@ -111,11 +110,14 @@ const tickerServices = [
   'Ongoing Support & Maintenance'
 ];
 
-const navigationItems =[['The System','#system'],['Services','#services'],['Portfolio','#portfolio'],['Pricing','#pricing'],['About','#about'],['Team','#team'],['Consultation','#consultation'],['FAQ','/faq']];
+const navigationItems =[['Services','/services'],['Portfolio','#portfolio'],['Consultation','#consultation'],['Pricing','#pricing'],['About','#about'],['Team','#team'],['FAQ','/faq']];
 
-const services = revenueServices;
+// Old homepage anchors, still in Bit's replies and outside links.
+const movedAnchors = new Set(['#system', '#services', '#industries']);
 
+// /services links here with ?service=<key> to pre-select the form.
 const serviceFormValues = {
+  custom: 'Custom AI project',
   recovery: 'ai_automation',
   followup: 'ai_automation',
   tracking: 'ai_automation',
@@ -140,13 +142,6 @@ const projects = [
   { title: 'Bodega Project App MVP', video720: bodegaAppClip720, videoPortrait: bodegaAppClipPortrait, poster: bodegaAppPoster, posterPortrait: bodegaAppPosterPortrait, text: 'The product side of that research, in development with Rutgers — an MVP for the neighbour-to-neighbour half of the supply chain, linking rooftop hydroponics, community gardens, and backyard plots to people looking for fresh produce a few blocks away.', bullets: ['Harvest feed filtered by crop, with walking distance, price, and how recently it was picked', 'Local map of the growers, bodegas, and community gardens across Newark', '“My Harvest” listing flow, and CO₂e saved across the neighbourhood each week'], stack: ['Next.js', 'React', 'Tailwind CSS', 'Google Maps'], favicon: bodegaFavicon, url: 'https://jjimenez723.github.io/the-bodega-project-demo/' },
   { title: 'StockRoom NJ', video720: stockroomClip720, videoPortrait: stockroomClipPortrait, poster: stockroomPoster, posterPortrait: stockroomPosterPortrait, text: 'A hobby and collectibles shop in Wallington, NJ — cards, video games, consoles, and figures, with the counter’s real stock searchable online and every new drop live the moment it lands.', bullets: ['Live Firestore inventory, so new arrivals appear online as they hit the shelf', 'Search across product name, category, description, and price', 'Multi-photo product galleries, cart checkout, and an in-store events calendar'], stack: ['React', 'Vite', 'Firebase', 'Cloud Firestore'], favicon: stockroomFavicon, url: 'https://stockroomnj.com' }
 ];
-
-const detailCopy = {
-  ...Object.fromEntries(revenueServices.map(service => [service.key, [service.label, service.description, service.bullets]])),
-  web: ['Web Development', 'We design and build websites that turn your online presence into a working sales asset.', ['Custom site architecture, design direction, and page planning', 'Responsive development for desktop, tablet, and mobile', 'Lead forms, CRM hooks, analytics, and conversion tracking', 'Performance, accessibility, and technical SEO foundations', 'CMS or editable sections for your team', 'Launch support, QA, and optimization recommendations']],
-  social: ['Social Media Management', 'We manage the planning, production, and publishing rhythm behind your social channels so your brand stays visible and credible.', ['Monthly content planning tied to your priorities', 'Platform-specific post copy, creative direction, and scheduling', 'Brand voice guidance for consistency', 'Community management support', 'Performance reporting and recommendations', 'Coordination with website and campaign activity']],
-  ai: ['AI Automation', 'We identify repetitive work across sales, marketing, and operations, then build AI-assisted workflows that reduce manual effort and move information faster.', ['Workflow mapping to identify high-friction tasks', 'Automation design for intake, lead routing, and alerts', 'AI-assisted summarization, categorization, and response support', 'Integrations across forms, email, CRM, and project systems', 'Fallback logic, QA, and human-review checkpoints', 'Documentation so your team can maintain the system']]
-};
 
 const smoothStep = (start, end, value) => {
   const progress = Math.min(1, Math.max(0, (value - start) / (end - start)));
@@ -476,7 +471,6 @@ export function App() {
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
   const [tab, setTab] = useState('web');
-  const [modal, setModal] = useState(null);
   const [selectedServices, setSelectedServices] = useState([]);
   const [activeProject, setActiveProject] = useState(0);
   const [receptionistOpen, setReceptionistOpen] = useState(false);
@@ -542,6 +536,15 @@ export function App() {
   // the marketing page — see src/lib/analytics.js for what it records.
   useEffect(() => startAnalytics(), []);
   useEffect(() => pauseOffscreenSections(), []);
+
+  useEffect(() => {
+    const service = serviceFormValues[new URLSearchParams(window.location.search).get('service')];
+    if (service) setSelectedServices([service]);
+    const followMovedAnchor = () => { if (movedAnchors.has(window.location.hash)) navigate('/services', { replace: true }); };
+    followMovedAnchor();
+    window.addEventListener('hashchange', followMovedAnchor);
+    return () => window.removeEventListener('hashchange', followMovedAnchor);
+  }, []);
 
   useEffect(() => {
     const header = document.querySelector('.site-header');
@@ -1451,7 +1454,7 @@ export function App() {
       <Button href="#start" variant="ai" onClick={closeMenu} tabIndex={menuOpen ? undefined : -1}>Get a Free Audit</Button>
     </aside>
     <main id="top">
-      <section className="hero revenue-hero"><div className="hero-bg"><MoltenBackdrop /><div className="hero-overlay" /></div><div className="wrap hero-content"><Eyebrow gradient>{positioning.eyebrow}</Eyebrow><h1>Stop losing leads.<br /><span className="gradient-text">Turn more inquiries into customers.</span></h1><p className="lead">{positioning.description}</p><div className="hero-actions"><Button href="#start" variant="ai">Find My Revenue Leaks</Button><Button href="#system" variant="ghost">See How the System Works</Button></div><p className="revenue-trust">{positioning.trust}</p></div></section>
+      <section className="hero revenue-hero"><div className="hero-bg"><MoltenBackdrop /><div className="hero-overlay" /></div><div className="wrap hero-content"><Eyebrow gradient>{positioning.eyebrow}</Eyebrow><h1>Stop losing leads.<br /><span className="gradient-text">Turn more inquiries into customers.</span></h1><p className="lead">{positioning.description}</p><div className="hero-actions"><Button href="#start" variant="ai">Find My Revenue Leaks</Button><Button href="/services" variant="ghost">See How the System Works</Button></div><p className="revenue-trust">{positioning.trust}</p></div></section>
       <ProjectIntake selectedServices={selectedServices} setSelectedServices={setSelectedServices} />
       <section
         className={`portfolio-section ${portfolioPhase.expanded ? 'portfolio-expanded' : ''} ${portfolioPhase.story ? 'portfolio-story-visible' : ''} ${portfolioSwap ? `portfolio-swap-${portfolioSwap}` : ''}`}
@@ -1647,11 +1650,9 @@ export function App() {
         </div>
       </section>
       <div className="strip" aria-label="What we do"><div className="ticker"><div className="ticker-track">{[0, 1].map(copy => <div className="ticker-group" key={copy} aria-hidden={copy === 1 ? 'true' : undefined}>{tickerServices.map(service => <span key={service}>{service}</span>)}</div>)}</div></div></div>
-      <RevenueSystem />
-      <section className="pad services-section" id="services"><MeshFieldBackdrop /><div className="wrap"><SectionHead label="What we build" title="Fix the gap. Connect the system.">Start with the place your business loses opportunities. We connect the right website, response, automation, and reporting tools around it.</SectionHead><div className="services-grid revenue-services">{services.map((service, index) => <HoloCard as="article" className={`service-card ${service.key}`} key={service.key} tone={['blue', 'violet', 'teal', 'rose', 'blue', 'violet'][index]} tiltMax={3} hoverScale={1.015}><div className="holo-card-top"><div className="service-icon" aria-hidden="true">0{index + 1}</div><span className="holo-icon"><RevenueIcon name={['capture', 'search', 'respond', 'followup', 'tracking', 'clarity'][index]} /></span></div><p className="revenue-service-label">{service.label}</p><h3>{service.title}</h3><p className="desc">{service.description}</p><ul>{service.bullets.map(item => <li key={item}>{item}</li>)}</ul><div className="revenue-card-actions"><a className="text-link" href={`/services/${service.slug}`}>Explore {service.label} →</a><button type="button" onClick={() => setModal(service.key)} aria-label={`Discuss ${service.label}`}>Discuss your project</button></div></HoloCard>)}</div><div className="revenue-other-services"><p>Something more specific? We also build custom AI tools and manage social media.</p><a href="#start" onClick={() => setSelectedServices(['Custom AI project'])}>Custom AI projects</a><button type="button" onClick={() => setModal('social')}>Social media management</button></div></div></section>
+      <section className="pad alt" id="consultation"><div className="wrap"><SectionHead label="Consultation" title="Let’s talk through what your business needs.">Tell us what you are trying to solve. We’ll recommend the right service direction and follow up to confirm a conversation.</SectionHead><div className="segments reveal" style={{ marginTop: 0 }}>{[['01 · Tell us what you need','Share your business, goals, preferred services, and the best way to contact you.'],['02 · We review the scope','We identify the right service mix and prepare practical next steps.'],['03 · We follow up','If the fit is right, we confirm the consultation details with you directly.']].map(([title, text]) => <div className="segment" key={title}><div className="tag">{title}</div><p>{text}</p></div>)}</div><div className="hero-actions reveal"><Button href="/book" variant="ai">Schedule a free consultation</Button><Button href="#pricing" variant="ghost">See pricing</Button></div></div></section>
       <LeadRecovery />
       <ExistingOpportunities />
-      <WhoWeHelp />
       <section className="voice-receptionist-section" id="ai-receptionist" aria-labelledby="voice-receptionist-heading">
         <div className="wrap">
           <div className="agent-duo-head reveal">
@@ -1716,11 +1717,9 @@ export function App() {
       <section className="pad alt" id="pricing"><div className="wrap"><SectionHead label="Pricing" title="Invest where your business is losing opportunities.">Start with the most urgent gap, then expand the system. Create a free account to view current packages. Custom work is scoped with your team.</SectionHead><ProtectedPricing tab={tab} setTab={setTab} /><MoreThanAWebsite /><p className="revenue-pricing-link"><a href="/pricing">How pricing and project scope work →</a></p></div></section>
       <section className="pad revenue-about-section" id="about"><div className="wrap"><SectionHead label="About BiteSites" title="The website was just the beginning.">{positioning.about}</SectionHead><div className="mission reveal"><span className="about-mission-label">New Jersey roots. Nationwide reach.</span><p>A good website gets someone interested. What happens next determines whether that interest becomes a customer.</p></div><AboutValues /></div></section>
       <TeamSection />
-      <section className="pad alt" id="consultation"><div className="wrap"><SectionHead label="Consultation" title="Let’s talk through what your business needs.">Tell us what you are trying to solve. We’ll recommend the right service direction and follow up to confirm a conversation.</SectionHead><div className="segments reveal" style={{ marginTop: 0 }}>{[['01 · Tell us what you need','Share your business, goals, preferred services, and the best way to contact you.'],['02 · We review the scope','We identify the right service mix and prepare practical next steps.'],['03 · We follow up','If the fit is right, we confirm the consultation details with you directly.']].map(([title, text]) => <div className="segment" key={title}><div className="tag">{title}</div><p>{text}</p></div>)}</div><div className="hero-actions reveal"><Button href="/book" variant="ai">Schedule a free consultation</Button><Button href="#pricing" variant="ghost">See pricing</Button></div></div></section>
       <section className="pad"><div className="wrap"><div className="cta-final molten-cta reveal"><MoltenBackdrop /><Eyebrow>Find the gap worth fixing first</Eyebrow><h2>Before you buy more leads, make sure you’re not losing the ones you already have.</h2><p>We’ll review how customers find you, what happens when they call or submit a form, how follow-up works, and what you can actually track.</p><div className="hero-actions"><Button href="#start" variant="ai">Get a Free Revenue Leak Audit</Button><Button href="/book" variant="ghost">Talk to BiteSites</Button></div></div></div></section>
     </main>
-    <footer className="site-footer"><div className="wrap footer-inner"><div className="footer-links footer-links-left"><a href="#services">Services</a><a href="#about">About</a><a href="#team">Team</a><a href="#pricing">Pricing</a></div><MorphingLogo location="footer" /><div className="footer-links footer-links-right"><a href="#start">Free Audit</a><Link to="/faq">FAQ</Link><Link to="/terms">Terms</Link><Link to="/privacy">Privacy</Link></div><SocialLinks className="footer-social" /><div className="footer-copy">© 2026 BiteSites. All rights reserved.</div></div></footer>
-    {modal && <div className="modal-backdrop" onClick={() => setModal(null)}><div className="detail-panel" role="dialog" aria-modal="true" onClick={event => event.stopPropagation()}><button className="close" onClick={() => setModal(null)} aria-label="Close">×</button><div className="detail-hero"><Eyebrow gradient={modal === 'ai'}>Services</Eyebrow><h2>{detailCopy[modal][0]}</h2><p>{detailCopy[modal][1]}</p></div><div className="detail-content"><h3>What’s included</h3><ul className="detail-list">{detailCopy[modal][2].map(item => <li key={item}>{item}</li>)}</ul><div className="hero-actions"><Button href="#start" variant="ai" onClick={() => { setSelectedServices([serviceFormValues[modal]]); setModal(null); }}>Start Your Project</Button><Button href="#pricing" variant="ghost" onClick={() => { setTab(['web', 'social'].includes(modal) ? modal : 'ai'); setModal(null); }}>See pricing</Button></div></div></div></div>}
+    <footer className="site-footer"><div className="wrap footer-inner"><div className="footer-links footer-links-left"><a href="/services">Services</a><a href="#about">About</a><a href="#team">Team</a><a href="#pricing">Pricing</a></div><MorphingLogo location="footer" /><div className="footer-links footer-links-right"><a href="#start">Free Audit</a><Link to="/faq">FAQ</Link><Link to="/terms">Terms</Link><Link to="/privacy">Privacy</Link></div><nav className="footer-services" aria-label="Services">{revenueServices.map(service => <a key={service.slug} href={`/services/${service.slug}`}>{service.label}</a>)}</nav><SocialLinks className="footer-social" /><div className="footer-copy">© 2026 BiteSites. All rights reserved.</div></div></footer>
     <VoiceAIReceptionist open={voiceAgentOpen} onClose={() => setVoiceAgentOpen(false)} onComplete={() => navigate('/thank-you?source=byte', { replace: true })} />
     <StickyAuditCta href="#start" />
     {receptionistOpen && <BitChat origin={chatOrigin} initialAnswer={receptionistInitialAnswer} onClose={closeReceptionist} />}
@@ -1742,6 +1741,7 @@ if (typeof document !== 'undefined') createRoot(document.getElementById('root'))
     <PageMetadata />
     <Routes>
       <Route path="/faq" element={<Faq />} />
+      <Route path="/services" element={<ServicesOverview />} />
       <Route path="/pricing" element={<Pricing />} />
       {revenueServices.map(service => <Route key={service.slug} path={`/services/${service.slug}`} element={<ServicePage service={service} />} />)}
       <Route path="/terms" element={<Terms />} />

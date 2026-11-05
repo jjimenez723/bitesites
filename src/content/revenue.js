@@ -2,7 +2,7 @@ export const positioning = {
   eyebrow: 'Revenue systems for local businesses',
   headline: 'Stop losing leads. Turn more inquiries into customers.',
   description: 'BiteSites builds the digital systems local businesses use to get found, answer faster, follow up automatically, book more work, and track what actually drives revenue.',
-  trust: 'Websites. Local visibility. AI receptionists. Follow-up automation. Tracking. One connected system.',
+  trust: 'Websites. Local SEO. AI receptionists. Follow-up automation. Tracking. One connected system.',
   about: 'Based in New Jersey, BiteSites helps local businesses nationwide find where they lose customers, then builds the websites, visibility, response, follow-up, and tracking systems to close those gaps.'
 };
 

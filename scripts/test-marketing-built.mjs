@@ -11,7 +11,7 @@ const browser = await chromium.launch();
 try {
   const page = await browser.newPage({ javaScriptEnabled: false });
   await page.route('**/*', route => new URL(route.request().url()).origin === new URL(base).origin ? route.continue() : route.abort());
-  for (const route of ['/', '/pricing', ...revenueServices.map(service => `/services/${service.slug}`), '/faq', '/book', '/terms', '/privacy', '/thank-you', '/questionnaire', '/feedback', '/email-preferences']) {
+  for (const route of ['/', '/services', '/pricing', ...revenueServices.map(service => `/services/${service.slug}`), '/faq', '/book', '/terms', '/privacy', '/thank-you', '/questionnaire', '/feedback', '/email-preferences']) {
     const response = await page.goto(base + route);
     assert.equal(response.status(), 200, `${route} serves directly`);
     const meta = metadataForPath(route);
@@ -20,10 +20,14 @@ try {
     assert.equal(await page.locator('meta[property="og:url"]').getAttribute('content'), meta.canonical);
     if (meta.noindex) assert.equal(await page.locator('meta[name="robots"]').getAttribute('content'), 'noindex,follow');
   }
-  await page.goto(base + '/');
-  assert.match(await page.locator('h1').textContent(), /Stop losing leads/);
+  await page.goto(base + '/services');
+  assert.match(await page.locator('h1').textContent(), /What we build/);
   assert.equal(await page.locator('.revenue-steps li').count(), 6);
   assert.equal(await page.locator('.revenue-services .service-card').count(), revenueServices.length);
+  await page.goto(base + '/');
+  assert.match(await page.locator('h1').textContent(), /Stop losing leads/);
+  assert.equal(await page.locator('.revenue-steps, .revenue-services, #industries').count(), 0);
+  assert.equal(await page.locator('.footer-services a').count(), revenueServices.length);
   assert.equal(await page.locator('h1').count(), 1);
   assert.equal(await page.locator('[src^="/src/"]').count(), 0, 'SSR uses built assets');
   const homeGraph = JSON.parse(await page.locator('#site-structured-data').textContent())['@graph'];

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { submitLead } from '../lib/leads';
 import { trackEvent } from '../lib/analytics';
 import '../project-intake.css';
+import { CustomIcon } from './CustomIcons';
 
 // Custom service labels use the existing `other` + customAnswers.services lead
 // contract, keeping the exact request readable in the lead and CRM notes.
@@ -34,14 +35,7 @@ const steps = [
   ['Let’s connect', 'Your next chapter starts here.', 'Check your project summary, then tell us how to reach you.']
 ];
 
-function ServiceIcon({ type }) {
-  return <svg viewBox="0 0 40 40" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
-    {type === 'web' ? <><rect x="5" y="8" width="30" height="24" rx="5" /><path d="M5 16h30M11 12h1m3 0h1M16 21l-4 3 4 3m8-6 4 3-4 3" /></>
-      : type === 'ai' ? <><path d="m20 4 4.5 11.5L36 20l-11.5 4.5L20 36l-4.5-11.5L4 20l11.5-4.5L20 4Z" /><path d="m31 4 1.5 3.5L36 9l-3.5 1.5L31 14l-1.5-3.5L26 9l3.5-1.5L31 4Z" /></>
-        : type === 'custom' ? <><rect x="5" y="5" width="12" height="12" rx="3" /><rect x="5" y="23" width="12" height="12" rx="3" /><rect x="23" y="23" width="12" height="12" rx="3" /><path d="M29 5v12m-6-6h12" strokeLinecap="round" /></>
-        : <><rect x="6" y="5" width="28" height="25" rx="7" /><path d="m12 30-1 6 9-6M13 15a4 4 0 0 1 7-2.5 4 4 0 0 1 7 2.5c0 4-7 8-7 8s-7-4-7-8Z" /></>}
-  </svg>;
-}
+const serviceIcons = { web: 'webdev', ai: 'automate', social: 'social', custom: 'chip' };
 
 export default function ProjectIntake({ selectedServices, setSelectedServices }) {
   const navigate = useNavigate();
@@ -154,7 +148,7 @@ export default function ProjectIntake({ selectedServices, setSelectedServices })
           {step === 0 && <div className="project-options project-options--services">
             {services.map(([value, label, description, icon]) => <label className={`project-choice project-service project-service--${icon}`} key={value}>
               <input type="checkbox" name="services" value={value} checked={selectedServices.includes(value)} onChange={() => { setSelectedServices(current => current.includes(value) ? current.filter(service => service !== value) : [...current, value]); setError(''); }} />
-              <span className="project-choice-body"><span className="project-service-icon"><ServiceIcon type={icon} /></span><strong>{label}</strong><span className="project-choice-description">{description}</span><span className="project-check" aria-hidden="true">✓</span></span>
+              <span className="project-choice-body"><span className="project-service-icon"><CustomIcon name={serviceIcons[icon]} /></span><strong>{label}</strong><span className="project-choice-description">{description}</span><span className="project-check" aria-hidden="true">✓</span></span>
             </label>)}
           </div>}
           {step === 1 && <>{choices(sizes, 'businessSize')}<div className="project-fields project-business-fields">{field('businessName', 'Business / company', { autoComplete: 'organization', placeholder: 'Your business name' })}{field('roleInCompany', 'Your role', { autoComplete: 'organization-title', placeholder: 'Founder, manager, big-idea person…' })}</div></>}
