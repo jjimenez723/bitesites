@@ -260,3 +260,11 @@ OpenAI `429 You have no credits remaining`. `OPENAI_API_KEY` is set and enabled
 generic fallback. `byte-web-session`, the AI SIP dispatch, the dialer API and
 the sideband use the same secret, so they are likely affected too; that was not
 tested. Not fixed: it needs the OpenAI account owner to add credits.
+
+## Round 6 — team feedback, November 5, 2026
+
+- **Crisis support:** Bit had no crisis response, and a visitor who wrote "i want to die" got the outage message. The chat window now answers crisis statements itself with 988 call, text and chat links, before any network call, so it works while the AI is down. Those words are not sent to the model or saved to the conversation log. The server repeats the check, and Bit and Byte carry the rule in their personas; those two parts need a Functions deploy. The check is a fixed word list, so it can miss unusual phrasing.
+- **Mobile exit:** the Close button was visible and worked in an emulated iPhone, so the reported trap was not reproduced. The likely cause is that iPhones zoom into text boxes under 16px, and Bit's was 15px. The box is now 16px and the window follows the visible screen. Not confirmed on a real iPhone.
+- **Legal pages:** the Privacy and Terms pages showed `[Street address]` and `[ZIP]` placeholders. The line is now hidden until a real address is set in `src/pages/legal-details.js`. The registered entity name also still needs confirming.
+- **Not fixed here:** Clifton Ave Animal Hospital's own site has no privacy or terms links, and its code is not in this repo.
+

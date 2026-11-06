@@ -334,8 +334,7 @@ export default function Terms() {
         <address className="legal-address">
           {LEGAL.entity}
           <br />
-          {LEGAL.mailingAddress}
-          <br />
+          {LEGAL.mailingAddress && <>{LEGAL.mailingAddress}<br /></>}
           <a href={`mailto:${LEGAL.contactEmail}`}>{LEGAL.contactEmail}</a>
         </address>
       </Section>

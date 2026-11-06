@@ -438,8 +438,7 @@ export default function Privacy() {
         <address className="legal-address">
           {LEGAL.entity} — Privacy
           <br />
-          {LEGAL.mailingAddress}
-          <br />
+          {LEGAL.mailingAddress && <>{LEGAL.mailingAddress}<br /></>}
           <a href={`mailto:${LEGAL.privacyEmail}`}>{LEGAL.privacyEmail}</a>
         </address>
       </Section>
