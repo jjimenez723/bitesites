@@ -255,9 +255,10 @@ export default function Privacy() {
         <ul>
           <li>
             <strong>Service providers.</strong> Google (Firebase and Google Cloud) hosts our database
-            and authentication and stores form submissions in United States data centres. GoHighLevel
-            (LeadConnector), together with the speech and conversational AI services it uses, powers
-            the Voice AI demo and our customer relationship management. Postmark delivers our
+            and authentication and stores form submissions in United States data centres. ElevenLabs
+            powers Bit, our chat agent, and Byte, our voice agent: it processes what you type or say
+            to them so they can reply, and we set it not to keep the audio or transcript. GoHighLevel
+            (LeadConnector) powers our customer relationship management. Postmark delivers our
             account, inquiry, feedback and announcement emails and reports delivery, bounce,
             complaint and unsubscribe events. IPWHOIS.io receives an IP
             address to return an approximate city-level location for our first-party analytics; we do
