@@ -268,7 +268,7 @@ tested. Not fixed: it needs the OpenAI account owner to add credits.
 - **Legal pages:** the Privacy and Terms pages showed `[Street address]` and `[ZIP]` placeholders. The line is now hidden until a real address is set in `src/pages/legal-details.js`. The registered entity name also still needs confirming.
 - **Not fixed here:** Clifton Ave Animal Hospital's own site has no privacy or terms links, and its code is not in this repo.
 
-## Round 7: Bit and Byte moved to ElevenLabs (built 2026-11-06, not deployed)
+## Round 7: Bit and Byte moved to ElevenLabs (live 2026-11-06)
 
 Bit failed because the OpenAI account had no credits. Each failed message also retried three times before showing the outage reply, and Byte runs on the same account. Every Bit and Byte function scaled to zero, so the first visitor after a quiet spell waited several seconds for a cold start.
 
@@ -279,4 +279,11 @@ Bit failed because the OpenAI account had no credits. Each failed message also r
 - **Speed:** the four public functions keep one warm instance (`minInstances: 1`), which adds a small monthly charge.
 - **Privacy:** the Privacy page now names ElevenLabs for Bit and Byte instead of GoHighLevel.
 - **Tested on the real service:** a five-turn Bit chat took 1.6 to 3.6 seconds per reply, with pricing, knowledge and availability tools and a hold, and refused to print its prompt. Tool results were stubbed for that test, so no booking was made. Byte connected in a real browser in 1.6 seconds and spoke its greeting using a fake microphone.
-- **Not tested:** nobody has spoken to Byte with a real microphone, the warm-instance speedup is unmeasured, and `test:bit-chat` and `test:byte-web` were updated but need Java, so only CI can run them.
+- **Released:** PR 11 merged with CI passing, including `test:bit-chat` (55/55) and `test:byte-web` (37/37). Hosting and `bitChatSession`, `bitChatTurn`, `byteWebSession`, `byteWebTools` were deployed. This also put the server crisis check and the Bit and Byte crisis rule live. No dialing function was deployed.
+- **Live check:** on bitesites.org with an emulated iPhone, Bit answered in about 3 seconds. Byte started speaking about 2.7 seconds after the tap, using a fake microphone, and the call ended cleanly. The server returned the 988 card for a crisis message.
+- **Not tested:** nobody has spoken to Byte with a real microphone, and no real booking was made through the new agents.
+- **Prices (added 2026-11-06, owner approved):** `pricingBook/default` now holds starting prices for `websites`, `social`, `automation` and `leads`, copied from `SERVICE_PRICING` in `functions/index.js`. Live Bit quoted websites, social and automation correctly, refused a $1,500 Growth Site, and declined to guess a voice agent price. Byte's price tool returned the same four entries, but Byte has not been heard saying them on a real call.
+- **Prices are now public through Bit and Byte:** `SERVICE_PRICING` is still kept out of the public HTML and only shown to signed-in users, but any visitor can now get these numbers by asking Bit or Byte.
+- **Two copies of the prices:** `SERVICE_PRICING` and `pricingBook/default` are separate. A price change must be made in both.
+- **Services with no price:** `voice_agents`, `seo`, `custom_os`, `ai_optimization`, `nfc`, `photography`, `drone`, `models` and `fonts` have no entry, so the agents explain what drives the cost and offer a call.
+- **AI calling:** the phone agent reads the same document if a BiteSites profile allows quoting. AI calling is off, and the other two sellers are blocked from quoting by `agent-runtime.js`.
