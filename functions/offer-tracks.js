@@ -6,8 +6,9 @@
 // the service exists without freelancing details it cannot support.
 //
 // Nothing in this file may promise an outcome. Tracks describe capability,
-// discovery questions, and the honest next step. Pricing, timelines, and
-// guarantees always belong to a human specialist.
+// discovery questions, and the honest next step. Timelines and guarantees
+// always belong to a human specialist. Prices come only from pricingBook/default,
+// and a specialist confirms the final number.
 
 const track = definition => Object.freeze({
   ...definition,

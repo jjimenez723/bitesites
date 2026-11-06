@@ -1485,6 +1485,8 @@ export const importVoiceHistory = onRequest(
 // Pricing is deliberately server-side. A signed-out visitor receives no prices
 // in the HTML or JavaScript bundle; authenticated users fetch this object through
 // getServicePricing after Firebase has verified their ID token.
+// Bit and Byte quote starting prices to signed-out visitors from a separate copy
+// in pricingBook/default, so a price change must be made in both places.
 const SERVICE_PRICING = {
   web: [
     ['Starter Site', 'A sharp single-page site for early-stage launches or service businesses that need credibility fast.', 'From $1,000', ['Single-page site', 'Responsive design', 'Basic SEO', 'One revision']],
