@@ -7,7 +7,7 @@
 // and the lead a session produces has the same shape the GoHighLevel webhook
 // writes — one lead per session no matter how many times the model retries.
 //
-// OpenAI is stubbed at globalThis.fetch; nothing here leaves the machine.
+// ElevenLabs is stubbed at globalThis.fetch; nothing here leaves the machine.
 
 process.env.GCLOUD_PROJECT = 'demo-bitesites';
 
@@ -21,16 +21,8 @@ const db = getFirestore();
 
 const realFetch = globalThis.fetch;
 globalThis.fetch = async (url, options) => {
-  if (String(url).includes('api.openai.com/v1/realtime/client_secrets')) {
-    const session = JSON.parse(options.body).session;
-    return {
-      ok: true,
-      status: 200,
-      text: async () => JSON.stringify({
-        value: `cs_test_${session.model}`,
-        expires_at: Math.floor(Date.now() / 1000) + 600
-      })
-    };
+  if (String(url).includes('api.elevenlabs.io/v1/convai/conversation/get-signed-url')) {
+    return { ok: true, status: 200, json: async () => ({ signed_url: 'wss://stub.test/byte?conversation_signature=x' }) };
   }
   return realFetch(url, options);
 };
@@ -69,9 +61,9 @@ console.log('\nminting');
 
 check('rejects GET', (await mint({}, { method: 'GET' })).code === 405);
 
-delete process.env.OPENAI_API_KEY;
+delete process.env.ELEVENLABS_API_KEY;
 check('refuses to mint without an OpenAI key', (await mint()).code === 503);
-process.env.OPENAI_API_KEY = 'sk-test-not-a-real-key';
+process.env.ELEVENLABS_API_KEY = 'test-not-a-real-key';
 
 // The concurrency ceiling is the wallet guard: 12 live sessions refuse a 13th.
 const fakeLive = [];
@@ -85,13 +77,13 @@ check('refuses a 13th concurrent session', atCapacity.code === 429 && atCapacity
 await Promise.all(fakeLive.map(ref => ref.delete()));
 
 const bookingCall = await db.collection('calls').add({
-  agent: 'byte', channel: 'voice', status: 'open', provider: 'openai',
+  agent: 'byte', channel: 'voice', status: 'open', provider: 'elevenlabs',
   sid: 'sid-test', path: '/', startedAt: Timestamp.now()
 });
 
 const first = await mint({ callId: bookingCall.id, sid: 'sid-test', path: '/' });
-check('mints a session', first.code === 200 && Boolean(first.body?.clientSecret));
-check('client secret comes from the stubbed OpenAI call', String(first.body?.clientSecret).startsWith('cs_test_'));
+check('mints a session', first.code === 200 && Boolean(first.body?.signedUrl));
+check('the voice link comes from the stubbed ElevenLabs call', String(first.body?.signedUrl).startsWith('wss://stub.test/'));
 const s1 = first.body;
 const s1Doc = await db.doc(`webVoiceSessions/${s1.sessionId}`).get();
 check('session doc is live with the tool grant list',
@@ -155,7 +147,7 @@ const leadId = reachable.body.leadId;
 let lead = await db.doc(`leads/${leadId}`).get();
 check('lead carries the byte_voice shape', lead.get('source') === 'byte_voice'
   && lead.get('email') === 'dana@example.com'
-  && lead.get('voice')?.provider === 'openai_realtime'
+  && lead.get('voice')?.provider === 'elevenlabs_voice'
   && lead.get('voice')?.providerCallId === `web_${s1.sessionId}`
   && lead.get('voice')?.callId === bookingCall.id);
 check('earlier details merged in', lead.get('name') === 'Dana' && lead.get('projectDetails') === 'a site that books jobs');

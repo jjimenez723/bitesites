@@ -4,7 +4,7 @@
 //
 //   POST /api/bit-session — open one short-lived chat session for a browser
 //     and hand back a bearer token. Nothing about the persona, the tools, or
-//     the OpenAI key crosses to the client.
+//     the ElevenLabs key crosses to the client.
 //
 //   POST /api/bit-chat — take one visitor message and return Bit's reply.
 //
@@ -12,7 +12,7 @@
 // in the browser over WebRTC and relays tool calls back to the server, because
 // realtime audio has to live where the microphone is. A text agent has no such
 // excuse, so the whole loop runs here: the conversation history is server-
-// owned, the model is called from this process, tools execute in-process, and
+// owned, the agent is reached from this process, tools execute in-process, and
 // the browser receives finished text. A client cannot rewrite Bit's memory,
 // forge a tool result, replay a booking, or read the system prompt — because
 // it never holds any of them.
@@ -43,8 +43,10 @@ import {
   requestRating, saveContactDetails, text, webCalendarClient
 } from './web-agent-tools.js';
 import { CRISIS_CARD, CRISIS_MESSAGES, isCrisisMessage } from './crisis-support.js';
+import { BIT_HISTORY_VARIABLE, runAgentTurn } from './bit-agent-turn.js';
+import { WEB_AGENT_IDS } from './web-agent-ids.js';
 
-const OPENAI_API_KEY = defineSecret('OPENAI_API_KEY');
+const ELEVENLABS_API_KEY = defineSecret('ELEVENLABS_API_KEY');
 const GOOGLE_CALENDAR_CREDENTIALS = defineSecret('GOOGLE_CALENDAR_CREDENTIALS');
 
 const HOUR_MS = 3600_000;
@@ -58,13 +60,11 @@ const MAX_VISITOR_TURNS = 40;
 const MAX_TOOL_CALLS = 60;
 const MAX_MESSAGE_CHARS = 2000;
 
-/** Guards against a tool loop: eight model calls is a generous real turn. */
-const MAX_MODEL_CALLS_PER_TURN = 8;
+/** Guards against a tool loop: eight tools is a generous real turn. */
+const MAX_TOOLS_PER_TURN = 8;
 /** Whole-turn deadline, well inside the function timeout. */
 const TURN_DEADLINE_MS = 50_000;
-/** One model call's own ceiling, so a hung socket cannot eat the deadline. */
-const MODEL_TIMEOUT_MS = 30_000;
-const MODEL_ATTEMPTS = 3;
+const TURN_ATTEMPTS = 2;
 
 /**
  * How much conversation travels to the model. Trimmed by item count and by
@@ -138,14 +138,14 @@ async function concurrentSessions(db, nowMs) {
 }
 
 export const bitChatSession = onRequest(
-  { secrets: [OPENAI_API_KEY], maxInstances: 10 },
+  { secrets: [ELEVENLABS_API_KEY], maxInstances: 10, minInstances: 1 },
   async (req, res) => {
     if (req.method !== 'POST') {
       res.set('Allow', 'POST').status(405).json({ error: 'method-not-allowed' });
       return;
     }
-    if (!secretValue(OPENAI_API_KEY)) {
-      console.error('[bit-chat] OPENAI_API_KEY is not set — refusing to open a session');
+    if (!secretValue(ELEVENLABS_API_KEY)) {
+      console.error('[bit-chat] ELEVENLABS_API_KEY is not set — refusing to open a session');
       res.status(503).json({ error: 'not-configured' });
       return;
     }
@@ -178,7 +178,7 @@ export const bitChatSession = onRequest(
       path: text(req.body?.path, 300) || '/',
       profileId: BIT_CHAT_PROFILE.id,
       profileVersion: BIT_CHAT_PROFILE.version,
-      model: runtime.model,
+      model: 'elevenlabs',
       tools: runtime.tools,
       toolCalls: 0,
       turns: 0,
@@ -197,7 +197,6 @@ export const bitChatSession = onRequest(
       sessionId: ref.id,
       sessionToken: token,
       greeting: BIT_GREETING,
-      model: runtime.model,
       maxSessionMs: SESSION_TTL_MS,
       maxTurns: MAX_VISITOR_TURNS,
       maxToolCalls: MAX_TOOL_CALLS,
@@ -218,21 +217,19 @@ const historyMessage = (role, body) => ({ t: 'msg', role, text: text(body, 4000)
 const historyCall = (callId, name, args) => ({ t: 'call', callId, name, args: text(args, 4000) });
 const historyOutput = (callId, output) => ({ t: 'out', callId, output: text(output, 4000) });
 
-/** Rehydrate stored history into Responses API input items. */
-function toModelInput(history) {
-  const input = [];
-  for (const item of history) {
-    if (item.t === 'msg') input.push({ role: item.role, content: item.text });
-    else if (item.t === 'call') input.push({ type: 'function_call', call_id: item.callId, name: item.name, arguments: item.args || '{}' });
-    else if (item.t === 'out') input.push({ type: 'function_call_output', call_id: item.callId, output: item.output || '{}' });
-  }
-  return input;
+/** Stored history as the plain text the agent reads as its memory. */
+function historyText(history) {
+  return history.map(item => {
+    if (item.t === 'msg') return `${item.role === 'user' ? 'VISITOR' : 'BIT'}: ${item.text}`;
+    if (item.t === 'call') return `TOOL CALL ${item.name}: ${item.args || '{}'}`;
+    return `TOOL RESULT: ${item.output || '{}'}`;
+  }).join('\n');
 }
 
 /**
  * Trim from the front, then discard any orphaned tool items at the new start.
- * A function_call_output whose call was trimmed away is a 400 from the API, so
- * the window always begins on a plain message.
+ * A tool result with no call before it would mislead the agent, so the window
+ * always begins on a plain message.
  */
 function trimHistory(history) {
   let window = history.slice(-MAX_HISTORY_ITEMS);
@@ -243,65 +240,6 @@ function trimHistory(history) {
   }
   while (window.length && window[0].t !== 'msg') window.shift();
   return window;
-}
-
-/**
- * One call to OpenAI, with a short backoff on the failures that are worth
- * retrying. A 5xx or a dropped socket is weather; a 400 is a bug in what we
- * sent and retrying it just spends the visitor's patience.
- */
-async function callModel(apiKey, body, safetyId, fetchImpl = globalThis.fetch) {
-  let lastError = 'model_unavailable';
-  for (let attempt = 0; attempt < MODEL_ATTEMPTS; attempt += 1) {
-    try {
-      const response = await fetchImpl('https://api.openai.com/v1/responses', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-          'OpenAI-Safety-Identifier': safetyId
-        },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(MODEL_TIMEOUT_MS)
-      });
-      const raw = await response.text();
-      let payload = {};
-      try { payload = JSON.parse(raw); } catch { /* handled below */ }
-      if (response.ok) return { ok: true, payload };
-      lastError = text(payload?.error?.message || raw, 300) || `HTTP ${response.status}`;
-      console.error('[bit-chat] model call failed', response.status, lastError);
-      if (response.status < 500 && response.status !== 429) return { ok: false, error: lastError };
-    } catch (error) {
-      lastError = text(error?.message, 300) || 'network';
-      console.warn('[bit-chat] model call threw', lastError);
-    }
-    if (attempt < MODEL_ATTEMPTS - 1) {
-      await new Promise(resolve => setTimeout(resolve, 400 * (attempt + 1)));
-    }
-  }
-  return { ok: false, error: lastError };
-}
-
-/** Pull the two things we care about out of a Responses payload. */
-function readModelOutput(payload) {
-  const output = Array.isArray(payload?.output) ? payload.output : [];
-  const calls = [];
-  const parts = [];
-  for (const item of output) {
-    if (item?.type === 'function_call') {
-      calls.push({
-        callId: text(item.call_id, 120),
-        name: text(item.name, 80),
-        args: typeof item.arguments === 'string' ? item.arguments : JSON.stringify(item.arguments || {})
-      });
-    } else if (item?.type === 'message') {
-      for (const chunk of (Array.isArray(item.content) ? item.content : [])) {
-        if (chunk?.type === 'output_text' && chunk.text) parts.push(String(chunk.text));
-      }
-    }
-  }
-  const reply = parts.join('\n').trim() || text(payload?.output_text, 4000);
-  return { calls, reply: text(reply, 4000) };
 }
 
 /**
@@ -412,7 +350,7 @@ const tokenMatches = (expected, provided) => {
 };
 
 export const bitChatTurn = onRequest(
-  { secrets: [OPENAI_API_KEY, GOOGLE_CALENDAR_CREDENTIALS], maxInstances: 20, timeoutSeconds: 120 },
+  { secrets: [ELEVENLABS_API_KEY, GOOGLE_CALENDAR_CREDENTIALS], maxInstances: 20, minInstances: 1, timeoutSeconds: 120 },
   async (req, res) => {
     if (req.method !== 'POST') {
       res.set('Allow', 'POST').status(405).json({ error: 'method-not-allowed' });
@@ -470,15 +408,14 @@ export const bitChatTurn = onRequest(
       return;
     }
 
-    const apiKey = secretValue(OPENAI_API_KEY);
+    const apiKey = secretValue(ELEVENLABS_API_KEY);
     if (!apiKey) {
-      console.error('[bit-chat] OPENAI_API_KEY is not set — cannot answer');
+      console.error('[bit-chat] ELEVENLABS_API_KEY is not set — cannot answer');
       res.json({ ok: false, error: 'not_configured', ended: false, cards: [BOOKING_CARD], chips: [], messages: [FALLBACK_REPLY] });
       return;
     }
 
     const runtime = chatRuntime();
-    const safetyId = createHash('sha256').update(`bitesites-bit-chat:${text(session.ipHash, 64)}`).digest('hex');
     // Resolved lazily and at most once per turn: most turns never book, and a
     // Google client costs a token exchange.
     let googleClient;
@@ -489,6 +426,7 @@ export const bitChatTurn = onRequest(
       return googleClient;
     };
 
+    const memory = historyText(trimHistory(history));
     history = [...history, historyMessage('user', message)];
     await sessionRef.set({
       turns: FieldValue.increment(1),
@@ -500,73 +438,66 @@ export const bitChatTurn = onRequest(
     let ended = false;
     let reply = '';
     let toolCalls = Number(session.toolCalls) || 0;
-    const deadline = Date.now() + TURN_DEADLINE_MS;
+    let toolsThisTurn = 0;
 
-    for (let round = 0; round < MAX_MODEL_CALLS_PER_TURN; round += 1) {
-      if (Date.now() > deadline) {
-        console.warn('[bit-chat] turn deadline reached', sessionId);
-        break;
-      }
-
-      const call = await callModel(apiKey, {
-        model: runtime.model,
-        instructions: runtime.instructions,
-        input: toModelInput(trimHistory(history)),
-        tools: runtime.toolSchemas,
-        tool_choice: 'auto',
-        // Serial tool calls keep the loop, the budget, and the transcript in a
-        // single readable order. Nothing Bit does benefits from fan-out.
-        parallel_tool_calls: false,
-        max_output_tokens: runtime.maxOutputTokens,
-        reasoning: { effort: runtime.reasoningEffort },
-        store: false
-      }, safetyId);
-
-      if (!call.ok) break;
-      const { calls, reply: spoken } = readModelOutput(call.payload);
-      if (spoken) reply = spoken;
-
-      if (!calls.length) break;
-
-      for (const requested of calls) {
-        history = [...history, historyCall(requested.callId, requested.name, requested.args)];
-
-        let output;
-        if (!runtime.tools.includes(requested.name)) {
-          output = { ok: false, error: 'tool_not_permitted', note: 'You do not have that tool. Use one you were granted, or answer without it.' };
-        } else if (toolCalls >= MAX_TOOL_CALLS) {
-          output = { ok: false, error: 'tool_budget_exhausted', note: 'No more tool calls are available this session. Answer with what you already know and wrap up.' };
-        } else {
-          toolCalls += 1;
-          let args = {};
-          try { args = JSON.parse(requested.args || '{}') || {}; } catch { args = {}; }
-          try {
-            const executed = await runTool(db, {
-              tool: requested.name, args, sessionRef, session, google
-            });
-            output = executed.result;
-            if (executed.card) cards.push(executed.card);
-            if (executed.chips?.length) chips = executed.chips;
-            if (executed.ended) ended = true;
-          } catch (error) {
-            console.error('[bit-chat] tool execution failed', requested.name, error);
-            output = { ok: false, error: 'server_action_failed', note: 'That action did not go through. Say so plainly and do not claim it worked.' };
-          }
-          // Tools mutate the session (captured details, the lead id, a hold),
-          // and the next tool in this same turn has to see that. History stays
-          // local — it is not written until the turn closes.
-          const refreshed = await sessionRef.get();
-          if (refreshed.exists) {
-            const { history: _stored, ...fields } = refreshed.data();
-            session = { id: refreshed.id, ...fields };
-          }
+    const executeTool = async (name, args) => {
+      const callId = `call_${randomBytes(6).toString('hex')}`;
+      history = [...history, historyCall(callId, name, JSON.stringify(args))];
+      let output;
+      if (!runtime.tools.includes(name)) {
+        output = { ok: false, error: 'tool_not_permitted', note: 'You do not have that tool. Use one you were granted, or answer without it.' };
+      } else if (toolCalls >= MAX_TOOL_CALLS || toolsThisTurn >= MAX_TOOLS_PER_TURN) {
+        output = { ok: false, error: 'tool_budget_exhausted', note: 'No more tool calls are available. Answer with what you already know and wrap up.' };
+      } else {
+        toolCalls += 1;
+        toolsThisTurn += 1;
+        try {
+          const executed = await runTool(db, { tool: name, args, sessionRef, session, google });
+          output = executed.result;
+          if (executed.card) cards.push(executed.card);
+          if (executed.chips?.length) chips = executed.chips;
+          if (executed.ended) ended = true;
+        } catch (error) {
+          console.error('[bit-chat] tool execution failed', name, error);
+          output = { ok: false, error: 'server_action_failed', note: 'That action did not go through. Say so plainly and do not claim it worked.' };
         }
-
-        history = [...history, historyOutput(requested.callId, JSON.stringify(output))];
+        // Tools mutate the session (captured details, the lead id, a hold),
+        // and the next tool in this same turn has to see that. History stays
+        // local — it is not written until the turn closes.
+        const refreshed = await sessionRef.get();
+        if (refreshed.exists) {
+          const { history: _stored, ...fields } = refreshed.data();
+          session = { id: refreshed.id, ...fields };
+        }
       }
+      history = [...history, historyOutput(callId, JSON.stringify(output))];
+      return output;
+    };
 
-      if (ended) break;
+    // Serial tool calls keep the budget and the transcript in one readable order.
+    let toolQueue = Promise.resolve();
+    const onTool = (name, args) => {
+      const next = toolQueue.then(() => executeTool(text(name, 80), args));
+      toolQueue = next.catch(() => {});
+      return next;
+    };
+
+    // A dropped connection is worth one retry, unless a tool already ran.
+    for (let attempt = 0; attempt < TURN_ATTEMPTS && !reply && !toolsThisTurn; attempt += 1) {
+      try {
+        reply = await runAgentTurn({
+          apiKey,
+          agentId: WEB_AGENT_IDS.bit,
+          variables: { [BIT_HISTORY_VARIABLE]: memory },
+          message,
+          onTool,
+          timeoutMs: TURN_DEADLINE_MS
+        });
+      } catch (error) {
+        console.error('[bit-chat] agent turn failed', text(error?.message, 300));
+      }
     }
+    reply = text(reply, 4000);
 
     if (reply) history = [...history, historyMessage('assistant', reply)];
 
