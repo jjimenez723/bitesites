@@ -15,8 +15,9 @@ export const LEGAL = {
   site: 'bitesites.org',
   siteUrl: 'https://bitesites.org',
 
-  // Address used for legal notices. Required for a valid notice clause.
-  mailingAddress: '[Street address], New Jersey [ZIP], United States',
+  // Address used for legal notices. The line is hidden on the legal pages until
+  // this is filled in. Never publish a placeholder here.
+  mailingAddress: '',
 
   contactEmail: 'jensy@bitesites.org',
   privacyEmail: 'privacy@bitesites.org',

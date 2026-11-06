@@ -42,6 +42,7 @@ import {
   lookupApprovedPricing, lookupCoreKnowledge, recordInterestSignal, requestHumanFollowup,
   requestRating, saveContactDetails, text, webCalendarClient
 } from './web-agent-tools.js';
+import { CRISIS_CARD, CRISIS_MESSAGES, isCrisisMessage } from './crisis-support.js';
 
 const OPENAI_API_KEY = defineSecret('OPENAI_API_KEY');
 const GOOGLE_CALENDAR_CREDENTIALS = defineSecret('GOOGLE_CALENDAR_CREDENTIALS');
@@ -462,6 +463,12 @@ export const bitChatTurn = onRequest(
 
     const message = text(req.body?.message, MAX_MESSAGE_CHARS);
     if (!message) { res.status(400).json({ error: 'message-required' }); return; }
+
+    // Before the model and before any key check: this must work when the AI is down.
+    if (isCrisisMessage(message)) {
+      res.json({ ok: true, ended: false, cards: [CRISIS_CARD], chips: [], messages: [...CRISIS_MESSAGES] });
+      return;
+    }
 
     const apiKey = secretValue(OPENAI_API_KEY);
     if (!apiKey) {

@@ -30,6 +30,7 @@ import ConversationRating from './ConversationRating';
 import { finishChat, logChatMessage, startChat } from '../lib/conversations';
 import { sessionId as analyticsSessionId, trackEvent } from '../lib/analytics';
 import { finalizeBitSession, openBitSession, sendBitMessage } from '../lib/bit-chat';
+import { CRISIS_CARD, CRISIS_MESSAGES, isCrisisMessage } from '../../functions/crisis-support.js';
 import logoWordmark from '../assets/bitesites-logo-wordmark.webp';
 
 const MAX_MESSAGE_CHARS = 2000;
@@ -84,6 +85,8 @@ export function BitChat({ onClose, origin, initialAnswer }) {
   const chatIdRef = useRef('');
   const bufferRef = useRef([]);
   const closedRef = useRef(false);
+  const crisisRef = useRef(false);
+  const windowRef = useRef(null);
   const countRef = useRef(0);
   const turnsRef = useRef(0);
   const outcomeRef = useRef('abandoned');
@@ -191,9 +194,39 @@ export function BitChat({ onClose, origin, initialAnswer }) {
     };
   }, [onClose]);
 
+  // iPhones pan and zoom the page around the keyboard, which can push the Close
+  // button off screen. Pin the window to the part of the screen actually visible.
+  useLayoutEffect(() => {
+    const viewport = window.visualViewport;
+    const element = windowRef.current;
+    if (!viewport || !element) return undefined;
+    const fit = () => {
+      element.style.height = `${viewport.height}px`;
+      element.style.top = `${viewport.offsetTop}px`;
+    };
+    fit();
+    viewport.addEventListener('resize', fit);
+    viewport.addEventListener('scroll', fit);
+    return () => {
+      viewport.removeEventListener('resize', fit);
+      viewport.removeEventListener('scroll', fit);
+    };
+  }, []);
+
   async function send(raw) {
     const message = String(raw || '').trim().slice(0, MAX_MESSAGE_CHARS);
     if (!message || busyRef.current || ended) return;
+
+    // Answered here, before any network call, so it works when the AI is down.
+    // The words stay on this device: not sent to the model, not saved to the log.
+    if (isCrisisMessage(message)) {
+      crisisRef.current = true;
+      setChips([]);
+      push({ role: 'visitor', text: message });
+      CRISIS_MESSAGES.forEach(text => push({ role: 'bit', text }));
+      push({ role: 'card', card: CRISIS_CARD });
+      return;
+    }
 
     busyRef.current = true;
     turnsRef.current += 1;
@@ -207,6 +240,14 @@ export function BitChat({ onClose, origin, initialAnswer }) {
     const reply = session ? await sendBitMessage(session, message) : null;
 
     if (closedRef.current) return;
+
+    if (!reply && crisisRef.current) {
+      push({ role: 'bit', text: 'I can’t answer right now, but real people at 988 are there any time.' });
+      push({ role: 'card', card: CRISIS_CARD });
+      setIsThinking(false);
+      busyRef.current = false;
+      return;
+    }
 
     if (!reply) {
       push({ role: 'bit', text: UNAVAILABLE_MESSAGE });
@@ -269,6 +310,7 @@ export function BitChat({ onClose, origin, initialAnswer }) {
   };
 
   return <aside
+    ref={windowRef}
     className="bit-window"
     onAnimationEnd={finishReveal}
     style={{ '--bit-x': `${origin?.x ?? window.innerWidth - 58}px`, '--bit-y': `${origin?.y ?? window.innerHeight - 52}px` }}
@@ -342,6 +384,17 @@ function BitCard({ card, onFollow }) {
       <span className="bit-card-tag">Booked ✦</span>
       <strong>{card.spoken}</strong>
       {card.confirmationRef && <small>Confirmation {card.confirmationRef} · check your inbox for the invitation</small>}
+    </div>;
+  }
+  if (card?.type === 'crisis') {
+    return <div className="bit-card bit-card-crisis">
+      <div>
+        <strong>{card.title}</strong>
+        <small>{card.detail}</small>
+      </div>
+      <div className="bit-crisis-actions">
+        {card.actions.map(action => <a key={action.href} href={action.href} {...(action.href.startsWith('http') ? { target: '_blank', rel: 'noopener noreferrer' } : {})}>{action.label}</a>)}
+      </div>
     </div>;
   }
   if (card?.type !== 'link' || !card.href) return null;

@@ -33,6 +33,7 @@ import { compileAgentRuntime } from './agent-runtime.js';
 import { BYTE_CORE_KNOWLEDGE, HARD_QUESTION_POLICY } from './byte-persona.js';
 import { OFFER_TRACK_KEYS } from './offer-tracks.js';
 import { clean } from './prospect-normalization.js';
+import { CRISIS_INSTRUCTION } from './crisis-support.js';
 
 /**
  * The text model behind Bit. One constant, deliberately: the model id appears
@@ -51,6 +52,7 @@ export const BIT_KNOWLEDGE_BUDGET = Object.freeze({ maxChunks: 12, maxChars: 140
 export const BIT_CHAT_IDENTITY = Object.freeze({
   version: 1,
   instructions: [
+    CRISIS_INSTRUCTION,
     'WHO YOU ARE',
     'You are Bit — BiteSites’ chat agent and the mascot on its homepage. He/him. You were designed and built in-house by the team you speak for, and this conversation is the product demo: the visitor is holding the thing BiteSites sells.',
     'Playful at the edges, sharp in the middle. A little warmth and the occasional ✦ are on-brand; being vague to seem friendly is not. The joke never replaces the answer.',
