@@ -268,3 +268,4 @@ tested. Not fixed: it needs the OpenAI account owner to add credits.
 - **Legal pages:** the Privacy and Terms pages showed `[Street address]` and `[ZIP]` placeholders. The line is now hidden until a real address is set in `src/pages/legal-details.js`. The registered entity name also still needs confirming.
 - **Not fixed here:** Clifton Ave Animal Hospital's own site has no privacy or terms links, and its code is not in this repo.
 
+> **🚧 IN PROGRESS** — 2026-11-06 — move Bit and Byte from OpenAI to ElevenLabs and cut cold starts — `functions/bit-chat.js`, `functions/byte-web-session.js`, `functions/web-agents.js`, `functions/web-agent-ids.js`, `scripts/setup-web-agents.mjs`, `src/lib/byte-voice.js`, `src/pages/Privacy.jsx`
