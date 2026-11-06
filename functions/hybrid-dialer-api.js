@@ -37,9 +37,9 @@ import { hybridCallProgress } from './hybrid-call-progress.js';
 import { aiMediaAttachDeadline, failClosedAIMediaAttachment, isAIMediaAttachPending } from './hybrid-media-failsafe.js';
 import { externalDialingAdmission } from './deployment-environment.js';
 import {
-  buildRepTrainingSession, evaluateRepTrainingTranscript, hasRepTrainingAccess,
-  hasRepTrainingExemption, nextRepTrainingScenario, publicTrainingScenario,
-  repTrainingScenarios
+  evaluatePracticeConversation, hasRepTrainingAccess, hasRepTrainingExemption,
+  nextRepTrainingScenario, publicTrainingScenario, repTrainingScenarios,
+  startPracticeConversation
 } from './rep-training.js';
 import { gradeRepQuiz, hasRepCourse, publicRepCourse } from './rep-course.js';
 
@@ -50,6 +50,7 @@ export const HYBRID_TWILIO_API_KEY_SECRET = defineSecret('TWILIO_API_KEY_SECRET'
 export const HYBRID_TWILIO_TWIML_APP_SID = defineSecret('TWILIO_TWIML_APP_SID');
 export const HYBRID_AI_MEDIA_SECRET = defineSecret('AI_MEDIA_WEBHOOK_SECRET');
 export const HYBRID_OPENAI_API_KEY = defineSecret('OPENAI_API_KEY');
+export const REP_PRACTICE_ELEVENLABS_KEY = defineSecret('ELEVENLABS_API_KEY');
 
 const TWILIO_CONTROL_SECRETS = [
   HYBRID_TWILIO_ACCOUNT_SID,
@@ -976,7 +977,7 @@ export const submitRepCourseQuiz = onCall(callOptions, async request => {
 
 /** Start one fictional prospect role-play for the next required niche. */
 export const createRepTrainingSession = onCall(
-  { ...callOptions, secrets: [HYBRID_OPENAI_API_KEY] },
+  { ...callOptions, secrets: [REP_PRACTICE_ELEVENLABS_KEY] },
   async request => {
     const { db, uid, role, access } = await requireDialer(request);
     if (role !== 'outbound_rep') throw new HttpsError('permission-denied', 'Sales training is available to sales reps.');
@@ -984,7 +985,7 @@ export const createRepTrainingSession = onCall(
     if (!normalizeAccountScope(access.accountIds).includes(accountId)) {
       throw new HttpsError('permission-denied', 'That seller account is not assigned to you.');
     }
-    const apiKey = secretValue(HYBRID_OPENAI_API_KEY);
+    const apiKey = secretValue(REP_PRACTICE_ELEVENLABS_KEY);
     if (!apiKey) throw new HttpsError('failed-precondition', 'The AI training coach is not configured.');
     const [defaultSnapshot, progressSnapshot, roleSnapshot] = await Promise.all([
       db.doc(`outboundDefaults/${accountId}`).get(),
@@ -1035,15 +1036,9 @@ export const createRepTrainingSession = onCall(
       }, { merge: true });
     });
 
-    let client;
+    let practice;
     try {
-      client = await mintAgentPreviewClientSecret({
-        apiKey, uid,
-        session: buildRepTrainingSession({
-          sellerName: getAccount(accountId)?.label || accountId,
-          scenario
-        })
-      });
+      practice = await startPracticeConversation({ apiKey, scenario });
     } catch (error) {
       throw new HttpsError('internal', clean(error?.message, 350) || 'Could not start the training role-play.');
     }
@@ -1051,12 +1046,12 @@ export const createRepTrainingSession = onCall(
     const attemptRef = db.collection('repTrainingAttempts').doc();
     await attemptRef.set({
       uid, accountId, campaignId, scenarioId: scenario.id,
+      conversationId: practice.conversationId, agentId: practice.agentId,
       status: 'in_progress', createdAt: FieldValue.serverTimestamp(),
       expiresAt: Timestamp.fromMillis(Date.now() + 20 * 60 * 1000)
     });
     return {
-      clientSecret: client.value,
-      expiresAt: client.expiresAt,
+      signedUrl: practice.signedUrl,
       attemptId: attemptRef.id,
       scenario: publicTrainingScenario(scenario)
     };
@@ -1065,7 +1060,7 @@ export const createRepTrainingSession = onCall(
 
 /** Score a completed role-play and grant default campaign access after all required niches pass. */
 export const completeRepTrainingAttempt = onCall(
-  { ...callOptions, secrets: [HYBRID_OPENAI_API_KEY], timeoutSeconds: 45 },
+  { ...callOptions, secrets: [REP_PRACTICE_ELEVENLABS_KEY], timeoutSeconds: 90 },
   async request => {
     const { db, uid, role, access } = await requireDialer(request);
     if (role !== 'outbound_rep') throw new HttpsError('permission-denied', 'Sales training is available to sales reps.');
@@ -1089,10 +1084,12 @@ export const completeRepTrainingAttempt = onCall(
     }
     const scenario = repTrainingScenarios(accountId).find(entry => entry.id === initial.get('scenarioId'));
     if (!scenario) throw new HttpsError('failed-precondition', 'This training scenario is no longer available.');
-    const apiKey = secretValue(HYBRID_OPENAI_API_KEY);
+    const apiKey = secretValue(REP_PRACTICE_ELEVENLABS_KEY);
     if (!apiKey) throw new HttpsError('failed-precondition', 'The AI training evaluator is not configured.');
+    const conversationId = clean(initial.get('conversationId'), 200);
+    const agentId = clean(initial.get('agentId'), 200);
+    if (!conversationId || !agentId) throw new HttpsError('failed-precondition', 'This practice session expired. Start a fresh role-play.');
 
-    const transcript = request.data?.transcript;
     const scoringLock = await db.runTransaction(async transaction => {
       const current = await transaction.get(attemptRef);
       if (current.get('uid') !== uid || current.get('status') !== 'in_progress') return false;
@@ -1102,7 +1099,7 @@ export const completeRepTrainingAttempt = onCall(
     if (!scoringLock) throw new HttpsError('failed-precondition', 'This training attempt has already been submitted.');
 
     try {
-      const evaluation = await evaluateRepTrainingTranscript({ apiKey, scenario, transcript, uid });
+      const evaluation = await evaluatePracticeConversation({ apiKey, scenario, conversationId, agentId });
       const result = await db.runTransaction(async transaction => {
         const [attemptSnapshot, roleSnapshot, progressSnapshot, defaultSnapshot] = await Promise.all([
           transaction.get(attemptRef),

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { outbound } from './data';
-import { startAgentPreview } from './agent-preview-client';
+import { startPracticeCall } from './practice-call-client';
 import RepCourse from './RepCourse';
 
 const transcriptLengthLabel = turns => `${turns.length} transcript turns`;
@@ -16,7 +16,6 @@ export default function RepTraining({ accounts = [], loading = false, error = ''
   const [message, setMessage] = useState('');
   const [problem, setProblem] = useState('');
   const [busy, setBusy] = useState(false);
-  const audioRef = useRef(null);
   const controllerRef = useRef(null);
   const transcriptRef = useRef([]);
   const selected = accounts.find(account => account.accountId === accountId) || incomplete[0] || accounts[0] || null;
@@ -47,10 +46,8 @@ export default function RepTraining({ accounts = [], loading = false, error = ''
     setTranscript([]);
     setBusy(true);
     try {
-      const controller = await startAgentPreview({
-        mode: 'training',
+      const controller = await startPracticeCall({
         accountId: selected.accountId,
-        audioElement: audioRef.current,
         onState: setState,
         onTranscript: updateTranscript,
         onError: setProblem,
@@ -75,14 +72,13 @@ export default function RepTraining({ accounts = [], loading = false, error = ''
     setState('scoring');
     setProblem('');
     setMessage('The AI coach is reviewing your practice conversation…');
-    const currentTranscript = transcriptRef.current;
     const currentAttempt = attemptId;
     const controller = controllerRef.current;
     controllerRef.current = null;
     await controller?.stop().catch(() => {});
     setState('scoring');
     try {
-      const evaluation = await outbound.completeRepTrainingAttempt(currentAttempt, currentTranscript);
+      const evaluation = await outbound.completeRepTrainingAttempt(currentAttempt);
       setResult(evaluation);
       setAttemptId('');
       setMessage(evaluation.coursePassed
@@ -183,7 +179,7 @@ export default function RepTraining({ accounts = [], loading = false, error = ''
             <span className="outbound-eyebrow">Next fictional prospect</span>
             {scenario ? <>
               <h3>{scenario.name}, {scenario.age} · {scenario.niche}</h3>
-              <p>{scenario.business} · {scenario.gender} · voice: {scenario.voice}</p>
+              <p>{scenario.business} · {scenario.gender}</p>
               <p>You’re calling this business for the first time. Get to yes if you can, and take a no well if you can’t.</p>
             </> : <p>Start a role-play to meet the next prospect in your course.</p>}
           </div>
@@ -219,7 +215,6 @@ export default function RepTraining({ accounts = [], loading = false, error = ''
           </div>}
         </section>
       )}
-      <audio ref={audioRef} autoPlay playsInline className="rep-training-audio" />
     </div>
   );
 }

@@ -1113,7 +1113,6 @@
 .bs-admin .rep-training-feedback.is-retry { border-color: rgba(250, 178, 25, .28); }
 .bs-admin .rep-training-feedback p { margin: 0; color: var(--ink-2); font-size: 12px; line-height: 1.5; }
 .bs-admin .rep-training-feedback ul { margin: 5px 0 0; padding-left: 18px; color: var(--ink-3); font-size: 11px; line-height: 1.6; }
-.bs-admin .rep-training-audio { display: none; }
 
 .bs-admin .outbound-default-campaign input,
 .bs-admin .rep-training-actions .btn-admin { flex: none; }

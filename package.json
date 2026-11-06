@@ -107,17 +107,18 @@
     "test:marketing:built": "node scripts/test-marketing-built.mjs"
   },
   "dependencies": {
+    "@elevenlabs/client": "1.32.1",
     "@twilio/voice-sdk": "2.18.4",
     "d3-geo": "^3.1.1",
     "express": "^5.1.0",
     "firebase": "^12.16.0",
+    "ogl": "1.0.11",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-router-dom": "^7.18.1",
     "three": "^0.185.1",
     "topojson-client": "^3.1.0",
-    "world-atlas": "^2.0.2",
-    "ogl": "1.0.11"
+    "world-atlas": "^2.0.2"
   },
   "devDependencies": {
     "@firebase/rules-unit-testing": "^5.0.1",
