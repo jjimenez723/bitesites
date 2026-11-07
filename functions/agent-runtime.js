@@ -195,8 +195,8 @@ function normalizeProfile(profile = {}) {
   const builtInVoice = BUILT_IN_REALTIME_VOICES.includes(requestedBuiltIn) ? requestedBuiltIn : 'marin';
   const voiceSource = profile.voiceSettings?.source === 'custom' ? 'custom' : 'built_in';
   const customVoiceId = text(profile.voiceSettings?.customVoiceId, 160);
-  if (voiceSource === 'custom' && !/^voice_[A-Za-z0-9_-]+$/.test(customVoiceId)) {
-    throw new Error('A valid custom voice ID beginning with voice_ is required.');
+  if (voiceSource === 'custom' && !/^[A-Za-z0-9]{20}$/.test(customVoiceId)) {
+    throw new Error('A valid ElevenLabs voice ID (20 letters and numbers) is required.');
   }
 
   return {
@@ -663,7 +663,7 @@ export function sanitizeRealtimeSessionConfig(input = {}, fallbackVoice = 'marin
   const audioOutput = source.audio?.output && typeof source.audio.output === 'object' ? source.audio.output : {};
   const requestedVoice = audioOutput.voice;
   const voice = requestedVoice && typeof requestedVoice === 'object'
-    && /^voice_[A-Za-z0-9_-]+$/.test(text(requestedVoice.id, 160))
+    && /^[A-Za-z0-9]{20}$/.test(text(requestedVoice.id, 160))
     ? { id: text(requestedVoice.id, 160) }
     : BUILT_IN_REALTIME_VOICES.includes(requestedVoice)
       ? requestedVoice
@@ -766,7 +766,12 @@ export function compileAgentRuntime({
     handoffPhrase: config.handoffPhrase,
     knowledgeBaseIds: config.knowledgeBaseIds,
     offerTracks: config.offerTracks,
-    auditionScript: config.auditionScript
+    auditionScript: config.auditionScript,
+    // Spoken before the model says anything, so the AI disclosure can never be
+    // skipped or reworded by the model.
+    openingLine: seller?.legalName
+      ? `Hi, this is an AI assistant calling on behalf of ${seller.legalName}. Do you have a quick minute?`
+      : 'Hi, this is an AI assistant calling about your business. Do you have a quick minute?'
   };
 }
 

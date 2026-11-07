@@ -43,7 +43,6 @@ import { sealCallPlanSnapshot } from './call-plan.js';
 import {
   assertCampaignMayDial, campaignSafetyLockEngaged, safetyStopCampaignSessions, tripCampaignCircuitBreaker
 } from './campaign-circuit-breaker.js';
-import { warmSidebandForSession } from './hybrid-sideband-warmup.js';
 import { isSuppressed, suppressNumber } from './inbound-compliance.js';
 import {
   requiresExternalPreDialScreening, resolvePreDialScreening
@@ -1039,7 +1038,7 @@ export async function dialNext(db, sessionId, {
   }
   // A separate Firebase project is not enough to make an outbound rehearsal
   // safe: shared carrier credentials could still reach real phones. Refuse
-  // carrier-backed calls before we warm a sideband, lock a target or contact a
+  // carrier-backed calls before we lock a target or contact a
   // provider. Mock dialing remains available to emulator tests.
   const dialingAdmission = externalDialingAdmission(campaign.provider);
   if (!dialingAdmission.allowed) {
@@ -1070,19 +1069,6 @@ export async function dialNext(db, sessionId, {
     limit: scanLimit, now, states: pickupStates
   });
 
-  // Wake the AI media service now, while these legs are still ringing.
-  //
-  // This is the last point with any slack in it. The sideband is not attached
-  // until after a prospect picks up and Twilio confirms a human, so once that
-  // happens every millisecond of container start is silence on a live call.
-  // Ringing is the runway — several seconds of it — and starting the instance
-  // here spends that time instead of the prospect's.
-  //
-  // It belongs here rather than on the dialer's heartbeat because this path is
-  // reached with no browser attached at all: autoDial refills run from a
-  // provider webhook, and detached AI sessions are deliberately exempt from the
-  // abandoned-session reaper.
-  if (candidates.length) await warmSidebandForSession(session);
 
   const provider = getCallingProvider(campaign.provider, providerConfig);
   const started = [];
@@ -1333,10 +1319,6 @@ export async function runAICampaignSlice(db, campaignId, {
   const started = [];
   const rejected = [];
 
-  // The autonomous path has no dialer session, no browser and no heartbeat —
-  // this scheduled slice is the only thing that knows AI calls are imminent, so
-  // it is the only place that can wake the sideband before they ring.
-  if (candidates.length) await warmSidebandForSession({ mode: 'ai' });
 
   // The AI runner is its own "session" so the same locking, cancellation and
   // reconciliation code paths apply. A campaign without one would need a second

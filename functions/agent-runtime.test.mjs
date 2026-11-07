@@ -14,7 +14,7 @@ import {
   normalizeKnowledgeChunks
 } from './agent-runtime.js';
 import { IMPLEMENTED_TOOLS } from './agent-tools.js';
-import { TOOL_SCHEMA_NAMES } from '../services/realtime-sideband/tool-schemas.js';
+import { TOOL_SCHEMA_NAMES } from './live-call-tool-schemas.js';
 import { sealCallPlanSnapshot } from './call-plan.js';
 import { ACCOUNTS } from './accounts.js';
 
@@ -430,7 +430,7 @@ test('custom voice and server VAD controls compile to supported realtime fields'
   const compiled = compileAgentRuntime({
     profile: {
       ...baseProfile,
-      voiceSettings: { source: 'custom', customVoiceId: 'voice_brand_123', playbackSpeed: 0.9 },
+      voiceSettings: { source: 'custom', customVoiceId: 'AbCdEfGhIj0123456789', playbackSpeed: 0.9 },
       turnTaking: {
         mode: 'server_vad', allowInterruptions: true, noiseReduction: 'off',
         threshold: 0.7, prefixPaddingMs: 450, silenceDurationMs: 900, idleTimeoutMs: 15000
@@ -438,8 +438,8 @@ test('custom voice and server VAD controls compile to supported realtime fields'
     }
   });
 
-  assert.deepEqual(compiled.sessionConfig.audio.output.voice, { id: 'voice_brand_123' });
-  assert.equal(compiled.voice, 'voice_brand_123');
+  assert.deepEqual(compiled.sessionConfig.audio.output.voice, { id: 'AbCdEfGhIj0123456789' });
+  assert.equal(compiled.voice, 'AbCdEfGhIj0123456789');
   assert.equal(compiled.sessionConfig.audio.input.noise_reduction, null);
   assert.deepEqual(compiled.sessionConfig.audio.input.turn_detection, {
     type: 'server_vad', threshold: 0.7, prefix_padding_ms: 450,
@@ -451,7 +451,7 @@ test('custom voice and server VAD controls compile to supported realtime fields'
 test('invalid custom voice IDs are rejected before a call can be created', () => {
   assert.throws(() => compileAgentRuntime({
     profile: { ...baseProfile, voiceSettings: { source: 'custom', customVoiceId: 'not-a-voice' } }
-  }), /valid custom voice ID/i);
+  }), /valid ElevenLabs voice ID/i);
 });
 
 test('the control-plane sanitizer clamps live audio values and removes unsupported voice data', () => {

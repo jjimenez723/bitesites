@@ -44,7 +44,6 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             functions/package-lock.json
-            services/realtime-sideband/package-lock.json
 
       # The Firestore and Auth emulators are Java programs. The runner image
       # ships a JDK today; pinning one means the suite does not silently start
@@ -58,7 +57,6 @@ jobs:
         run: |
           npm ci
           npm --prefix functions ci
-          npm --prefix services/realtime-sideband ci
 
       # Proves the CLI resolves from the lockfile rather than from a global
       # install, which is the failure this job exists to have fixed.
@@ -76,5 +74,3 @@ jobs:
       - name: Check Firebase Functions
         run: npm --prefix functions run check
 
-      - name: Check Realtime sideband
-        run: npm --prefix services/realtime-sideband run check

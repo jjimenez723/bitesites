@@ -21,9 +21,10 @@ import {
   attachAIController,
   recordCallAuditEvent
 } from './hybrid-call-orchestration.js';
-import { compileAgentRuntime, runtimePreview, sanitizeRealtimeSessionConfig } from './agent-runtime.js';
+import { compileAgentRuntime, runtimePreview } from './agent-runtime.js';
 import { normalizeOfferTrackKeys } from './offer-tracks.js';
-import { buildAgentPreviewRuntime, mintAgentPreviewClientSecret } from './agent-preview.js';
+import { buildAgentPreviewRuntime, mintPreviewConversationUrl, synthesizePreviewSample } from './agent-preview.js';
+import { LIVE_CALL_AGENT_IDS } from './live-call-agent-ids.js';
 import { applyDisposition, cancelLosingLegs, markDoNotCall } from './outbound-calls.js';
 import { getCallingProvider } from './providers/calling/index.js';
 import { clean } from './prospect-normalization.js';
@@ -34,7 +35,7 @@ import { conferenceName, prospectConferenceTwiml } from './hybrid-conference.js'
 import { hybridOutboundEventsUrl } from './hybrid-urls.js';
 import { validHybridTwilioRequest } from './hybrid-twilio-signature.js';
 import { hybridCallProgress } from './hybrid-call-progress.js';
-import { aiMediaAttachDeadline, failClosedAIMediaAttachment, isAIMediaAttachPending } from './hybrid-media-failsafe.js';
+import { aiMediaAttachDeadline, failClosedAIMediaAttachment } from './hybrid-media-failsafe.js';
 import { externalDialingAdmission } from './deployment-environment.js';
 import {
   evaluatePracticeConversation, hasRepTrainingAccess, hasRepTrainingExemption,
@@ -49,7 +50,6 @@ export const HYBRID_TWILIO_API_KEY_SID = defineSecret('TWILIO_API_KEY_SID');
 export const HYBRID_TWILIO_API_KEY_SECRET = defineSecret('TWILIO_API_KEY_SECRET');
 export const HYBRID_TWILIO_TWIML_APP_SID = defineSecret('TWILIO_TWIML_APP_SID');
 export const HYBRID_AI_MEDIA_SECRET = defineSecret('AI_MEDIA_WEBHOOK_SECRET');
-export const HYBRID_OPENAI_API_KEY = defineSecret('OPENAI_API_KEY');
 export const REP_PRACTICE_ELEVENLABS_KEY = defineSecret('ELEVENLABS_API_KEY');
 
 const TWILIO_CONTROL_SECRETS = [
@@ -76,31 +76,10 @@ function hybridTwilioProvider(authToken = secretValue(HYBRID_TWILIO_AUTH_TOKEN))
 
 /** End the prospect's PSTN leg after the state machine has failed closed. */
 async function endFailedAIMediaPstn(db, callId, {
-  reason, source, realtimeCallId = '', provider = null, now = new Date()
+  reason, source, provider = null, now = new Date()
 } = {}) {
-  const result = await failClosedAIMediaAttachment(db, callId, { reason, source, realtimeCallId, now });
+  const result = await failClosedAIMediaAttachment(db, callId, { reason, source, now });
   if (!result.ok) return result;
-  if (result.shouldTerminateRealtime && result.realtimeCallId) {
-    const apiKey = secretValue(HYBRID_OPENAI_API_KEY);
-    if (apiKey) {
-      try {
-        const response = await fetch(`https://api.openai.com/v1/realtime/calls/${encodeURIComponent(result.realtimeCallId)}/hangup`, {
-          method: 'POST', headers: { Authorization: `Bearer ${apiKey}` }, signal: AbortSignal.timeout(5000)
-        });
-        await db.doc(`calls/${callId}`).set({
-          'media.realtimeHangupAttemptedAt': FieldValue.serverTimestamp(),
-          'media.realtimeHangupFailed': !response.ok,
-          ...(response.ok ? { 'media.realtimeHangupConfirmedAt': FieldValue.serverTimestamp() } : {}),
-          updatedAt: FieldValue.serverTimestamp()
-        }, { merge: true });
-      } catch {
-        await db.doc(`calls/${callId}`).set({
-          'media.realtimeHangupAttemptedAt': FieldValue.serverTimestamp(),
-          'media.realtimeHangupFailed': true, updatedAt: FieldValue.serverTimestamp()
-        }, { merge: true }).catch(() => {});
-      }
-    }
-  }
   if (!result.shouldTerminatePstn) return result;
   try {
     await (provider || hybridTwilioProvider()).endCall(result.providerCallId);
@@ -120,19 +99,6 @@ async function endFailedAIMediaPstn(db, callId, {
     }, { merge: true }).catch(() => {});
   }
   return result;
-}
-
-async function rejectOpenAIRealtimeCall(realtimeCallId, { statusCode = 486 } = {}) {
-  const apiKey = secretValue(HYBRID_OPENAI_API_KEY);
-  if (!apiKey || !realtimeCallId) return { attempted: false };
-  try {
-    await fetch(`https://api.openai.com/v1/realtime/calls/${encodeURIComponent(realtimeCallId)}/reject`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status_code: statusCode }), signal: AbortSignal.timeout(5000)
-    });
-    return { attempted: true };
-  } catch { return { attempted: true, failed: true }; }
 }
 
 const callOptions = { enforceAppCheck: false, maxInstances: 20 };
@@ -760,7 +726,7 @@ const normalizeProfileInput = (input = {}, existing = {}) => ({
 
 function validateProfileInput(profile) {
   if (profile.voiceSettings?.source === 'custom'
-    && !/^voice_[A-Za-z0-9_-]+$/.test(profile.voiceSettings?.customVoiceId || '')) {
+    && !/^[A-Za-z0-9]{20}$/.test(profile.voiceSettings?.customVoiceId || '')) {
     throw new HttpsError('invalid-argument', 'Enter a valid custom voice ID beginning with voice_.');
   }
   return profile;
@@ -857,13 +823,17 @@ export const previewAIAgentRuntime = onCall(callOptions, async request => {
   return runtimePreview(compiled);
 });
 
-/** Mint one short-lived OpenAI credential for a browser-only draft preview. */
+/**
+ * Hear a draft profile before it is used. A voice sample comes back as audio;
+ * a test conversation gets a single-use link to the tool-free preview agent
+ * plus the prompt and voice compiled for this draft.
+ */
 export const createAIAgentPreviewSession = onCall(
-  { ...callOptions, secrets: [HYBRID_OPENAI_API_KEY] },
+  { ...callOptions, secrets: [REP_PRACTICE_ELEVENLABS_KEY] },
   async request => {
-    const { db, uid, access } = await requireDialer(request, { manageAgents: true });
-    const apiKey = secretValue(HYBRID_OPENAI_API_KEY);
-    if (!apiKey) throw new HttpsError('failed-precondition', 'OpenAI is not configured for agent previews.');
+    const { db, access } = await requireDialer(request, { manageAgents: true });
+    const apiKey = secretValue(REP_PRACTICE_ELEVENLABS_KEY);
+    if (!apiKey) throw new HttpsError('failed-precondition', 'ElevenLabs is not configured for agent previews.');
 
     const mode = clean(request.data?.mode, 20) || 'conversation';
     let profile;
@@ -879,21 +849,21 @@ export const createAIAgentPreviewSession = onCall(
       throw new HttpsError('invalid-argument', clean(error?.message, 400) || 'The agent preview configuration is invalid.');
     }
 
-    let secret;
+    const about = { mode, voice: preview.compiled.voice, effectiveConfigHash: preview.compiled.effectiveConfigHash };
     try {
-      secret = await mintAgentPreviewClientSecret({ apiKey, uid, session: preview.session });
+      if (mode === 'sample') {
+        return { ...about, ...(await synthesizePreviewSample({ apiKey, text: preview.sampleText, voiceId: preview.voiceId })) };
+      }
+      return {
+        ...about,
+        signedUrl: await mintPreviewConversationUrl({ apiKey, agentId: LIVE_CALL_AGENT_IDS.previewAgent }),
+        prompt: preview.prompt,
+        firstMessage: preview.firstMessage,
+        voiceId: preview.voiceId
+      };
     } catch (error) {
       throw new HttpsError('internal', clean(error?.message, 400) || 'Could not start the agent preview.');
     }
-
-    return {
-      clientSecret: secret.value,
-      expiresAt: secret.expiresAt,
-      mode,
-      model: preview.compiled.model,
-      voice: preview.compiled.voice,
-      effectiveConfigHash: preview.compiled.effectiveConfigHash
-    };
   }
 );
 
@@ -1497,9 +1467,8 @@ export const recordHybridCallEvent = onRequest({
           sessionConfig: runtime.compiled.sessionConfig,
           instructions: runtime.compiled.instructions,
           tools: runtime.compiled.tools,
-          // Persisted so hybridSidebandControl can re-authorize each tool call
-          // against Firestore instead of trusting the media service, which
-          // holds only a shared secret and is not a trust boundary.
+          // Persisted so hybridAITools can re-authorize each tool call against
+          // Firestore instead of trusting the agent's request.
           permissions: runtime.compiled.permissions,
           offerTracks: runtime.compiled.offerTracks,
           knowledgeBaseIds: runtime.compiled.knowledgeBaseIds,
@@ -1509,7 +1478,8 @@ export const recordHybridCallEvent = onRequest({
           callPlanKey: runtime.compiled.callPlanKey,
           callPlanVersion: runtime.compiled.callPlanVersion,
           callPlanHash: runtime.compiled.callPlanHash,
-          handoffPhrase: runtime.compiled.handoffPhrase
+          handoffPhrase: runtime.compiled.handoffPhrase,
+          openingLine: runtime.compiled.openingLine
         },
         createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp()
       }, { merge: true });
@@ -1597,7 +1567,7 @@ function mediaSecretOk(req) {
 }
 
 export const hybridAIMediaControl = onRequest({
-  secrets: [HYBRID_AI_MEDIA_SECRET, HYBRID_OPENAI_API_KEY, HYBRID_TWILIO_ACCOUNT_SID, HYBRID_TWILIO_AUTH_TOKEN, HYBRID_TWILIO_TWIML_APP_SID],
+  secrets: [HYBRID_AI_MEDIA_SECRET, HYBRID_TWILIO_ACCOUNT_SID, HYBRID_TWILIO_AUTH_TOKEN, HYBRID_TWILIO_TWIML_APP_SID],
   maxInstances: 30
 }, async (req, res) => {
   if (req.method !== 'POST') { res.set('Allow', 'POST').status(405).json({ error: 'method-not-allowed' }); return; }
@@ -1623,7 +1593,7 @@ export const hybridAIMediaControl = onRequest({
     } catch (error) {
       await endFailedAIMediaPstn(db, callId, {
         reason: `sideband_attach_failed: ${clean(error?.message, 240) || 'unknown'}`,
-        source: 'media_control_attached', realtimeCallId: aiSessionId
+        source: 'media_control_attached'
       });
       res.status(409).json({ ok: false, error: 'ai-attach-failed', safelyEnded: true }); return;
     }
@@ -1681,101 +1651,3 @@ export const hybridAIMediaControl = onRequest({
 
 // ------------------------------------------------------- OpenAI SIP webhook
 
-/**
- * OpenAI Realtime SIP incoming-call webhook.
- *
- * The realtime runtime/service is expected to originate a SIP participant to
- * OpenAI with an X-BiteSites-Call-ID header. This endpoint accepts the call with
- * the precompiled server-side runtime and writes the returned session metadata
- * to aiMediaJobs. Persistent monitoring/tool events belong in the media runtime,
- * not in this short HTTP request.
- */
-export const openAIRealtimeIncomingCall = onRequest({
-  secrets: [HYBRID_OPENAI_API_KEY, HYBRID_AI_MEDIA_SECRET, HYBRID_TWILIO_ACCOUNT_SID, HYBRID_TWILIO_AUTH_TOKEN, HYBRID_TWILIO_TWIML_APP_SID],
-  maxInstances: 30
-}, async (req, res) => {
-  // OpenAI webhook signature verification should be terminated by the dedicated
-  // media runtime in production. This Firebase endpoint is intentionally gated
-  // behind our media secret when invoked by that runtime, not exposed as the
-  // primary public OpenAI webhook.
-  if (!mediaSecretOk(req)) { res.status(401).json({ error: 'unauthorized' }); return; }
-  const db = getFirestore();
-  const callId = clean(req.body?.callId || req.body?.bitesitesCallId, 200);
-  const realtimeCallId = clean(req.body?.realtimeCallId || req.body?.data?.call_id, 240);
-  if (!callId || !realtimeCallId) { res.status(400).json({ error: 'missing-call-identifiers' }); return; }
-  const jobSnapshot = await db.doc(`aiMediaJobs/${callId}`).get();
-  if (!jobSnapshot.exists) {
-    await rejectOpenAIRealtimeCall(realtimeCallId);
-    res.status(404).json({ error: 'media-job-not-found' }); return;
-  }
-  const job = jobSnapshot.data() || {};
-  const liveCallSnapshot = await db.doc(`calls/${callId}`).get();
-  const liveController = clean(liveCallSnapshot.get('control.controller'), 40);
-  if (['accepted', 'active'].includes(clean(job.status, 40)) && clean(job.realtimeCallId, 240) === realtimeCallId) {
-    res.status(200).json({ ok: true, realtimeCallId, idempotent: true }); return;
-  }
-  if (['accepted', 'active'].includes(clean(job.status, 40))) {
-    await rejectOpenAIRealtimeCall(realtimeCallId);
-    res.status(409).json({ error: 'different-realtime-call-already-attached' }); return;
-  }
-  if (!liveCallSnapshot.exists || !isAIMediaAttachPending(job) || !['ai', 'transitioning'].includes(liveController)) {
-    // A webhook can arrive after the deadline worker has already ended the
-    // prospect leg.  Reject rather than accidentally resurrecting an AI
-    // session from that stale SIP invite.
-    await rejectOpenAIRealtimeCall(realtimeCallId);
-    res.status(409).json({ error: 'ai-media-not-attachable' }); return;
-  }
-  const runtime = job.runtime || {};
-  const apiKey = secretValue(HYBRID_OPENAI_API_KEY);
-  if (!apiKey) {
-    await endFailedAIMediaPstn(db, callId, {
-      reason: 'openai_api_key_not_configured', source: 'realtime_incoming', realtimeCallId
-    });
-    res.status(503).json({ error: 'openai-not-configured' }); return;
-  }
-
-  let response;
-  let body = '';
-  try {
-    response = await fetch(`https://api.openai.com/v1/realtime/calls/${encodeURIComponent(realtimeCallId)}/accept`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        type: 'realtime',
-        model: clean(runtime.model, 120) || 'gpt-realtime-2.1',
-        instructions: clean(runtime.instructions, 30000),
-        ...sanitizeRealtimeSessionConfig(runtime.sessionConfig, clean(runtime.voice, 120) || 'marin')
-      }), signal: AbortSignal.timeout(10_000)
-    });
-    body = await response.text();
-  } catch (error) {
-    await rejectOpenAIRealtimeCall(realtimeCallId);
-    await endFailedAIMediaPstn(db, callId, {
-      reason: `openai_accept_transport_failed: ${clean(error?.message, 240) || 'unknown'}`,
-      source: 'realtime_accept', realtimeCallId
-    });
-    res.status(502).json({ error: 'openai-accept-transport-failed', safelyEnded: true }); return;
-  }
-  if (!response.ok) {
-    // Reject is the documented response for an inbound SIP invite we will not
-    // handle.  Regardless of its result, the already-answered PSTN leg is
-    // immediately ended through the carrier fail-safe.
-    await rejectOpenAIRealtimeCall(realtimeCallId);
-    await endFailedAIMediaPstn(db, callId, {
-      reason: `openai_accept_failed: ${clean(body, 240) || response.status}`,
-      source: 'realtime_accept', realtimeCallId
-    });
-    res.status(502).json({ error: 'openai-accept-failed', safelyEnded: true }); return;
-  }
-  let accepted = {};
-  try { accepted = JSON.parse(body); } catch { accepted = { raw: clean(body, 1000) }; }
-  await db.doc(`aiMediaJobs/${callId}`).set({
-    status: 'accepted', realtimeCallId, openAI: { callId: realtimeCallId, wssUrl: clean(accepted?.wss_url, 1000) },
-    updatedAt: FieldValue.serverTimestamp()
-  }, { merge: true });
-  await db.doc(`calls/${callId}`).set({
-    'media.attachState': 'accepted', 'media.realtimeCallId': realtimeCallId,
-    updatedAt: FieldValue.serverTimestamp()
-  }, { merge: true });
-  res.status(200).json({ ok: true, realtimeCallId, wssUrl: clean(accepted?.wss_url, 1000) });
-});

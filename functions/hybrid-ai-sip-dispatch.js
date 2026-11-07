@@ -1,10 +1,10 @@
-// Hybrid Dialer V2 — attach one isolated OpenAI Realtime SIP participant to
-// every AI-controlled Twilio conference.
+// Hybrid Dialer V2 — attach one isolated ElevenLabs agent participant to every
+// AI-controlled Twilio conference.
 //
 // Firebase remains the control plane: Firestore says a call needs AI, this
-// trigger claims that job exactly once, and Twilio creates the SIP leg. OpenAI
-// carries the realtime media; no long-lived audio socket is kept inside a
-// Firebase Function.
+// trigger claims that job exactly once, and Twilio dials the ElevenLabs SIP
+// endpoint. ElevenLabs carries the media; no long-lived audio socket is kept
+// inside a Firebase Function. See live-call-elevenlabs.js for the whole path.
 
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { onDocumentWritten } from 'firebase-functions/v2/firestore';
@@ -18,17 +18,20 @@ import {
   AI_MEDIA_ATTACH_PENDING, failClosedAIMediaAttachment, isAIMediaAttachExpired
 } from './hybrid-media-failsafe.js';
 import { externalDialingAdmission } from './deployment-environment.js';
+import { liveCallSipUri } from './live-call-elevenlabs.js';
+import { LIVE_CALL_AGENT_IDS } from './live-call-agent-ids.js';
 
 const TWILIO_ACCOUNT_SID = defineSecret('TWILIO_ACCOUNT_SID');
 const TWILIO_AUTH_TOKEN = defineSecret('TWILIO_AUTH_TOKEN');
-const OPENAI_API_KEY = defineSecret('OPENAI_API_KEY');
-const OPENAI_PROJECT_ID = defineString('OPENAI_PROJECT_ID', { default: '' });
+// The password Twilio uses to authenticate to our ElevenLabs SIP trunk.
+const ELEVENLABS_SIP_PASSWORD = defineSecret('ELEVENLABS_SIP_PASSWORD');
 const PUBLIC_APP_URL = defineString('PUBLIC_APP_URL', { default: 'https://bitesites.org' });
 
-const secrets = [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, OPENAI_API_KEY];
+const secrets = [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, ELEVENLABS_SIP_PASSWORD];
+export const TWILIO_SECRETS = [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN];
 const API_BASE = 'https://api.twilio.com/2010-04-01';
 
-const secretValue = secret => {
+export const secretValue = secret => {
   try { return secret.value() || ''; } catch { return ''; }
 };
 
@@ -36,9 +39,9 @@ const xml = value => String(value ?? '')
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
 
-const publicUrl = () => String(PUBLIC_APP_URL.value() || 'https://bitesites.org').replace(/\/$/, '');
+export const publicUrl = () => String(PUBLIC_APP_URL.value() || 'https://bitesites.org').replace(/\/$/, '');
 
-function twilioSignatureValid(req, authToken) {
+export function twilioSignatureValid(req, authToken) {
   const signature = String(req.get?.('x-twilio-signature') || '');
   if (!authToken || !signature) return false;
   let url;
@@ -53,7 +56,7 @@ function twilioSignatureValid(req, authToken) {
   return timingSafeEqual(Buffer.from(expected), Buffer.from(signature));
 }
 
-async function twilioPost(path, params) {
+export async function twilioPost(path, params) {
   const accountSid = secretValue(TWILIO_ACCOUNT_SID);
   const authToken = secretValue(TWILIO_AUTH_TOKEN);
   if (!accountSid || !authToken) throw new Error('Twilio credentials are not configured');
@@ -78,49 +81,38 @@ async function twilioPost(path, params) {
   try { return JSON.parse(text); } catch { throw new Error('Twilio returned invalid JSON'); }
 }
 
-async function hangupRealtimeCall(realtimeCallId) {
-  const apiKey = secretValue(OPENAI_API_KEY);
-  if (!apiKey || !realtimeCallId) return { attempted: false };
-  try {
-    const response = await fetch(`https://api.openai.com/v1/realtime/calls/${encodeURIComponent(realtimeCallId)}/hangup`, {
-      method: 'POST', headers: { Authorization: `Bearer ${apiKey}` }, signal: AbortSignal.timeout(5000)
-    });
-    return { attempted: true, ok: response.ok };
-  } catch { return { attempted: true, ok: false }; }
-}
-
 /**
- * The only process that holds both carrier and OpenAI credentials.  Every
- * asynchronous AI media failure converges here so the prospect leg is ended
- * even when the sideband service itself has crashed or lost its request.
+ * Every asynchronous AI media failure converges here so the prospect leg is
+ * ended even when the AI side never answered or dropped mid-setup. The AI's
+ * own leg is ended too, which hangs up ElevenLabs.
  */
-async function terminateFailedAIMedia(db, callId, { reason, source, realtimeCallId = '', now = new Date() } = {}) {
-  const result = await failClosedAIMediaAttachment(db, callId, { reason, source, realtimeCallId, now });
+export async function terminateFailedAIMedia(db, callId, { reason, source, now = new Date() } = {}) {
+  const result = await failClosedAIMediaAttachment(db, callId, { reason, source, now });
   if (!result.ok) return result;
-  if (result.shouldTerminateRealtime && result.realtimeCallId) {
-    const hangup = await hangupRealtimeCall(result.realtimeCallId);
-    if (hangup.attempted) {
-      await db.doc(`calls/${callId}`).set({
-        'media.realtimeHangupAttemptedAt': FieldValue.serverTimestamp(),
-        'media.realtimeHangupFailed': hangup.ok !== true,
-        ...(hangup.ok ? { 'media.realtimeHangupConfirmedAt': FieldValue.serverTimestamp() } : {}),
-        updatedAt: FieldValue.serverTimestamp()
-      }, { merge: true }).catch(() => {});
-    }
+  const aiLeg = clean((await db.doc(`aiMediaJobs/${callId}`).get().catch(() => null))?.get?.('sipCallSid'), 200);
+  if (aiLeg) {
+    await db.doc(`aiMediaJobs/${callId}`).set({ endRequestedBy: 'server' }, { merge: true }).catch(() => {});
+    await twilioPost(`/Calls/${encodeURIComponent(aiLeg)}.json`, { Status: 'completed' }).catch(() => {});
   }
   if (!result.shouldTerminatePstn) return result;
+  return endProspectLeg(db, callId, result.providerCallId, 'ai_media_setup_failed');
+}
+
+/** End the prospect's carrier leg, recording why. A leg already gone is fine. */
+export async function endProspectLeg(db, callId, providerCallId, reason) {
+  const result = { ok: true, providerCallId };
   try {
-    await twilioPost(`/Calls/${encodeURIComponent(result.providerCallId)}.json`, { Status: 'completed' });
+    await twilioPost(`/Calls/${encodeURIComponent(providerCallId)}.json`, { Status: 'completed' });
     await db.doc(`calls/${callId}`).set({
       'media.pstnEndRequestedAt': FieldValue.serverTimestamp(),
-      'media.pstnEndReason': 'ai_media_setup_failed',
+      'media.pstnEndReason': reason,
       updatedAt: FieldValue.serverTimestamp()
     }, { merge: true });
   } catch (error) {
     if ([400, 404].includes(Number(error?.status))) {
       await db.doc(`calls/${callId}`).set({
         'media.pstnEndRequestedAt': FieldValue.serverTimestamp(),
-        'media.pstnEndReason': 'ai_media_setup_failed_already_terminal',
+        'media.pstnEndReason': `${reason}_already_terminal`,
         updatedAt: FieldValue.serverTimestamp()
       }, { merge: true }).catch(() => {});
       return result;
@@ -130,6 +122,7 @@ async function terminateFailedAIMedia(db, callId, { reason, source, realtimeCall
       'media.pstnEndLastAttemptAt': FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp()
     }, { merge: true }).catch(() => {});
+    return { ok: false, providerCallId };
   }
   return result;
 }
@@ -143,8 +136,7 @@ async function waitForMediaAttachmentDeadline(db, callId, deadlineAt) {
   const snapshot = await db.doc(`aiMediaJobs/${callId}`).get();
   if (!snapshot.exists || !isAIMediaAttachExpired(snapshot.data(), new Date())) return { expired: false };
   await terminateFailedAIMedia(db, callId, {
-    reason: 'ai_media_attach_timeout', source: 'attachment_deadline',
-    realtimeCallId: clean(snapshot.get('realtimeCallId'), 240)
+    reason: 'ai_media_attach_timeout', source: 'attachment_deadline'
   });
   return { expired: true };
 }
@@ -165,13 +157,13 @@ export const dispatchHybridAIToSip = onDocumentWritten(
     if (job.status === 'failed' || isAIMediaAttachExpired(job, new Date())) {
       await terminateFailedAIMedia(db, callId, {
         reason: clean(job.error, 300) || (job.status === 'failed' ? 'ai_media_job_failed' : 'ai_media_attach_timeout'),
-        source: job.failureSource || 'media_job_trigger', realtimeCallId: clean(job.realtimeCallId, 240)
+        source: job.failureSource || 'media_job_trigger'
       });
       return;
     }
     if (job.status !== 'pending' || job.sipCallSid) return;
 
-    // Defense in depth: a staging project must never create an OpenAI SIP leg,
+    // Defense in depth: a staging project must never create an AI SIP leg,
     // even if a stale trigger/document bypassed the dialer admission gate.
     // `terminateFailedAIMedia` only tears down an already-existing carrier leg;
     // it never originates a new external call.
@@ -179,15 +171,15 @@ export const dispatchHybridAIToSip = onDocumentWritten(
     if (!dialingAdmission.allowed) {
       await terminateFailedAIMedia(db, callId, {
         reason: `external_dialing_disabled:${dialingAdmission.reason}`,
-        source: 'sip_dispatch_environment_gate', realtimeCallId: clean(job.realtimeCallId, 240)
+        source: 'sip_dispatch_environment_gate'
       });
       return;
     }
 
-    const projectId = clean(OPENAI_PROJECT_ID.value(), 160);
-    if (!projectId) {
+    const sipPassword = secretValue(ELEVENLABS_SIP_PASSWORD);
+    if (!LIVE_CALL_AGENT_IDS.agent || !LIVE_CALL_AGENT_IDS.sipUser || !sipPassword) {
       await terminateFailedAIMedia(db, callId, {
-        reason: 'OPENAI_PROJECT_ID is not configured', source: 'sip_dispatch'
+        reason: 'ElevenLabs live calling is not set up', source: 'sip_dispatch'
       });
       return;
     }
@@ -204,15 +196,16 @@ export const dispatchHybridAIToSip = onDocumentWritten(
     if (!claimed) return;
 
     try {
-      // Twilio forwards X-* URI headers in the SIP INVITE. OpenAI includes those
-      // headers in realtime.call.incoming, which deterministically maps the SIP
-      // call back to this Firestore call without timestamp guessing.
-      const sipHeader = `X-BiteSites-Call-ID=${encodeURIComponent(callId)}`;
-      const to = `sip:${projectId}@sip.api.openai.com;transport=tls?${sipHeader}`;
+      // Twilio forwards X-* URI headers in the SIP INVITE, and ElevenLabs passes
+      // them to our initiation webhook, which maps the SIP call back to this
+      // Firestore call without timestamp guessing.
+      const to = liveCallSipUri({ sipUser: LIVE_CALL_AGENT_IDS.sipUser, callId });
       const base = publicUrl();
       const created = await twilioPost('/Calls.json', {
         To: to,
         From: 'BiteSitesAI',
+        SipAuthUsername: LIVE_CALL_AGENT_IDS.sipUser,
+        SipAuthPassword: sipPassword,
         Url: `${base}/api/twilio-ai-participant-twiml?callId=${encodeURIComponent(callId)}`,
         Method: 'POST',
         StatusCallback: `${base}/api/twilio-ai-sip-events?callId=${encodeURIComponent(callId)}`,
@@ -253,21 +246,19 @@ export const reconcileHybridAIMediaAttachments = onSchedule(
     for (const entry of pending.docs) {
       if (!isAIMediaAttachExpired(entry.data(), now)) continue;
       await terminateFailedAIMedia(db, entry.id, {
-        reason: 'ai_media_attach_timeout', source: 'attachment_reconciler',
-        realtimeCallId: clean(entry.get('realtimeCallId'), 240), now
+        reason: 'ai_media_attach_timeout', source: 'attachment_reconciler', now
       });
     }
     for (const entry of failed.docs) {
       await terminateFailedAIMedia(db, entry.id, {
         reason: clean(entry.get('error'), 300) || 'ai_media_job_failed',
-        source: clean(entry.get('failureSource'), 100) || 'attachment_reconciler',
-        realtimeCallId: clean(entry.get('realtimeCallId'), 240), now
+        source: clean(entry.get('failureSource'), 100) || 'attachment_reconciler', now
       });
     }
   }
 );
 
-/** TwiML for the Twilio -> OpenAI SIP leg after OpenAI answers. */
+/** TwiML for the Twilio -> ElevenLabs SIP leg after ElevenLabs answers. */
 export const twilioHybridAIParticipantTwiML = onRequest(
   { secrets: [TWILIO_AUTH_TOKEN], maxInstances: 50 },
   async (req, res) => {
@@ -325,6 +316,14 @@ export const twilioHybridAISipEvent = onRequest(
       await terminateFailedAIMedia(db, callId, {
         reason: `AI SIP participant ${status}`, source: 'sip_status_callback'
       });
+    } else if (status === 'completed' && priorJob.get('endRequestedBy') !== 'server') {
+      // The AI hung up (or dropped) on its own. If it was still the only one
+      // talking to the prospect, the call is over: never leave a person alone
+      // in a silent conference. During a handoff the rep is already joining.
+      const call = (await db.doc(`calls/${callId}`).get()).data() || {};
+      if (call?.control?.controller === 'ai' && call.providerCallId && !call.endedAt) {
+        await endProspectLeg(db, callId, call.providerCallId, 'ai_ended_call');
+      }
     }
     res.status(200).json({ ok: true });
   }

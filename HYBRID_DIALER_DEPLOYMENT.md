@@ -11,11 +11,10 @@ npm run setup                # Node/dependencies/build/tests plus non-secret pre
 npm run preflight:hybrid     # local + Firebase/Google Cloud readiness report
 npm run configure:hybrid     # consume exported credentials without writing them to disk
 npm run dry-run:hybrid       # validate the targeted Firebase deployment without changes
-npm run bootstrap:sideband   # create a scale-to-zero URL before the OpenAI webhook exists
 npm run deploy:hybrid        # gated deploy after preflight and validation pass
 ```
 
-`configure:hybrid` reads the secret names listed below from the current process environment, sends populated values directly to Firebase Secret Manager over stdin, and never prints or writes those values. It also generates `AI_MEDIA_WEBHOOK_SECRET` when that shared secret does not exist. Set `OPENAI_PROJECT_ID` in the same process; the script writes only that public identifier and `PUBLIC_APP_URL` to the ignored Functions parameter file.
+`configure:hybrid` reads the secret names listed below from the current process environment, sends populated values directly to Firebase Secret Manager over stdin, and never prints or writes those values. It also generates `AI_MEDIA_WEBHOOK_SECRET` when that shared secret does not exist, and makes sure `PUBLIC_APP_URL` is in the ignored Functions parameter file without touching anything else there.
 
 When `TWILIO_ACCOUNT_SID` and `TWILIO_AUTH_TOKEN` are supplied and no browser key or TwiML App is stored yet, the command verifies the Twilio account, creates/reuses the `BiteSites Hybrid Voice` TwiML App with the production callback, creates the browser Voice API key, and stores the returned one-time key secret directly in Secret Manager.
 
@@ -23,7 +22,7 @@ For example, export the values in your current terminal (do not save this comman
 
 The deploy command targets the Hybrid V2 Functions plus Hosting and Firestore, including the new training and default-campaign callables. It does not redeploy unrelated legacy Kixie, email, or lifecycle functions, so those providers do not need to be reconfigured for this release.
 During Firebase analysis, the command temporarily selects `functions/hybrid-index.js` and always restores the normal package entrypoint in a `finally` block.
-The Cloud Run phase creates or reuses a dedicated `bitesites-sideband` service account and grants it access only to the three sideband secrets.
+There is no Cloud Run service any more: since 2026-11-07 the AI voice runs on ElevenLabs (section 4).
 
 **Human-gate parameter note:** the local production parameter file intentionally
 keeps `OUTBOUND_EXTERNAL_DIALING=disabled`. A broad Hybrid deploy propagates
@@ -34,14 +33,12 @@ separately approved §11 human-only gate is already open, restore only
 with `OUTBOUND_EXTERNAL_DIALING=enabled` and the §11 deploy authorization.
 Leave AI dispatch functions and paid screening disabled.
 
-OpenAI webhook setup is intentionally two-phase. After the initial credentials are configured, `bootstrap:sideband` deploys the service with a nonfunctional placeholder webhook secret and `min=0`, verifies `/health`, and prints the webhook URL. Create the `realtime.call.incoming` webhook at that URL, store its real signing secret with `configure:hybrid`, and only then run the final deploy. The final deploy replaces the placeholder with the Secret Manager binding and sets `min=1` for persistent sideband sockets.
 
 ## 1. Production architecture
 
 - **Firebase Functions + Firestore** are the control plane: authentication, call ownership, DNC, call state, AI profiles, prompt compilation, transcripts, audit events, voicemail policy, and carrier control.
 - **Twilio Programmable Voice** originates the PSTN calls, runs AMD, hosts one conference per prospect call, and provides browser audio through the Voice SDK.
-- **OpenAI Realtime SIP** supplies one isolated AI voice session for each answered overflow call routed to AI.
-- **Realtime sideband service** maintains the long-lived server-side OpenAI Realtime connection, transcript stream, approved tool calls, and smooth-handoff coordination. It has neither Firebase Admin credentials nor Twilio credentials.
+- **ElevenLabs Agents over SIP** supplies one isolated AI voice session for each answered call routed to AI. Twilio dials the ElevenLabs SIP endpoint and joins that leg to the call's conference. ElevenLabs holds no Firebase or Twilio credentials: it fetches each call's compiled settings from `/api/hybrid-ai-call-init`, runs every tool through `/api/hybrid-ai-tools`, and posts the transcript to `/api/hybrid-ai-post-call` when the call ends. See `functions/live-call-elevenlabs.js`.
 
 ## 2. Firebase server configuration
 
@@ -55,14 +52,15 @@ The following values are server-only. Never place them in the Vite/browser envir
 - `TWILIO_API_KEY_SECRET`
 - `TWILIO_TWIML_APP_SID`
 - `AI_MEDIA_WEBHOOK_SECRET`
-- `OPENAI_API_KEY` only for the compatibility Firebase OpenAI endpoint; the live sideband service also requires its own server-side binding to the same or a separately scoped OpenAI key.
+- `ELEVENLABS_API_KEY` (already used by Bit, Byte and rep practice)
+- `ELEVENLABS_SIP_PASSWORD`: the password Twilio presents to the ElevenLabs SIP trunk
+- `ELEVENLABS_WEBHOOK_SECRET`: the post-call webhook signing secret, written by the setup script
 
-`AI_MEDIA_WEBHOOK_SECRET` should be a new high-entropy value and must match the value supplied to the sideband service. It is not an API key presented to the browser.
+`AI_MEDIA_WEBHOOK_SECRET` should be a high-entropy value. The setup script copies it into an ElevenLabs workspace secret, which ElevenLabs sends as the `x-ai-media-secret` header on every tool call and initiation webhook. It is never presented to a browser. No OpenAI key or project is used.
 
 ### Firebase deployment parameters
 
 - `PUBLIC_APP_URL=https://bitesites.org`
-- `OPENAI_PROJECT_ID=<OpenAI project identifier used for Realtime SIP>`
 
 Deploy the parameters with the same Firebase project that serves `bitesites.org`.
 
@@ -102,36 +100,35 @@ Relevant hosted routes are:
 
 Twilio signatures are validated on the Twilio-facing HTTP endpoints.
 
-## 4. OpenAI Realtime setup
+## 4. ElevenLabs setup for AI calls
 
-Use an OpenAI project intended for the BiteSites calling workload.
+AI calling moved from OpenAI Realtime to ElevenLabs on 2026-11-07 (branch `feat/elevenlabs-live-calls`). **Nothing below has been run yet**: the ElevenLabs objects do not exist, and `functions/live-call-agent-ids.js` is empty, so every AI-call endpoint refuses to work and the dispatcher ends any AI-routed call it is asked to connect.
 
-The Firebase parameter `OPENAI_PROJECT_ID` is used to address the OpenAI Realtime SIP destination when BiteSites creates an AI overflow leg.
+1. Create the SIP password once and store it: `node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))" | firebase functions:secrets:set ELEVENLABS_SIP_PASSWORD --data-file - --project bitesites-org`.
+2. With the owner's go-ahead (it changes account-wide ElevenLabs settings), run `scripts/setup-live-call-agents.mjs` as shown at the top of that file. It creates the header secret, one webhook tool per grantable tool, the live-call agent, a tool-free preview agent, a SIP trunk entry protected by the password, a post-call webhook used only by this agent (its signing secret goes straight into Secret Manager), and the account's initiation webhook URL. It refuses to replace an initiation webhook that belongs to someone else: this ElevenLabs account also holds The Grooming Cove's agents.
+3. Commit the regenerated `functions/live-call-agent-ids.js`.
 
-Create an OpenAI project webhook for `realtime.call.incoming` and point it to the deployed sideband service:
+The pieces and what each is trusted to do:
 
-`https://<sideband-service-domain>/openai/webhook`
+| Piece | Job | Guard |
+|---|---|---|
+| `dispatchHybridAIToSip` | Has Twilio dial `sip:<user>@sip.rtc.elevenlabs.io:5061;transport=tls` with `X-BiteSites-Call-ID` | Staging gate, setup check, one claim per call |
+| `hybridAICallInit` | Attaches the AI as controller and returns the compiled prompt, a fixed opening line with the AI disclosure, and the voice | Header secret, our agent id only, call must still be routed to AI |
+| `hybridAITools` | Runs every tool through `executeAgentTool` | Header secret, conversation must be the one attached to that call, grant re-checked from Firestore |
+| `hybridAIPostCall` | Stores the transcript as `calls/{id}/turns` | HMAC signature, our agent only, matching conversation |
+| `hybridAIHandoffCarrier` | On a handoff, mutes the AI and plays the handoff line to the conference; ends the AI leg once a person owns the call | Firestore trigger on `calls/{id}` |
+| `hybridAIHandoffAnnouncement`, `hybridAIHandoffAudio` | The handoff line, spoken in the agent's own voice by ElevenLabs text-to-speech | Twilio signature; per-call HMAC token |
+| `twilioHybridAISipEvent` | If the AI leg ends while the AI still owns the call, ends the prospect's leg too | Twilio signature |
 
-Store the webhook signing secret as `OPENAI_WEBHOOK_SECRET` on the sideband service. The service verifies the OpenAI webhook signature before accepting a Realtime call.
+What changed in behavior, compared with the OpenAI sideband:
 
-The sideband service accepts the incoming Realtime call using the server-compiled profile, campaign/session overrides, approved knowledge, voice, model, and bounded tool list. The browser never sends the final system instructions directly to OpenAI.
+- **No live transcript during the call.** ElevenLabs gives the server no stream of an in-progress phone call, so transcripts arrive when the call ends. A rep can still listen live.
+- **The opening line is fixed** ("Hi, this is an AI assistant calling on behalf of <legal seller>. Do you have a quick minute?"), so the AI disclosure no longer depends on the model.
+- **Handoff timing.** The rep joins while the handoff line plays, instead of after the AI's audio buffer drained. If the announcement fails, the handoff still completes.
+- **Hang-up.** The agent hangs up with ElevenLabs' built-in end-call tool (`hang_up`), after the server `end_call` tool records the outcome.
+- **Tool retries.** ElevenLabs sends no per-call tool id, so a retry is recognized by conversation, tool and arguments, and gets the stored result.
 
-## 5. Deploy the Realtime sideband service
-
-The service lives in `services/realtime-sideband` and is containerized with its included `Dockerfile`.
-
-Required runtime values:
-
-- `OPENAI_API_KEY`
-- `OPENAI_WEBHOOK_SECRET`
-- `AI_MEDIA_WEBHOOK_SECRET`
-- `FIREBASE_CONTROL_URL=https://bitesites.org/api/hybrid-sideband-control`
-- `FIREBASE_CARRIER_URL=https://bitesites.org/api/hybrid-ai-carrier-control`
-- `PORT` supplied by the hosting platform
-
-The service must support long-lived outbound WebSocket connections. On Cloud Run, keep CPU available while an instance is alive so Realtime sideband sockets are not suspended after the webhook response returns.
-
-The only intentionally public application endpoints on the sideband service are its OpenAI webhook receiver and health endpoint. All call mutations go back through the bounded Firebase control surface.
+None of this has been tested on a real call. Section 8 still applies in full before any AI call reaches a prospect.
 
 ## 6. Deploy Firebase and Hosting
 
@@ -142,7 +139,6 @@ Before deployment:
 3. Run `npm run test:hybrid-dialer`.
 4. Run `npm run test:agent-runtime`.
 5. Run the Functions syntax check.
-6. Run the sideband syntax check.
 
 Then deploy the Firestore rules/indexes, Firebase Functions, and Firebase Hosting rewrites from this branch.
 
@@ -184,15 +180,15 @@ Run this sequence with numbers owned by or explicitly authorized for testing.
 ### Test C — transcript and listen
 
 - Let the AI conversation continue.
-- Confirm prospect and AI transcript turns appear live with speaker labels.
+- Confirm prospect and AI transcript turns appear, with speaker labels, once the call ends (ElevenLabs sends them after the call).
 - Click **Listen** and verify the rep hears both sides while the rep microphone is not sent to the conference.
 - Stop listening and verify the AI conversation continues.
 
 ### Test D — smooth takeover
 
 - Click **Take Over** on an AI call.
-- Confirm the AI speaks the configured handoff phrase.
-- Confirm the browser human leg does not join until the AI output audio buffer has actually finished.
+- Confirm the AI goes quiet and the configured handoff phrase plays in the agent's voice.
+- Confirm the rep's browser leg joins while or right after the phrase plays.
 - Confirm the rep then joins the existing conference and the prospect is not redialed.
 - Confirm the AI SIP leg exits after human ownership is established.
 
@@ -228,9 +224,9 @@ For the above calls, verify the stored call/audit data contains the expected rep
 Production outbound dialing should remain disabled until all of the following are true:
 
 - Firebase Functions and Hosting are deployed from a green commit.
-- Sideband health endpoint is healthy.
+- `scripts/setup-live-call-agents.mjs` has run and `functions/live-call-agent-ids.js` is committed.
 - Twilio credentials, API key, TwiML App, caller ID, and callbacks are configured.
-- OpenAI API/project/webhook configuration is valid.
+- The ElevenLabs agent, SIP trunk, initiation webhook and post-call webhook are configured, and one test call has reached `hybridAICallInit`.
 - All controlled live tests above pass.
 - Campaign consent basis, calling hours, AI/recording disclosures, voicemail scripts, DNC handling, and jurisdiction-specific requirements have been reviewed for the intended audience.
 
