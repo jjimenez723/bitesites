@@ -208,3 +208,21 @@ test('the pricing lesson comes from the published price list', () => {
   for (const [name, , price] of Object.values(SERVICE_PRICING).flat()) assert.ok(lines.includes(`${name}: ${price}`), name);
   assert.ok(pricing.points.some(point => /custom/i.test(point)));
 });
+
+test('the field guide quotes only published prices and covers every practice objection', () => {
+  const guide = publicRepCourse('bitesites').fieldGuide;
+  const published = Object.values(SERVICE_PRICING).flat().map(([name, , price]) => `${name} ${price}`.toLowerCase());
+  const priced = guide.services.flatMap(service => service.prices).filter(line => /\$/.test(line));
+  assert.ok(priced.length >= 6);
+  for (const line of priced) {
+    const [, amount] = line.match(/(from \$[\d,]+(?:\/mo)?)/i) || [];
+    assert.ok(amount && published.some(entry => entry.endsWith(amount.toLowerCase())), line);
+  }
+  assert.match(guide.priceNote, /custom/i);
+  // The pushback reps meet in practice: busy, a current vendor, price, "send info", a no, and do-not-call.
+  for (const pattern of [/busy/i, /web person/i, /how much/i, /send me/i, /not interested/i, /off your list/i]) {
+    assert.ok(guide.objections.some(item => pattern.test(item.they)), String(pattern));
+  }
+  assert.match(guide.objections.find(item => /off your list/i.test(item.they)).action, /Do not call/);
+  assert.equal(publicRepCourse('the-fine-line-group'), null);
+});

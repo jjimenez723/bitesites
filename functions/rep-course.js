@@ -7,8 +7,66 @@ import { SERVICE_PRICING } from './service-pricing.js';
 const PASS_RATIO = 0.8;
 
 const priceLines = plans => plans.map(([name, , price]) => `${name}: ${price}`);
+const priceOf = (plans, name) => plans.find(([plan]) => plan === name)?.[2] || '';
+
+// The one-page sheet a rep keeps open during practice and live calls. It only
+// repeats what the lessons teach, and its prices come from the same list.
+const BITESITES_FIELD_GUIDE = Object.freeze({
+  title: 'BiteSites rep field guide',
+  promise: 'We help local businesses stop losing customers they already earned.',
+  services: [
+    { name: 'Websites', does: 'A site built around one clear next step for the visitor.',
+      prices: [`Starter Site ${priceOf(SERVICE_PRICING.web, 'Starter Site').toLowerCase()}`, `Growth Site ${priceOf(SERVICE_PRICING.web, 'Growth Site').toLowerCase()}`] },
+    { name: 'Social media', does: 'Steady, on-brand posts that keep the business top of mind.',
+      prices: [`Visibility Starter ${priceOf(SERVICE_PRICING.social, 'Visibility Starter').toLowerCase()}`, `Growth Engine ${priceOf(SERVICE_PRICING.social, 'Growth Engine').toLowerCase()}`] },
+    { name: 'AI and automation', does: 'Every lead captured, followed up, and routed fast.',
+      prices: [`Audit ${priceOf(SERVICE_PRICING.ai, 'Automation Opportunity Audit').toLowerCase()}`, `Lead Flow Automation ${priceOf(SERVICE_PRICING.ai, 'Lead Flow Automation').toLowerCase()}`] },
+    { name: 'AI receptionists', does: 'Calls answered at any hour, so none go to voicemail.',
+      prices: ['Custom, priced on the strategy call'] }
+  ],
+  priceNote: 'Starting prices, not quotes. Every project is custom, so ask questions to find the right price.',
+  steps: [
+    { label: 'Open', line: 'Your name, BiteSites, why you are calling. Ask for a minute.' },
+    { label: 'Ask', line: 'One question about their business. Then stop talking.' },
+    { label: 'Listen', line: 'Find the one problem they care about most.' },
+    { label: 'Connect', line: 'Show how we fix that one problem.' },
+    { label: 'Ask for the yes', line: 'Invite them to a 20-minute call. Don’t wait for them to offer.' }
+  ],
+  script: [
+    { label: 'Open', say: 'Hi, this is [your name] with BiteSites. I know I caught you out of the blue. Do you have a quick minute?' },
+    { label: 'Ask', say: 'When a call comes in and nobody can pick up, what happens to it right now?' },
+    { label: 'Connect', say: 'It sounds like [their problem] is the real issue. That’s exactly what we fix.' },
+    { label: 'Ask for the yes', say: 'Can we set up 20 minutes to map out what would work for you? Does Tuesday or Wednesday work better?' },
+    { label: 'After the yes', say: 'Perfect, [day] at [time]. Thanks, [name]. Talk soon.' }
+  ],
+  questions: [
+    'When someone lands on your website, what’s the one thing you want them to do?',
+    'When a lead comes in on a Saturday, when does it get a reply?',
+    'Where do most of your new customers come from right now?'
+  ],
+  objections: [
+    { they: 'I’m busy.', you: 'Totally fair, I’ll be quick. One question: [ask]. Or is there a better time to call back?' },
+    { they: 'How much is it?', you: 'Websites start around $1,000, and it depends on what you need, because everything we build is custom. Can I ask a couple of questions?' },
+    { they: 'I already have a web person.', you: 'That’s great, I’m not here to replace anyone. What’s working, and what do you wish it did better?' },
+    { they: 'Just send me some info.', you: 'Sure. So it’s actually useful, what’s the one thing you’d most want fixed?' },
+    { they: 'Not interested.', you: 'No problem at all. Thanks for your time, and have a great day.' },
+    { they: 'Take me off your list.', you: 'Understood. I’ll take you off right now. Sorry for the interruption.', action: 'End the call and press Do not call.' }
+  ],
+  never: [
+    'Lie about who you are or why you are calling',
+    'Promise results, rankings, revenue, or guarantees',
+    'Make up a price, discount, or deadline',
+    'Criticize their current vendor',
+    'Keep pitching after a clear no',
+    'Record a call unless they agree after answering',
+    'Mix BiteSites, Stone Bellisimo, and The Fine Line Group customers or information'
+  ],
+  outcomes: ['Interested', 'Booked a meeting', 'Call back later', 'Not interested', 'Voicemail', 'Wrong number', 'Do not call'],
+  remember: 'When you hear yes, stop selling. Lock in the day and time.'
+});
 
 const BITESITES_COURSE = Object.freeze({
+  fieldGuide: BITESITES_FIELD_GUIDE,
   lessons: [
     {
       id: 'who-we-are',
@@ -196,6 +254,7 @@ export function publicRepCourse(accountId) {
   if (!course) return null;
   return {
     lessons: course.lessons,
+    fieldGuide: course.fieldGuide || null,
     quiz: course.quiz.map(({ id, question, options }) => ({ id, question, options })),
     passMark: Math.ceil(course.quiz.length * PASS_RATIO)
   };

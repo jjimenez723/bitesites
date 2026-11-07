@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { outbound } from './data';
 import { startPracticeCall } from './practice-call-client';
 import RepCourse from './RepCourse';
+import RepFieldGuide from './RepFieldGuide';
 
 const transcriptLengthLabel = turns => `${turns.length} transcript turns`;
 
@@ -29,6 +30,19 @@ export default function RepTraining({ accounts = [], loading = false, error = ''
   useEffect(() => () => {
     controllerRef.current?.stop().catch(() => {});
   }, []);
+
+  // The field guide comes with the course, so only accounts that have one show it.
+  const [guide, setGuide] = useState(null);
+  const guideAccountId = selected?.courseRequired ? selected.accountId : '';
+  useEffect(() => {
+    let active = true;
+    setGuide(null);
+    if (!guideAccountId) return undefined;
+    outbound.repCourse(guideAccountId)
+      .then(data => { if (active) setGuide(data?.course?.fieldGuide || null); })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [guideAccountId]);
 
   const updateTranscript = entry => {
     transcriptRef.current = [...transcriptRef.current, entry].slice(-80);
@@ -98,6 +112,8 @@ export default function RepTraining({ accounts = [], loading = false, error = ''
     }
   };
 
+  const inPractice = Boolean(selected?.ready && !selected.trainingExempt && !selected.passed && !(selected.courseRequired && !selected.quizPassed));
+
   if (loading) return <div className="admin-card rep-training-card"><p>Loading your training assignments…</p></div>;
   if (error) return <div className="admin-card rep-training-card">
     <h2>Sales practice</h2><p className="admin-error" role="alert">{error}</p>
@@ -151,70 +167,73 @@ export default function RepTraining({ accounts = [], loading = false, error = ''
         ))}
       </div>
 
-      {selected?.trainingExempt ? (
-        <div className="rep-training-ready" role="status">
-          <strong>An admin waived training for this account.</strong>
-          <span>{selected.campaignAssigned
-            ? `Your assigned campaign${selected.defaultCampaign?.name ? `, ${selected.defaultCampaign.name},` : ''} is available in the Dialer tab.`
-            : selected.defaultCampaign
-              ? `A manager still needs to add you to ${selected.defaultCampaign.name || 'the default campaign'} before campaign access is available.`
-              : 'A manager still needs to choose a default campaign before campaign access is available.'}</span>
-        </div>
-      ) : selected?.passed ? (
-        <div className="rep-training-ready" role="status">
-          <strong>You passed the required training.</strong>
-          <span>{selected.campaignAssigned
-            ? `Your assigned campaign${selected.defaultCampaign?.name ? `, ${selected.defaultCampaign.name},` : ''} is available in the Dialer tab.`
-            : 'A manager must choose a default campaign or free up campaign capacity before campaign access can be assigned.'}</span>
-        </div>
-      ) : !selected?.ready ? (
-        <div className="rep-training-setup" role="status">
-          Training scenarios are not configured for {selected?.accountName || 'this account'} yet. Ask a manager to contact BiteSites support.
-        </div>
-      ) : selected?.courseRequired && !selected.quizPassed ? (
-        <RepCourse key={selected.accountId} accountId={selected.accountId} accountName={selected.accountName} onPassed={onRefresh} />
-      ) : (
-        <section className="rep-training-session" aria-label="Sales practice session">
-          <div className="rep-training-scenario">
-            <span className="outbound-eyebrow">Next fictional prospect</span>
-            {scenario ? <>
-              <h3>{scenario.name}, {scenario.age} · {scenario.niche}</h3>
-              <p>{scenario.business} · {scenario.gender}</p>
-              <p>You’re calling this business for the first time. Get to yes if you can, and take a no well if you can’t.</p>
-            </> : <p>Start a role-play to meet the next prospect in your course.</p>}
+      <div className={`rep-training-layout ${guide && inPractice ? 'has-guide' : ''}`}>
+        {selected?.trainingExempt ? (
+          <div className="rep-training-ready" role="status">
+            <strong>An admin waived training for this account.</strong>
+            <span>{selected.campaignAssigned
+              ? `Your assigned campaign${selected.defaultCampaign?.name ? `, ${selected.defaultCampaign.name},` : ''} is available in the Dialer tab.`
+              : selected.defaultCampaign
+                ? `A manager still needs to add you to ${selected.defaultCampaign.name || 'the default campaign'} before campaign access is available.`
+                : 'A manager still needs to choose a default campaign before campaign access is available.'}</span>
           </div>
-
-          <div className="rep-training-actions">
-            <button className="btn-admin primary" type="button" disabled={busy || state === 'live'} onClick={start}>
-              {state === 'connecting' ? 'Connecting…' : state === 'live' ? 'Practice in progress' : 'Start role-play'}
-            </button>
-            <button className="btn-admin" type="button"
-              disabled={busy || !attemptId || transcript.length < 8}
-              onClick={finish}>
-              {state === 'scoring' ? 'Getting feedback…' : 'Finish and get feedback'}
-            </button>
+        ) : selected?.passed ? (
+          <div className="rep-training-ready" role="status">
+            <strong>You passed the required training.</strong>
+            <span>{selected.campaignAssigned
+              ? `Your assigned campaign${selected.defaultCampaign?.name ? `, ${selected.defaultCampaign.name},` : ''} is available in the Dialer tab.`
+              : 'A manager must choose a default campaign or free up campaign capacity before campaign access can be assigned.'}</span>
           </div>
-
-          {transcript.length > 0 && <div className="rep-training-transcript" aria-label="Practice transcript" aria-live="polite">
-            <div className="rep-training-transcript-head"><strong>Practice transcript</strong><span>{transcriptLengthLabel(transcript)}</span></div>
-            {transcript.map((turn, index) => (
-              <p className={`rep-training-turn is-${turn.role}`} key={`${index}:${turn.text.slice(0, 24)}`}>
-                <strong>{turn.role === 'you' ? 'You' : 'Prospect'}</strong>
-                <span>{turn.text}</span>
-              </p>
-            ))}
-          </div>}
-
-          {message && <p className="rep-training-message" role="status">{message}</p>}
-          {problem && <p className="admin-error" role="alert">{problem}</p>}
-          {result && <div className={`rep-training-feedback ${result.passed ? 'is-passed' : 'is-retry'}`}>
-            <div><strong>{result.passed ? 'Practice call passed' : 'Try this call again'}</strong><span>Score {result.score}/100</span></div>
-            <p>{result.summary}</p>
-            {!!result.strengths?.length && <div><strong>What went well</strong><ul>{result.strengths.map((item, index) => <li key={index}>{item}</li>)}</ul></div>}
-            {!!result.improvements?.length && <div><strong>Next time</strong><ul>{result.improvements.map((item, index) => <li key={index}>{item}</li>)}</ul></div>}
-          </div>}
-        </section>
-      )}
+        ) : !selected?.ready ? (
+          <div className="rep-training-setup" role="status">
+            Training scenarios are not configured for {selected?.accountName || 'this account'} yet. Ask a manager to contact BiteSites support.
+          </div>
+        ) : selected?.courseRequired && !selected.quizPassed ? (
+          <RepCourse key={selected.accountId} accountId={selected.accountId} accountName={selected.accountName} onPassed={onRefresh} />
+        ) : (
+          <section className="rep-training-session" aria-label="Sales practice session">
+            <div className="rep-training-scenario">
+              <span className="outbound-eyebrow">Next fictional prospect</span>
+              {scenario ? <>
+                <h3>{scenario.name}, {scenario.age} · {scenario.niche}</h3>
+                <p>{scenario.business} · {scenario.gender}</p>
+                <p>You’re calling this business for the first time. Get to yes if you can, and take a no well if you can’t.</p>
+              </> : <p>Start a role-play to meet the next prospect in your course.</p>}
+            </div>
+  
+            <div className="rep-training-actions">
+              <button className="btn-admin primary" type="button" disabled={busy || state === 'live'} onClick={start}>
+                {state === 'connecting' ? 'Connecting…' : state === 'live' ? 'Practice in progress' : 'Start role-play'}
+              </button>
+              <button className="btn-admin" type="button"
+                disabled={busy || !attemptId || transcript.length < 8}
+                onClick={finish}>
+                {state === 'scoring' ? 'Getting feedback…' : 'Finish and get feedback'}
+              </button>
+            </div>
+  
+            {transcript.length > 0 && <div className="rep-training-transcript" aria-label="Practice transcript" aria-live="polite">
+              <div className="rep-training-transcript-head"><strong>Practice transcript</strong><span>{transcriptLengthLabel(transcript)}</span></div>
+              {transcript.map((turn, index) => (
+                <p className={`rep-training-turn is-${turn.role}`} key={`${index}:${turn.text.slice(0, 24)}`}>
+                  <strong>{turn.role === 'you' ? 'You' : 'Prospect'}</strong>
+                  <span>{turn.text}</span>
+                </p>
+              ))}
+            </div>}
+  
+            {message && <p className="rep-training-message" role="status">{message}</p>}
+            {problem && <p className="admin-error" role="alert">{problem}</p>}
+            {result && <div className={`rep-training-feedback ${result.passed ? 'is-passed' : 'is-retry'}`}>
+              <div><strong>{result.passed ? 'Practice call passed' : 'Try this call again'}</strong><span>Score {result.score}/100</span></div>
+              <p>{result.summary}</p>
+              {!!result.strengths?.length && <div><strong>What went well</strong><ul>{result.strengths.map((item, index) => <li key={index}>{item}</li>)}</ul></div>}
+              {!!result.improvements?.length && <div><strong>Next time</strong><ul>{result.improvements.map((item, index) => <li key={index}>{item}</li>)}</ul></div>}
+            </div>}
+          </section>
+        )}
+        {guide && <RepFieldGuide key={`${selected.accountId}:${inPractice}`} guide={guide} defaultOpen={inPractice} />}
+      </div>
     </div>
   );
 }
