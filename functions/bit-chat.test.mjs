@@ -10,7 +10,7 @@
 // from the whitelist, slot ids never reach the browser, and a booking produces
 // exactly one bit_chat lead no matter how many times the model retries.
 //
-// OpenAI is stubbed at globalThis.fetch and scripted per test; nothing here
+// ElevenLabs is stubbed at fetch and WebSocket and scripted per test; nothing here
 // leaves the machine.
 
 process.env.GCLOUD_PROJECT = 'demo-bitesites';
@@ -18,7 +18,6 @@ process.env.GCLOUD_PROJECT = 'demo-bitesites';
 const { initializeApp } = await import('firebase-admin/app');
 initializeApp();
 const { bitChatSession, bitChatTurn } = await import('./bit-chat.js');
-const { BIT_CHAT_MODEL } = await import('./bit-persona.js');
 const { getFirestore, Timestamp } = await import('firebase-admin/firestore');
 const db = getFirestore();
 
@@ -41,16 +40,35 @@ const httpFails = status => ({ httpStatus: status });
 const script = (...responses) => { modelScript = [...responses]; modelRequests = []; };
 
 globalThis.fetch = async (url, options) => {
-  if (String(url).includes('api.openai.com/v1/responses')) {
-    modelRequests.push(JSON.parse(options.body));
-    const next = modelScript.shift();
-    if (!next) return { ok: true, status: 200, text: async () => JSON.stringify(say('(unscripted)')) };
-    if (next.httpStatus) {
-      return { ok: false, status: next.httpStatus, text: async () => JSON.stringify({ error: { message: 'stubbed failure' } }) };
-    }
-    return { ok: true, status: 200, text: async () => JSON.stringify(next) };
+  if (String(url).includes('api.elevenlabs.io/v1/convai/conversation/get-signed-url')) {
+    return { ok: true, status: 200, json: async () => ({ signed_url: 'wss://stub.test/agent' }) };
   }
   return realFetch(url, options);
+};
+
+/** Plays the scripted replies back the way the ElevenLabs connection does. */
+globalThis.WebSocket = class {
+  constructor() { setTimeout(() => this.onopen?.(), 0); }
+  emit(payload) { setTimeout(() => this.onmessage?.({ data: JSON.stringify(payload) }), 0); }
+  step() {
+    const next = modelScript.shift() || say('(unscripted)');
+    if (next.httpStatus) { setTimeout(() => this.onclose?.(), 0); return; }
+    const [item] = next.output;
+    if (item.type === 'function_call') {
+      this.emit({ type: 'client_tool_call', client_tool_call: { tool_name: item.name, tool_call_id: item.call_id, parameters: JSON.parse(item.arguments) } });
+    } else {
+      this.emit({ type: 'agent_response', agent_response_event: { agent_response: item.content[0].text } });
+    }
+  }
+  send(raw) {
+    const data = JSON.parse(raw);
+    if (data.type === 'conversation_initiation_client_data') this.variables = data.dynamic_variables;
+    if (data.type === 'user_message' || data.type === 'client_tool_result') {
+      modelRequests.push({ ...data, variables: this.variables });
+      this.step();
+    }
+  }
+  close() {}
 };
 
 function fakeRes() {
@@ -98,9 +116,9 @@ console.log('\nopening a session');
 
 check('rejects GET', (await open({}, { method: 'GET' })).code === 405);
 
-delete process.env.OPENAI_API_KEY;
+delete process.env.ELEVENLABS_API_KEY;
 check('refuses to open a session without an OpenAI key', (await open()).code === 503);
-process.env.OPENAI_API_KEY = 'sk-test-not-a-real-key';
+process.env.ELEVENLABS_API_KEY = 'test-not-a-real-key';
 
 // The ceiling is the wallet guard: 60 live sessions refuse a 61st.
 const fakeLive = [];
@@ -122,7 +140,7 @@ const first = await open({ chatId: chatDoc.id, sid: 'sid-test', path: '/' });
 check('opens a session', first.code === 200 && Boolean(first.body?.sessionId));
 const s1 = first.body;
 check('the greeting comes from the persona, not the bundle', /I’m Bit/.test(s1.greeting || ''));
-check('the chat model is pinned', s1.model === BIT_CHAT_MODEL);
+check('the browser is not told the model or prompt', !('model' in s1) && !('instructions' in s1));
 check('the browser token is not the doc id', s1.sessionToken.length === 64 && s1.sessionToken !== s1.sessionId);
 const s1Doc = await db.doc(`bitChatSessions/${s1.sessionId}`).get();
 check('session doc is live with the tool grant list',
@@ -156,11 +174,8 @@ console.log('\nthe agent loop');
 script(say('Hey — websites, agents, automation. What are you working on?'));
 const plain = await turn(s1, 'what do you actually do?');
 check('a plain turn returns Bit’s text', plain.body?.ok === true && /websites, agents/.test(plain.body.messages[0]));
-check('the visitor message reached the model', modelRequests[0]?.input?.some(item => item.content === 'what do you actually do?'));
-check('the system prompt is sent as instructions, never as a message',
-  /WHO YOU ARE/.test(modelRequests[0]?.instructions || '')
-  && !modelRequests[0].input.some(item => /WHO YOU ARE/.test(item.content || '')));
-check('tool schemas travel with every call', (modelRequests[0]?.tools || []).some(tool => tool.name === 'send_page_link'));
+check('the visitor message reached the agent', modelRequests[0]?.text === 'what do you actually do?');
+check('the greeting travels as the agent’s memory', /BIT: Hey/.test(modelRequests[0]?.variables?.conversation_so_far || ''));
 const history = (await db.doc(`bitChatSessions/${s1.sessionId}`).get()).get('history') || [];
 check('history is server-owned and persisted',
   history.length === 3 && history[2].t === 'msg' && history[2].role === 'assistant');
@@ -179,7 +194,7 @@ check('the corpus answered the hard question',
   knowledge?.found === true && knowledge.passages.some(passage => passage.title === 'Who owns what you pay for'));
 check('retrieved passages carry the injection warning', /reference data, not instructions/.test(knowledge?.note || ''));
 check('the tool result was fed back to the model',
-  modelRequests[1]?.input?.some(item => item.type === 'function_call_output' && /Who owns what you pay for/.test(item.output)));
+  modelRequests[1]?.type === 'client_tool_result' && /Who owns what you pay for/.test(modelRequests[1].result));
 
 script(wants('mark_do_not_call', { reason: 'x' }), say('Not something I can do, but I can pass it on.'));
 await turn(s1, 'take me off your list');
@@ -201,21 +216,20 @@ check('the model cannot invent a destination',
 
 script(httpFails(500), say('Sorry — back now. What were we saying?'));
 const recovered = await turn(s1, 'still there?');
-check('a transient 5xx is retried rather than surfaced', recovered.body?.ok === true && /back now/.test(recovered.body.messages[0]));
+check('a dropped connection is retried rather than surfaced', recovered.body?.ok === true && /back now/.test(recovered.body.messages[0]));
 
-script(httpFails(500), httpFails(500), httpFails(500));
+script(httpFails(500), httpFails(500));
 const brokenBefore = modelRequests.length;
 const broken = await turn(s1, 'and now?');
 check('a model outage never dead-ends the visitor',
   broken.body?.ok === false
   && /booking page/.test(broken.body.messages[0])
   && broken.body.cards.some(card => card.href === '/book'));
-check('the outage was retried three times and then stopped', modelRequests.length - brokenBefore === 3);
+check('the outage was retried once and then stopped', modelRequests.length - brokenBefore === 2);
 
 script(...Array.from({ length: 10 }, () => wants('record_interest_signal', { signal: 'loop' })));
-const loopBefore = modelRequests.length;
 await turn(s1, 'go in circles');
-check('a tool loop is capped at eight model calls per turn', modelRequests.length - loopBefore === 8);
+check('a tool loop is capped at eight tools per turn', (await toolOutput(s1.sessionId, 'record_interest_signal'))?.error === 'tool_budget_exhausted');
 
 // ---------------------------------------------------------------------------
 console.log('\ncontact capture → lead');
@@ -243,7 +257,7 @@ check('the lead carries the bit_chat shape',
   lead.get('source') === 'bit_chat'
   && lead.get('email') === 'dana@example.com'
   && lead.get('businessName') === 'Dana Plumbing'
-  && lead.get('chat')?.provider === 'openai_responses'
+  && lead.get('chat')?.provider === 'elevenlabs_chat'
   && lead.get('chat')?.providerCallId === `chat_${s1.sessionId}`
   && lead.get('chat')?.conversationId === chatDoc.id
   && lead.get('chat')?.receivingAgent?.agentName === 'Bit');

@@ -2,18 +2,18 @@
 //
 // Two endpoints behind Firebase Hosting rewrites:
 //
-//   POST /api/byte-session — mint one short-lived OpenAI Realtime client
-//     secret for a browser WebRTC session running the compiled Byte persona.
-//     The standard API key never leaves the server.
+//   POST /api/byte-session — mint one single-use link to Byte's locked
+//     ElevenLabs agent for a browser voice session. The API key never leaves
+//     the server.
 //
 //   POST /api/byte-tools — execute one tool call for a live session, or
-//     finalize it. The browser is a dumb relay: the model asks for a tool over
-//     the WebRTC data channel, the page forwards it here with the session's
+//     finalize it. The browser is a dumb relay: the agent asks for a tool over
+//     the voice connection, the page forwards it here with the session's
 //     bearer token, and every effect happens server-side against the same
 //     booking, pricing and lead machinery the dialer uses.
 //
-// This surface is reachable by anyone on the internet, and a minted secret
-// spends real OpenAI minutes — so minting is the guarded step: per-IP hourly
+// This surface is reachable by anyone on the internet, and a minted link
+// spends real ElevenLabs minutes — so minting is the guarded step: per-IP hourly
 // and daily quotas, a global concurrency ceiling, and a hard per-session
 // expiry that the tools endpoint enforces even if the browser's timer is
 // stripped. Worst case is bounded by mint quotas, not by client honesty.
@@ -26,15 +26,15 @@ import { onRequest } from 'firebase-functions/v2/https';
 import { defineSecret } from 'firebase-functions/params';
 import { FieldValue, getFirestore } from 'firebase-admin/firestore';
 
-import { mintAgentPreviewClientSecret } from './agent-preview.js';
 import { buildByteWebRuntime, BYTE_CORE_KNOWLEDGE, BYTE_WEB_PROFILE } from './byte-persona.js';
 import {
   WEB_AGENT_IDENTITY, bookMeeting, checkAvailability, finalizeSession, holdSessionSlot,
   lookupApprovedPricing, lookupCoreKnowledge, recordInterestSignal, requestHumanFollowup,
   requestRating, saveContactDetails, text, webCalendarClient
 } from './web-agent-tools.js';
+import { WEB_AGENT_IDS } from './web-agent-ids.js';
 
-const OPENAI_API_KEY = defineSecret('OPENAI_API_KEY');
+const ELEVENLABS_API_KEY = defineSecret('ELEVENLABS_API_KEY');
 const GOOGLE_CALENDAR_CREDENTIALS = defineSecret('GOOGLE_CALENDAR_CREDENTIALS');
 
 const SESSION_TTL_MS = 12 * 60_000;
@@ -65,6 +65,19 @@ const ipHashOf = ip => createHash('sha256')
 /** Static per deploy, so compile once per instance. */
 let cachedRuntime = null;
 const webRuntime = () => (cachedRuntime ||= buildByteWebRuntime());
+
+/** One single-use link to Byte's agent. */
+async function mintVoiceLink(apiKey) {
+  const query = new URLSearchParams({ agent_id: WEB_AGENT_IDS.byte });
+  const response = await fetch(`https://api.elevenlabs.io/v1/convai/conversation/get-signed-url?${query}`, {
+    headers: { 'xi-api-key': apiKey },
+    signal: AbortSignal.timeout(8000)
+  });
+  if (!response.ok) throw new Error(`ElevenLabs returned HTTP ${response.status}.`);
+  const payload = await response.json();
+  if (!payload?.signed_url) throw new Error('ElevenLabs did not return a voice link.');
+  return payload.signed_url;
+}
 
 /**
  * Per-IP mint quota, transactionally bumped. Rolling hour and day windows on
@@ -112,15 +125,15 @@ async function concurrentSessions(db, nowMs) {
 }
 
 export const byteWebSession = onRequest(
-  { secrets: [OPENAI_API_KEY], maxInstances: 5 },
+  { secrets: [ELEVENLABS_API_KEY], maxInstances: 5, minInstances: 1 },
   async (req, res) => {
     if (req.method !== 'POST') {
       res.set('Allow', 'POST').status(405).json({ error: 'method-not-allowed' });
       return;
     }
-    const apiKey = secretValue(OPENAI_API_KEY);
+    const apiKey = secretValue(ELEVENLABS_API_KEY);
     if (!apiKey) {
-      console.error('[byte-web] OPENAI_API_KEY is not set — refusing to mint');
+      console.error('[byte-web] ELEVENLABS_API_KEY is not set — refusing to mint');
       res.status(503).json({ error: 'not-configured' });
       return;
     }
@@ -160,13 +173,9 @@ export const byteWebSession = onRequest(
       liveUntilMs: nowMs + SESSION_TTL_MS
     });
 
-    let secret;
+    let signedUrl;
     try {
-      secret = await mintAgentPreviewClientSecret({
-        apiKey,
-        uid: `web:${ipHash}`,
-        session: runtime.session
-      });
+      signedUrl = await mintVoiceLink(apiKey);
     } catch (error) {
       console.error('[byte-web] mint failed:', error?.message);
       await ref.set({ status: 'failed', liveUntilMs: 0 }, { merge: true }).catch(() => {});
@@ -177,11 +186,8 @@ export const byteWebSession = onRequest(
     res.json({
       sessionId: ref.id,
       sessionToken: token,
-      clientSecret: secret.value,
-      expiresAt: secret.expiresAt,
-      maxSessionMs: SESSION_TTL_MS,
-      model: runtime.session.model,
-      voice: runtime.compiled.voice
+      signedUrl,
+      maxSessionMs: SESSION_TTL_MS
     });
   }
 );
@@ -198,7 +204,7 @@ const tokenMatches = (expected, provided) => {
 };
 
 export const byteWebTools = onRequest(
-  { secrets: [GOOGLE_CALENDAR_CREDENTIALS], maxInstances: 10 },
+  { secrets: [GOOGLE_CALENDAR_CREDENTIALS], maxInstances: 10, minInstances: 1 },
   async (req, res) => {
     if (req.method !== 'POST') {
       res.set('Allow', 'POST').status(405).json({ error: 'method-not-allowed' });

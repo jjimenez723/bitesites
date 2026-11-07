@@ -268,3 +268,15 @@ tested. Not fixed: it needs the OpenAI account owner to add credits.
 - **Legal pages:** the Privacy and Terms pages showed `[Street address]` and `[ZIP]` placeholders. The line is now hidden until a real address is set in `src/pages/legal-details.js`. The registered entity name also still needs confirming.
 - **Not fixed here:** Clifton Ave Animal Hospital's own site has no privacy or terms links, and its code is not in this repo.
 
+## Round 7: Bit and Byte moved to ElevenLabs (built 2026-11-06, not deployed)
+
+Bit failed because the OpenAI account had no credits. Each failed message also retried three times before showing the outage reply, and Byte runs on the same account. Every Bit and Byte function scaled to zero, so the first visitor after a quiet spell waited several seconds for a cold start.
+
+- **Bit:** `functions/bit-agent-turn.js` runs each turn through a text-only ElevenLabs agent from the server. History stays in Firestore, tools still run in `bit-chat.js`, and the browser still receives finished text. Each turn is a new ElevenLabs conversation that carries the stored history.
+- **Byte:** `src/lib/byte-voice.js` uses the ElevenLabs browser client with a single-use link from `/api/byte-session`. Tools still relay through `/api/byte-tools`. ElevenLabs now handles silence: Byte re-engages after 12 seconds and hangs up after 45. This replaces the old nudge and farewell scripts.
+- **Agents:** `scripts/setup-web-agents.mjs` creates both agents, with ids in `functions/web-agent-ids.js`. Rerun it after any persona or tool change, because prompts now live on the agents. Both need a server-issued link, allow no overrides, save no audio, and retain nothing at ElevenLabs. The account also holds another client's agents, so the script only updates ids it recorded.
+- **Models:** both agents use `claude-haiku-5-5` through ElevenLabs. `BIT_CHAT_MODEL` and the Byte voice setting in the persona files no longer choose the live model or voice. Byte's voice changed to the ElevenLabs voice Bella.
+- **Speed:** the four public functions keep one warm instance (`minInstances: 1`), which adds a small monthly charge.
+- **Privacy:** the Privacy page now names ElevenLabs for Bit and Byte instead of GoHighLevel.
+- **Tested on the real service:** a five-turn Bit chat took 1.6 to 3.6 seconds per reply, with pricing, knowledge and availability tools and a hold, and refused to print its prompt. Tool results were stubbed for that test, so no booking was made. Byte connected in a real browser in 1.6 seconds and spoke its greeting using a fake microphone.
+- **Not tested:** nobody has spoken to Byte with a real microphone, the warm-instance speedup is unmeasured, and `test:bit-chat` and `test:byte-web` were updated but need Java, so only CI can run them.
