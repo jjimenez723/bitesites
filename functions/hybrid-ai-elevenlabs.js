@@ -10,7 +10,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { onRequest } from 'firebase-functions/v2/https';
 import { onDocumentUpdated } from 'firebase-functions/v2/firestore';
 import { defineSecret } from 'firebase-functions/params';
-import { FieldValue, Timestamp, getFirestore } from 'firebase-admin/firestore';
+import { FieldValue, getFirestore } from 'firebase-admin/firestore';
 
 import { attachAIController, recordCallAuditEvent } from './hybrid-call-orchestration.js';
 import { clean } from './prospect-normalization.js';
@@ -19,11 +19,11 @@ import { createGoogleCalendarClient, loadCalendarSettings } from './booking-cale
 import { LEGACY_ACCOUNT_ID, readAccountId } from './accounts.js';
 import {
   callIdFromInitiation, initiationResponse, liveCallVoiceId, LIVE_CALL_TTS_MODEL,
-  parseToolRequest, toolReply, toolRequestId, transcriptTurns, verifyElevenLabsSignature, CALL_ID_VARIABLE
+  parseToolRequest, toolReply, toolRequestId, verifyElevenLabsSignature, CALL_ID_VARIABLE
 } from './live-call-elevenlabs.js';
 import { LIVE_CALL_AGENT_IDS } from './live-call-agent-ids.js';
 import {
-  endProspectLeg, publicUrl, secretValue, terminateFailedAIMedia, twilioPost, twilioSignatureValid, TWILIO_SECRETS
+  endProspectLeg, publicUrl, secretValue, storeCallTranscript, terminateFailedAIMedia, twilioPost, twilioSignatureValid, TWILIO_SECRETS
 } from './hybrid-ai-sip-dispatch.js';
 
 const AI_MEDIA_WEBHOOK_SECRET = defineSecret('AI_MEDIA_WEBHOOK_SECRET');
@@ -165,7 +165,11 @@ export const hybridAITools = onRequest(
   }
 );
 
-/** Store the transcript once the call is over. Signed by ElevenLabs. */
+/**
+ * Optional, faster path for the transcript: ElevenLabs' signed post-call
+ * webhook. The minute reconciler fetches it anyway, so this only matters once
+ * a webhook is configured in the ElevenLabs dashboard.
+ */
 export const hybridAIPostCall = onRequest(
   { secrets: [ELEVENLABS_WEBHOOK_SECRET], maxInstances: 20, timeoutSeconds: 60 },
   async (req, res) => {
@@ -185,23 +189,7 @@ export const hybridAIPostCall = onRequest(
       res.json({ ok: true, ignored: true }); return;
     }
 
-    const batch = db.batch();
-    for (const turn of transcriptTurns(data)) {
-      batch.set(db.doc(`calls/${callId}/turns/${String(turn.sequence).padStart(6, '0')}`), {
-        sequence: turn.sequence, speaker: turn.speaker, text: turn.text, final: true,
-        startedAt: turn.startedAt ? Timestamp.fromDate(turn.startedAt) : null,
-        source: 'elevenlabs_post_call', createdAt: FieldValue.serverTimestamp()
-      }, { merge: true });
-    }
-    batch.set(db.doc(`aiMediaJobs/${callId}`), {
-      transcriptStoredAt: FieldValue.serverTimestamp(),
-      elevenLabs: {
-        durationSecs: Math.max(0, Number(data?.metadata?.call_duration_secs) || 0),
-        terminationReason: clean(data?.metadata?.termination_reason, 200)
-      },
-      updatedAt: FieldValue.serverTimestamp()
-    }, { merge: true });
-    await batch.commit();
+    await storeCallTranscript(db, callId, data);
     res.json({ ok: true });
   }
 );

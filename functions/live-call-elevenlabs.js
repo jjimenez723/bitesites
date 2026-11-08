@@ -26,11 +26,16 @@ import { TOOL_SCHEMAS } from './live-call-tool-schemas.js';
 export const LIVE_CALL_SIP_HOST = 'sip.rtc.elevenlabs.io';
 export const LIVE_CALL_LLM = 'claude-haiku-5-5';
 // Flash is ElevenLabs' low-latency model, which matters on a phone line.
-export const LIVE_CALL_TTS_MODEL = 'eleven_flash_v2_5';
+// English agents must use flash v2 (or turbo); v2.5 is refused.
+export const LIVE_CALL_TTS_MODEL = 'eleven_flash_v2';
 export const LIVE_CALL_MAX_SECONDS = 900;
 export const CALL_ID_HEADER = 'X-BiteSites-Call-ID';
 export const CALL_ID_VARIABLE = 'bitesites_call_id';
-export const HANG_UP_TOOL = 'hang_up';
+// ElevenLabs' built-in hang-up tool must be called end_call, so our own end_call
+// (which records the outcome) is shown to the agent under another name. The
+// request still names the server tool, end_call.
+export const HANG_UP_TOOL = 'end_call';
+const AGENT_TOOL_NAMES = Object.freeze({ end_call: 'record_call_outcome' });
 // Tool request fields that our server fills in, never the model.
 const RESERVED_TOOL_FIELDS = new Set(['call_id', 'conversation_id', 'tool']);
 
@@ -66,11 +71,13 @@ export function webhookTool(schema, { url, secretId }) {
     const { additionalProperties: _unused, ...rest } = value;
     return [key, { ...rest, description: rest.description || key }];
   }));
+  const agentName = AGENT_TOOL_NAMES[schema.name] || schema.name;
   return {
     tool_config: {
       type: 'webhook',
-      name: schema.name,
-      description: schema.description,
+      name: agentName,
+      description: agentName === schema.name ? schema.description
+        : `Record why the call is ending. Afterwards say goodbye and use ${HANG_UP_TOOL} to hang up.`,
       response_timeout_secs: 20,
       api_schema: {
         url,
@@ -80,9 +87,11 @@ export function webhookTool(schema, { url, secretId }) {
           type: 'object',
           description: `Arguments for ${schema.name}.`,
           properties: {
-            call_id: { type: 'string', description: 'BiteSites call id.', dynamic_variable: CALL_ID_VARIABLE },
-            conversation_id: { type: 'string', description: 'ElevenLabs conversation id.', dynamic_variable: 'system__conversation_id' },
-            tool: { type: 'string', description: 'Tool name.', constant_value: schema.name },
+            // Filled in by ElevenLabs, never the model. ElevenLabs refuses a
+            // description on these, so they carry none.
+            call_id: { type: 'string', dynamic_variable: CALL_ID_VARIABLE },
+            conversation_id: { type: 'string', dynamic_variable: 'system__conversation_id' },
+            tool: { type: 'string', constant_value: schema.name },
             ...args
           },
           required: ['call_id', 'conversation_id', 'tool', ...required]
@@ -97,7 +106,7 @@ export const liveCallToolConfigs = ({ url, secretId }) =>
   Object.values(TOOL_SCHEMAS).map(schema => webhookTool(schema, { url, secretId }));
 
 const BASE_PROMPT = 'You are a phone agent for a BiteSites seller. Your full instructions arrive with each call. '
-  + 'If they are missing, say you cannot continue the call and use hang_up.';
+  + `If they are missing, say you cannot continue the call and use ${HANG_UP_TOOL}.`;
 
 export function liveCallAgentConfig({ toolIds = [] } = {}) {
   return {

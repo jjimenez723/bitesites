@@ -58,7 +58,8 @@ console.log('secret ready');
 
 // 2. Tools.
 for (const config of liveCallToolConfigs({ url: `${BASE}/api/hybrid-ai-tools`, secretId: ids.secretId })) {
-  const { name } = config.tool_config;
+  // Keyed by the server tool name, which never changes even if the agent-facing name does.
+  const name = config.tool_config.api_schema.request_body_schema.properties.tool.constant_value;
   if (ids.tools[name]) await api(`/v1/convai/tools/${ids.tools[name]}`, { method: 'PATCH', body: JSON.stringify(config) });
   else ids.tools[name] = (await api('/v1/convai/tools', { method: 'POST', body: JSON.stringify(config) })).id;
 }
@@ -89,24 +90,36 @@ if (!ids.sipUser) {
 }
 console.log('SIP number ready');
 
-// 5. Post-call webhook, for this agent only.
+// 5. Post-call webhook, for this agent only. Creating a workspace webhook
+// needs the webhooks_write permission on the API key; without it, this step is
+// skipped and must be done in the ElevenLabs dashboard (see the docs).
 if (!ids.postCallWebhookId) {
-  const created = await api('/v1/workspace/webhooks', {
-    method: 'POST',
-    body: JSON.stringify({ settings: { auth_type: 'hmac', name: 'BiteSites live call transcripts', webhook_url: `${BASE}/api/hybrid-ai-post-call` } })
-  });
-  ids.postCallWebhookId = created.webhook_id;
-  const signingSecret = created.webhook_secret;
-  if (!signingSecret) throw new Error('ElevenLabs did not return the webhook signing secret.');
-  const stored = spawnSync('node_modules/.bin/firebase', ['functions:secrets:set', 'ELEVENLABS_WEBHOOK_SECRET', '--data-file', '-', '--project', 'bitesites-org'], { input: signingSecret, stdio: ['pipe', 'ignore', 'inherit'] });
-  if (stored.status !== 0) throw new Error('Could not store ELEVENLABS_WEBHOOK_SECRET in Secret Manager.');
-  save();
+  let created = null;
+  try {
+    created = await api('/v1/workspace/webhooks', {
+      method: 'POST',
+      body: JSON.stringify({ settings: { auth_type: 'hmac', name: 'BiteSites live call transcripts', webhook_url: `${BASE}/api/hybrid-ai-post-call` } })
+    });
+  } catch (error) {
+    if (!/webhooks_write|missing_permissions/.test(error.message)) throw error;
+    console.log('post-call webhook SKIPPED: the API key lacks webhooks_write. Create it in the dashboard.');
+  }
+  if (created) {
+    const signingSecret = created.webhook_secret;
+    if (!created.webhook_id || !signingSecret) throw new Error('ElevenLabs did not return the webhook id and signing secret.');
+    const stored = spawnSync('node_modules/.bin/firebase', ['functions:secrets:set', 'ELEVENLABS_WEBHOOK_SECRET', '--data-file', '-', '--project', 'bitesites-org'], { input: signingSecret, stdio: ['pipe', 'ignore', 'inherit'] });
+    if (stored.status !== 0) throw new Error('Could not store ELEVENLABS_WEBHOOK_SECRET in Secret Manager.');
+    ids.postCallWebhookId = created.webhook_id;
+    save();
+  }
 }
-await api(`/v1/convai/agents/${ids.agent}`, {
-  method: 'PATCH',
-  body: JSON.stringify({ platform_settings: { workspace_overrides: { webhooks: { post_call_webhook_id: ids.postCallWebhookId, events: ['transcript'] } } } })
-});
-console.log('post-call webhook ready');
+if (ids.postCallWebhookId) {
+  await api(`/v1/convai/agents/${ids.agent}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ platform_settings: { workspace_overrides: { webhooks: { post_call_webhook_id: ids.postCallWebhookId, events: ['transcript'] } } } })
+  });
+  console.log('post-call webhook ready');
+}
 
 // 6. The initiation webhook is one URL for the whole account.
 const settings = await api('/v1/convai/settings');

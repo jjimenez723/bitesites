@@ -102,10 +102,12 @@ Twilio signatures are validated on the Twilio-facing HTTP endpoints.
 
 ## 4. ElevenLabs setup for AI calls
 
-AI calling moved from OpenAI Realtime to ElevenLabs on 2026-11-07 (branch `feat/elevenlabs-live-calls`). **Nothing below has been run yet**: the ElevenLabs objects do not exist, and `functions/live-call-agent-ids.js` is empty, so every AI-call endpoint refuses to work and the dispatcher ends any AI-routed call it is asked to connect.
+AI calling moved from OpenAI Realtime to ElevenLabs on 2026-11-07 (branch `feat/elevenlabs-live-calls`). **ElevenLabs setup ran on 2026-11-08 with the owner's go-ahead**: `ELEVENLABS_SIP_PASSWORD` is in Secret Manager, and the account has the header secret, 18 webhook tools, the `BiteSites Live Calls` agent, the tool-free preview agent, a password-protected SIP trunk entry (`bitesites-live-calls`) and the account's initiation webhook pointing at `/api/hybrid-ai-call-init`. The Grooming Cove's agents were checked afterwards and still have that webhook turned off. **The Functions are not deployed**, so no AI call can reach these yet, and none has been tested.
+
+The signed post-call webhook was **not** created: the ElevenLabs API key lacks the `webhooks_write` permission. It is optional. The minute reconciler fetches each transcript from ElevenLabs after the AI leg ends (`syncPendingTranscripts`), using only the existing key. To add the faster webhook later, create an HMAC webhook for `https://bitesites.org/api/hybrid-ai-post-call` in the ElevenLabs dashboard, store its signing secret as `ELEVENLABS_WEBHOOK_SECRET`, attach it to the `BiteSites Live Calls` agent only (never as the account default), and put its id in `functions/live-call-agent-ids.js`.
 
 1. Create the SIP password once and store it: `node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))" | firebase functions:secrets:set ELEVENLABS_SIP_PASSWORD --data-file - --project bitesites-org`.
-2. With the owner's go-ahead (it changes account-wide ElevenLabs settings), run `scripts/setup-live-call-agents.mjs` as shown at the top of that file. It creates the header secret, one webhook tool per grantable tool, the live-call agent, a tool-free preview agent, a SIP trunk entry protected by the password, a post-call webhook used only by this agent (its signing secret goes straight into Secret Manager), and the account's initiation webhook URL. It refuses to replace an initiation webhook that belongs to someone else: this ElevenLabs account also holds The Grooming Cove's agents.
+2. With the owner's go-ahead (it changes account-wide ElevenLabs settings), run `scripts/setup-live-call-agents.mjs` (done 2026-11-08; rerun after changing a tool or the agent settings) as shown at the top of that file. It creates the header secret, one webhook tool per grantable tool, the live-call agent, a tool-free preview agent, a SIP trunk entry protected by the password, a post-call webhook used only by this agent (its signing secret goes straight into Secret Manager), and the account's initiation webhook URL. It refuses to replace an initiation webhook that belongs to someone else: this ElevenLabs account also holds The Grooming Cove's agents.
 3. Commit the regenerated `functions/live-call-agent-ids.js`.
 
 The pieces and what each is trusted to do:
@@ -115,17 +117,19 @@ The pieces and what each is trusted to do:
 | `dispatchHybridAIToSip` | Has Twilio dial `sip:<user>@sip.rtc.elevenlabs.io:5061;transport=tls` with `X-BiteSites-Call-ID` | Staging gate, setup check, one claim per call |
 | `hybridAICallInit` | Attaches the AI as controller and returns the compiled prompt, a fixed opening line with the AI disclosure, and the voice | Header secret, our agent id only, call must still be routed to AI |
 | `hybridAITools` | Runs every tool through `executeAgentTool` | Header secret, conversation must be the one attached to that call, grant re-checked from Firestore |
-| `hybridAIPostCall` | Stores the transcript as `calls/{id}/turns` | HMAC signature, our agent only, matching conversation |
+| `reconcileHybridAIMediaAttachments` | Every minute, also fetches transcripts of ended AI calls into `calls/{id}/turns`; gives up after 30 minutes and marks `transcriptMissing` | Our agent only, finished conversations only |
+| `hybridAIPostCall` | Optional faster transcript path (not configured) | HMAC signature, our agent only, matching conversation |
 | `hybridAIHandoffCarrier` | On a handoff, mutes the AI and plays the handoff line to the conference; ends the AI leg once a person owns the call | Firestore trigger on `calls/{id}` |
 | `hybridAIHandoffAnnouncement`, `hybridAIHandoffAudio` | The handoff line, spoken in the agent's own voice by ElevenLabs text-to-speech | Twilio signature; per-call HMAC token |
 | `twilioHybridAISipEvent` | If the AI leg ends while the AI still owns the call, ends the prospect's leg too | Twilio signature |
 
 What changed in behavior, compared with the OpenAI sideband:
 
-- **No live transcript during the call.** ElevenLabs gives the server no stream of an in-progress phone call, so transcripts arrive when the call ends. A rep can still listen live.
+- **No live transcript during the call.** ElevenLabs gives the server no stream of an in-progress phone call, so transcripts arrive within about a minute of the call ending. A rep can still listen live.
 - **The opening line is fixed** ("Hi, this is an AI assistant calling on behalf of <legal seller>. Do you have a quick minute?"), so the AI disclosure no longer depends on the model.
 - **Handoff timing.** The rep joins while the handoff line plays, instead of after the AI's audio buffer drained. If the announcement fails, the handoff still completes.
-- **Hang-up.** The agent hangs up with ElevenLabs' built-in end-call tool (`hang_up`), after the server `end_call` tool records the outcome.
+- **Voice model.** ElevenLabs requires English agents to use `eleven_flash_v2`, which is what the agent, the handoff line and the preview sample use.
+- **Hang-up.** The agent hangs up with ElevenLabs' built-in end-call tool (`end_call`), after the server `end_call` tool (shown to the agent as `record_call_outcome`) records the outcome.
 - **Tool retries.** ElevenLabs sends no per-call tool id, so a retry is recognized by conversation, tool and arguments, and gets the stored result.
 
 None of this has been tested on a real call. Section 8 still applies in full before any AI call reaches a prospect.

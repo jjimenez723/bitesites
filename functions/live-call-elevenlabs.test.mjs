@@ -12,16 +12,21 @@ import { ALL_TOOL_NAMES } from './agent-runtime.js';
 
 test('every tool the compiler can grant becomes a webhook that carries our secret and call id', () => {
   const tools = liveCallToolConfigs({ url: 'https://bitesites.org/api/hybrid-ai-tools', secretId: 'sec_1' });
-  const names = tools.map(tool => tool.tool_config.name);
+  const names = tools.map(tool => tool.tool_config.api_schema.request_body_schema.properties.tool.constant_value);
   for (const granted of ALL_TOOL_NAMES) assert.ok(names.includes(granted), granted);
+  // ElevenLabs reserves end_call for its own hang-up, so ours is renamed for the agent only.
+  const outcome = tools.find(tool => tool.tool_config.name === 'record_call_outcome');
+  assert.equal(outcome.tool_config.api_schema.request_body_schema.properties.tool.constant_value, 'end_call');
+  assert.equal(tools.some(tool => tool.tool_config.name === 'end_call'), false);
   for (const { tool_config: config } of tools) {
+    const serverName = config.api_schema.request_body_schema.properties.tool.constant_value;
     assert.equal(config.type, 'webhook');
     assert.equal(config.api_schema.request_headers['x-ai-media-secret'].secret_id, 'sec_1');
     const body = config.api_schema.request_body_schema;
     assert.equal(body.properties.call_id.dynamic_variable, CALL_ID_VARIABLE);
     assert.equal(body.properties.conversation_id.dynamic_variable, 'system__conversation_id');
-    assert.equal(body.properties.tool.constant_value, config.name);
-    for (const required of TOOL_SCHEMAS[config.name].parameters.required) assert.ok(body.required.includes(required));
+    for (const required of TOOL_SCHEMAS[serverName].parameters.required) assert.ok(body.required.includes(required));
+    assert.equal('description' in body.properties.call_id, false);
   }
 });
 
@@ -85,7 +90,7 @@ test('a retried tool call gets the same request id, a different call does not', 
 });
 
 test('a call-ending tool tells the agent to say goodbye and hang up', () => {
-  assert.match(toolReply({ ok: true, note: 'Recorded.' }, { endsCall: true }).note, /goodbye, then use hang_up/);
+  assert.match(toolReply({ ok: true, note: 'Recorded.' }, { endsCall: true }).note, /goodbye, then use end_call/);
   assert.deepEqual(toolReply({ ok: true }), { ok: true });
 });
 

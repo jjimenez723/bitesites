@@ -11,20 +11,23 @@ import { onDocumentWritten } from 'firebase-functions/v2/firestore';
 import { onRequest } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { defineSecret, defineString } from 'firebase-functions/params';
-import { FieldValue, getFirestore } from 'firebase-admin/firestore';
+import { FieldValue, Timestamp, getFirestore } from 'firebase-admin/firestore';
 
 import { clean } from './prospect-normalization.js';
 import {
   AI_MEDIA_ATTACH_PENDING, failClosedAIMediaAttachment, isAIMediaAttachExpired
 } from './hybrid-media-failsafe.js';
 import { externalDialingAdmission } from './deployment-environment.js';
-import { liveCallSipUri } from './live-call-elevenlabs.js';
+import { liveCallSipUri, transcriptTurns } from './live-call-elevenlabs.js';
 import { LIVE_CALL_AGENT_IDS } from './live-call-agent-ids.js';
 
 const TWILIO_ACCOUNT_SID = defineSecret('TWILIO_ACCOUNT_SID');
 const TWILIO_AUTH_TOKEN = defineSecret('TWILIO_AUTH_TOKEN');
 // The password Twilio uses to authenticate to our ElevenLabs SIP trunk.
 const ELEVENLABS_SIP_PASSWORD = defineSecret('ELEVENLABS_SIP_PASSWORD');
+const ELEVENLABS_API_KEY = defineSecret('ELEVENLABS_API_KEY');
+// Give up on a transcript ElevenLabs still has not finished after this long.
+const TRANSCRIPT_WAIT_MS = 30 * 60 * 1000;
 const PUBLIC_APP_URL = defineString('PUBLIC_APP_URL', { default: 'https://bitesites.org' });
 
 const secrets = [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, ELEVENLABS_SIP_PASSWORD];
@@ -233,11 +236,65 @@ export const dispatchHybridAIToSip = onDocumentWritten(
   }
 );
 
+/**
+ * Store an ElevenLabs conversation as this call's turns. Used by the minute
+ * reconciler (which fetches finished conversations) and by the optional signed
+ * post-call webhook, so a transcript lands even if one of them is missing.
+ */
+export async function storeCallTranscript(db, callId, conversation = {}) {
+  const batch = db.batch();
+  for (const turn of transcriptTurns(conversation)) {
+    batch.set(db.doc(`calls/${callId}/turns/${String(turn.sequence).padStart(6, '0')}`), {
+      sequence: turn.sequence, speaker: turn.speaker, text: turn.text, final: true,
+      startedAt: turn.startedAt ? Timestamp.fromDate(turn.startedAt) : null,
+      source: 'elevenlabs', createdAt: FieldValue.serverTimestamp()
+    }, { merge: true });
+  }
+  batch.set(db.doc(`aiMediaJobs/${callId}`), {
+    transcriptPending: false,
+    transcriptStoredAt: FieldValue.serverTimestamp(),
+    elevenLabs: {
+      durationSecs: Math.max(0, Number(conversation?.metadata?.call_duration_secs) || 0),
+      terminationReason: clean(conversation?.metadata?.termination_reason, 200)
+    },
+    updatedAt: FieldValue.serverTimestamp()
+  }, { merge: true });
+  await batch.commit();
+}
+
+/** Fetch transcripts for AI calls that have ended. */
+async function syncPendingTranscripts(db, now = new Date()) {
+  const apiKey = secretValue(ELEVENLABS_API_KEY);
+  if (!apiKey) return;
+  const pending = await db.collection('aiMediaJobs').where('transcriptPending', '==', true).limit(20).get();
+  for (const entry of pending.docs) {
+    const conversationId = clean(entry.get('conversationId'), 240);
+    const since = entry.get('transcriptPendingSince')?.toMillis?.() || 0;
+    const tooOld = since && now.getTime() - since > TRANSCRIPT_WAIT_MS;
+    try {
+      const response = await fetch(`https://api.elevenlabs.io/v1/convai/conversations/${encodeURIComponent(conversationId)}`, {
+        headers: { 'xi-api-key': apiKey }, signal: AbortSignal.timeout(10_000)
+      });
+      const conversation = response.ok ? await response.json() : null;
+      if (conversation?.agent_id === LIVE_CALL_AGENT_IDS.agent && ['done', 'failed'].includes(conversation.status)) {
+        await storeCallTranscript(db, entry.id, conversation);
+        continue;
+      }
+    } catch (error) {
+      console.warn('[live-call] transcript fetch failed', entry.id, error?.message);
+    }
+    if (tooOld) {
+      await entry.ref.set({ transcriptPending: false, transcriptMissing: true, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+    }
+  }
+}
+
 /** Durable recovery if an attachment watchdog invocation is interrupted. */
 export const reconcileHybridAIMediaAttachments = onSchedule(
-  { schedule: 'every 1 minutes', timeoutSeconds: 120, secrets },
+  { schedule: 'every 1 minutes', timeoutSeconds: 120, secrets: [...secrets, ELEVENLABS_API_KEY] },
   async () => {
     const db = getFirestore();
+    await syncPendingTranscripts(db).catch(error => console.warn('[live-call] transcript sync failed', error?.message));
     const [pending, failed] = await Promise.all([
       db.collection('aiMediaJobs').where('status', 'in', [...AI_MEDIA_ATTACH_PENDING]).limit(100).get(),
       db.collection('aiMediaJobs').where('status', '==', 'failed').limit(100).get()
@@ -311,6 +368,11 @@ export const twilioHybridAISipEvent = onRequest(
     const db = getFirestore();
     const priorJob = await db.doc(`aiMediaJobs/${callId}`).get();
     const wasActive = priorJob.exists && priorJob.get('status') === 'active';
+    // Once an attached conversation's leg is over, the minute reconciler
+    // fetches its transcript from ElevenLabs.
+    if (update.endedAt && priorJob.get('conversationId') && !priorJob.get('transcriptStoredAt')) {
+      Object.assign(update, { transcriptPending: true, transcriptPendingSince: FieldValue.serverTimestamp() });
+    }
     await db.doc(`aiMediaJobs/${callId}`).set(update, { merge: true });
     if (status === 'failed' || status === 'busy' || status === 'no-answer' || (status === 'completed' && !wasActive)) {
       await terminateFailedAIMedia(db, callId, {

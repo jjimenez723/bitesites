@@ -145,8 +145,8 @@ campaign before they can access its leads or dial.
 
 | Feature | Now | State |
 |---|---|---|
-| AI joining live calls | ElevenLabs agent over SIP; the Cloud Run sideband and its endpoints are deleted | Built and unit-tested. ElevenLabs setup not run (needs the owner's go-ahead, it changes account-wide settings). No SIP call tested. AI calling stays off. |
-| Admin agent preview | ElevenLabs text-to-speech for the sample, a tool-free ElevenLabs agent for the test conversation | Built, not tried in a browser against ElevenLabs. Needs the setup script for the conversation mode. |
+| AI joining live calls | ElevenLabs agent over SIP; the Cloud Run sideband and its endpoints are deleted | Built and unit-tested. ElevenLabs setup done 2026-11-08 (owner approved). Functions not deployed; no SIP call tested. AI calling stays off. |
+| Admin agent preview | ElevenLabs text-to-speech for the sample, a tool-free ElevenLabs agent for the test conversation | Built; preview agent created. Not tried in a browser until the Functions deploy. |
 | Rep practice calls | ElevenLabs (rep onboarding branch) | Production still runs the old OpenAI version until that branch deploys. |
 | Offline conversation scoring | Still OpenAI (`scripts/conversation-eval-model-adapter.mjs`) | Only used by hand; needs a key only if someone runs it. |
 

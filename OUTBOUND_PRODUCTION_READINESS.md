@@ -159,7 +159,7 @@ exempt rep. His training pass remains unset; the other rep is unchanged. The
 full rules suite reproduces the same four prior fixture failures on baseline
 and patched rules, while the new end-to-end access and browser checks pass.
 
-**AI calling moved to ElevenLabs — built 2026-11-07, not set up, not deployed.**
+**AI calling moved to ElevenLabs — built 2026-11-07, ElevenLabs set up 2026-11-08, not deployed.**
 On `feat/elevenlabs-live-calls` (on top of `feat/rep-onboarding`), the AI leg of
 a call now goes from Twilio over SIP to an ElevenLabs agent instead of OpenAI
 Realtime, and the Cloud Run sideband, its control endpoints and every OpenAI
@@ -171,10 +171,11 @@ carrier (mute the AI, play the handoff line in the agent's voice, end the AI leg
 once a person owns the call), and an AI leg that ends while the AI still owns
 the call now ends the prospect's leg instead of leaving them alone. Verified:
 unit tests for the new path, the existing agent, dialer and browser suites, and
-a production build. **Not verified:** the ElevenLabs objects have not been
-created (`scripts/setup-live-call-agents.mjs` needs the owner's go-ahead), no
-SIP call has reached ElevenLabs, the emulator suites run only in CI, and live
-transcripts during a call are gone (ElevenLabs only sends them afterwards).
+a production build. The ElevenLabs agents, tools, SIP entry and
+initiation webhook were created on 2026-11-08 and read back. **Not verified:**
+the Functions are not deployed, no SIP call has reached ElevenLabs, the emulator
+suites run only in CI, and live transcripts during a call are gone (the
+reconciler fetches them about a minute after the call).
 The production sideband service deployed on 2026-10-27 is still running until
 someone removes it; nothing new calls it. AI calling stays off, and every gate
 in the launch authorization still applies.
