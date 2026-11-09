@@ -13,7 +13,6 @@ import {
 
 const SAMPLE_INSTRUCTION = 'Deliver the configured voice sample now. Follow the preview sandbox instructions exactly.';
 const CONVERSATION_INSTRUCTION = 'Begin the configured test conversation now with a brief greeting. The operator will role-play as the prospect.';
-const TRAINING_INSTRUCTION = 'Begin the fictional sales-practice role-play now with a brief greeting. Stay in character as the prospect and let the representative lead the conversation.';
 
 let activePreview = null;
 
@@ -66,17 +65,14 @@ export async function stopAgentPreview() {
 export async function startAgentPreview({
   profile,
   mode,
-  accountId = '',
   audioElement,
   onState = () => {},
   onEvent = () => {},
   onTranscript = () => {},
   onError = () => {},
-  onComplete = () => {},
-  onSession = () => {}
+  onComplete = () => {}
 }) {
-  if (!['sample', 'conversation', 'training'].includes(mode)) throw new Error('Preview mode is not supported.');
-  if (mode === 'training' && !accountId) throw new Error('Choose a seller account for practice.');
+  if (!['sample', 'conversation'].includes(mode)) throw new Error('Preview mode is not supported.');
   if (!audioElement) throw new Error('The preview audio player is unavailable.');
   if (typeof RTCPeerConnection === 'undefined') throw new Error('This browser does not support WebRTC audio previews.');
 
@@ -189,7 +185,7 @@ export async function startAgentPreview({
   });
 
   try {
-    if (mode === 'conversation' || mode === 'training') {
+    if (mode === 'conversation') {
       if (!navigator?.mediaDevices?.getUserMedia) throw new Error('This browser cannot access a microphone.');
       microphone = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
@@ -199,11 +195,8 @@ export async function startAgentPreview({
       peer.addTransceiver('audio', { direction: 'recvonly' });
     }
 
-    const token = mode === 'training'
-      ? await outbound.createRepTrainingSession(accountId)
-      : await outbound.createAgentPreviewSession(profile, mode);
+    const token = await outbound.createAgentPreviewSession(profile, mode);
     if (!token?.clientSecret) throw new Error('The server did not return a preview credential.');
-    if (mode === 'training') onSession({ attemptId: token.attemptId, scenario: token.scenario });
 
     const offer = await peer.createOffer();
     await peer.setLocalDescription(offer);
@@ -225,22 +218,18 @@ export async function startAgentPreview({
     channel.send(JSON.stringify({
       type: 'response.create',
       response: {
-        instructions: mode === 'sample' ? SAMPLE_INSTRUCTION
-          : mode === 'training' ? TRAINING_INSTRUCTION : CONVERSATION_INSTRUCTION,
-        metadata: { response_purpose: mode === 'sample' ? 'voice_sample'
-          : mode === 'training' ? 'rep_training_roleplay' : 'preview_greeting' }
+        instructions: mode === 'sample' ? SAMPLE_INSTRUCTION : CONVERSATION_INSTRUCTION,
+        metadata: { response_purpose: mode === 'sample' ? 'voice_sample' : 'preview_greeting' }
       }
     }));
     sessionTimer = setTimeout(() => {
       if (activePreview !== controller) return;
       onError(mode === 'sample'
         ? 'The voice sample reached its 45-second preview limit.'
-        : mode === 'training'
-          ? 'This practice session reached its 10-minute limit. Submit the conversation for feedback or start another attempt.'
-          : 'The test conversation ended after the five-minute preview limit.');
+        : 'The test conversation ended after the five-minute preview limit.');
       activePreview = null;
       controller.stop();
-    }, mode === 'sample' ? 45000 : mode === 'training' ? 10 * 60 * 1000 : 5 * 60 * 1000);
+    }, mode === 'sample' ? 45000 : 5 * 60 * 1000);
     onState('live');
     return controller;
   } catch (error) {

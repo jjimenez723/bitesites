@@ -55,6 +55,7 @@
     "test:hybrid-dialer": "node --test functions/hybrid-call-orchestration.test.mjs functions/hybrid-capacity.test.mjs functions/hybrid-media-failsafe.test.mjs functions/hybrid-urls.test.mjs functions/hybrid-call-progress.test.mjs src/admin/outbound/voice-session.test.mjs src/admin/outbound/dialer-cue.test.mjs",
     "test:hybrid-webhook": "firebase emulators:exec --only firestore --project demo-bitesites \"node functions/hybrid-dialer-webhook.test.mjs\"",
     "test:dialer-browser": "node scripts/test-dialer-browser.mjs",
+    "test:rep-onboarding-browser": "node scripts/test-rep-onboarding-browser.mjs",
     "test:crisis": "node --test functions/crisis-support.test.mjs",
     "test:web-agents": "node --test functions/web-agents.test.mjs",
     "test:bit-crisis-browser": "node scripts/test-bit-crisis-browser.mjs",

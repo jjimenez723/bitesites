@@ -23,7 +23,7 @@ const REQUIRED_SECRETS = [
   'AI_MEDIA_WEBHOOK_SECRET',
   'OPENAI_API_KEY',
   'OPENAI_WEBHOOK_SECRET',
-  // Bit and Byte, the public website agents.
+  // Bit and Byte, the public website agents, plus rep practice calls and scoring.
   'ELEVENLABS_API_KEY',
   // Google Calendar sync. Firebase resolves every defineSecret at deploy time,
   // so this has to exist before the calendar functions will deploy — but the
@@ -94,6 +94,8 @@ const HYBRID_FUNCTIONS = [
   'previewAIAgentRuntime',
   'createAIAgentPreviewSession',
   'getRepTrainingStatus',
+  'getRepCourse',
+  'submitRepCourseQuiz',
   'createRepTrainingSession',
   'completeRepTrainingAttempt',
   'listAIKnowledgeBases',

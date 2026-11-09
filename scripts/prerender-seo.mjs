@@ -66,7 +66,7 @@ try {
   if (!faq.includes('Good questions.') || !faq.includes('application/ld+json')) throw new Error('FAQ pre-render did not produce content and structured data.');
   await writeFile(path.join(dist, 'faq.html'), faq);
   // These routes also need accurate initial metadata on direct requests.
-  for (const route of ['/terms', '/privacy', '/book', '/feedback', '/thank-you', '/questionnaire', '/email-preferences', '/coming-soon']) {
+  for (const route of ['/terms', '/privacy', '/book', '/feedback', '/thank-you', '/questionnaire', '/email-preferences', '/coming-soon', '/join']) {
     await writeFile(path.join(dist, `${route.slice(1)}.html`), withMetadata(template, metadataForPath(route)));
   }
   // Plain-text summary for AI assistants and answer engines, built from the
