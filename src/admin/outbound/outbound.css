@@ -1262,17 +1262,17 @@
 /* Printing happens in a frame that holds only the sheet (RepFieldGuide.jsx),
    which also sets the letter page size, so other admin printing is untouched. */
 .bs-admin.rep-guide-print { margin: 0; background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-.bs-admin.rep-guide-print .rep-guide { gap: 10px; padding: 0; border-radius: 0; font-size: 11px; }
-.bs-admin.rep-guide-print .rep-guide-head { padding-bottom: 8px; }
-.bs-admin.rep-guide-print .rep-guide-head h3 { font-size: 19px; }
-.bs-admin.rep-guide-print .rep-guide h4 { margin-bottom: 6px; font-size: 10px; }
+.bs-admin.rep-guide-print .rep-guide { gap: 7px; padding: 0; border-radius: 0; font-size: 10px; }
+.bs-admin.rep-guide-print .rep-guide-head { padding-bottom: 6px; }
+.bs-admin.rep-guide-print .rep-guide-head h3 { font-size: 17px; }
+.bs-admin.rep-guide-print .rep-guide h4 { margin-bottom: 4px; font-size: 10px; }
 .bs-admin.rep-guide-print .rep-guide-services,
 .bs-admin.rep-guide-print .rep-guide-steps { gap: 6px; }
 .bs-admin.rep-guide-print .rep-guide-services { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .bs-admin.rep-guide-print .rep-guide-steps { grid-template-columns: repeat(5, minmax(0, 1fr)); }
-.bs-admin.rep-guide-print .rep-guide-columns { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.bs-admin.rep-guide-print .rep-guide-columns { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .bs-admin.rep-guide-print .rep-guide-services > div,
-.bs-admin.rep-guide-print .rep-guide-steps li { padding: 8px; }
+.bs-admin.rep-guide-print .rep-guide-steps li { padding: 6px; }
 .bs-admin.rep-guide-print .rep-guide-services p,
 .bs-admin.rep-guide-print .rep-guide-services li,
 .bs-admin.rep-guide-print .rep-guide-steps span,
@@ -1281,7 +1281,7 @@
 .bs-admin.rep-guide-print .rep-guide-objections dt,
 .bs-admin.rep-guide-print .rep-guide-objections dd,
 .bs-admin.rep-guide-print .rep-guide-list li,
-.bs-admin.rep-guide-print .rep-guide-note { font-size: 11px; }
+.bs-admin.rep-guide-print .rep-guide-note { font-size: 10px; line-height: 1.35; }
 .bs-admin.rep-guide-print .rep-guide-script,
-.bs-admin.rep-guide-print .rep-guide-objections { gap: 5px; }
-.bs-admin.rep-guide-print .rep-guide .rep-guide-remember { margin-top: 8px; padding: 8px; font-size: 11px; }
+.bs-admin.rep-guide-print .rep-guide-objections { gap: 3px; }
+.bs-admin.rep-guide-print .rep-guide .rep-guide-remember { margin-top: 6px; padding: 6px; font-size: 10px; }
