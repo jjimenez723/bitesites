@@ -16,7 +16,6 @@ const valid = () => ({
   firebaseProjectId: 'bitesites-staging-123',
   publicAppUrl: 'https://staging.bitesites.example',
   region: 'us-central1',
-  sidebandService: 'bitesites-realtime-sideband-staging',
   externalDialing: 'disabled'
 });
 

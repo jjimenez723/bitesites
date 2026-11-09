@@ -1,12 +1,12 @@
-// Safe, browser-only previews for AI agent drafts.
+// Safe, browser-only previews for AI agent drafts, on ElevenLabs.
 //
-// The standard OpenAI key never leaves the server. This module creates the
-// short-lived client secret that a browser may use for one WebRTC connection,
-// and deliberately omits production tools from the preview session.
+// The ElevenLabs key never leaves the server. A voice sample is spoken by the
+// server and returned as audio. A test conversation gets a single-use link to
+// the preview agent, which has no tools, plus the prompt and voice the server
+// compiled for this draft. Only admins who can manage agents reach this.
 
-import { createHash } from 'node:crypto';
-
-import { compileAgentRuntime, sanitizeRealtimeSessionConfig } from './agent-runtime.js';
+import { compileAgentRuntime } from './agent-runtime.js';
+import { liveCallVoiceId, LIVE_CALL_TTS_MODEL } from './live-call-elevenlabs.js';
 import { clean } from './prospect-normalization.js';
 
 export const AGENT_PREVIEW_MODES = Object.freeze(['sample', 'conversation']);
@@ -19,12 +19,6 @@ export const AGENT_PREVIEW_SAMPLE_TEXT = 'Hi, this is the BiteSites assistant. I
  */
 export function auditionScript(compiled = {}) {
   return clean(compiled?.auditionScript, 1200) || AGENT_PREVIEW_SAMPLE_TEXT;
-}
-
-export function previewSafetyIdentifier(uid) {
-  return createHash('sha256')
-    .update(`bitesites-agent-preview:${clean(uid, 160)}`)
-    .digest('hex');
 }
 
 export function buildAgentPreviewRuntime({ profile, knowledgeChunks = [], mode = 'conversation' } = {}) {
@@ -65,48 +59,47 @@ export function buildAgentPreviewRuntime({ profile, knowledgeChunks = [], mode =
 
   return {
     compiled,
-    session: {
-      type: 'realtime',
-      model: clean(compiled.model, 120) || 'gpt-realtime-2.1',
-      instructions: clean(previewInstructions, 30000),
-      ...sanitizeRealtimeSessionConfig(compiled.sessionConfig, clean(compiled.voice, 120) || 'marin')
-    }
+    prompt: clean(previewInstructions, 30000),
+    firstMessage: mode === 'sample' ? '' : clean(compiled.openingLine, 500),
+    sampleText: auditionScript(compiled),
+    voiceId: liveCallVoiceId(compiled.voice)
   };
 }
 
-export async function mintAgentPreviewClientSecret({
-  apiKey,
-  uid,
-  session,
-  fetchImpl = globalThis.fetch
-} = {}) {
-  if (!apiKey) throw new Error('OpenAI is not configured.');
-  if (!uid) throw new Error('A signed-in user is required.');
-  if (!session || typeof session !== 'object') throw new Error('A preview session is required.');
+const ELEVENLABS = 'https://api.elevenlabs.io';
+
+async function elevenLabs(fetchImpl, apiKey, path, init = {}) {
+  if (!apiKey) throw new Error('ElevenLabs is not configured.');
   if (typeof fetchImpl !== 'function') throw new Error('Fetch is unavailable.');
-
-  const response = await fetchImpl('https://api.openai.com/v1/realtime/client_secrets', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-      'OpenAI-Safety-Identifier': previewSafetyIdentifier(uid)
-    },
-    body: JSON.stringify({ session })
+  const response = await fetchImpl(`${ELEVENLABS}${path}`, {
+    ...init, headers: { 'xi-api-key': apiKey, 'Content-Type': 'application/json', ...(init.headers || {}) }
   });
-  const text = await response.text();
-  let payload = {};
-  try { payload = JSON.parse(text); } catch { /* handled below */ }
-
   if (!response.ok) {
-    const message = clean(payload?.error?.message || text, 400) || `OpenAI returned HTTP ${response.status}`;
-    throw new Error(`Could not create the agent preview: ${message}`);
+    const detail = clean(await response.text().catch(() => ''), 300);
+    throw new Error(`Could not create the agent preview: ElevenLabs returned HTTP ${response.status}${detail ? ` (${detail})` : ''}`);
   }
+  return response;
+}
 
-  const value = clean(payload?.value || payload?.client_secret?.value, 2000);
-  if (!value) throw new Error('OpenAI did not return a preview client secret.');
-  return {
-    value,
-    expiresAt: Number(payload?.expires_at || payload?.client_secret?.expires_at) || 0
-  };
+/** The voice sample, spoken on the server. Returns base64 MP3. */
+export async function synthesizePreviewSample({ apiKey, text, voiceId, fetchImpl = globalThis.fetch } = {}) {
+  const line = clean(text, 1200);
+  if (!line) throw new Error('There is no sample line to speak.');
+  const response = await elevenLabs(fetchImpl, apiKey,
+    `/v1/text-to-speech/${encodeURIComponent(voiceId)}?output_format=mp3_44100_64`, {
+      method: 'POST', body: JSON.stringify({ text: line, model_id: LIVE_CALL_TTS_MODEL })
+    });
+  const audio = Buffer.from(await response.arrayBuffer());
+  if (!audio.length) throw new Error('ElevenLabs returned no audio.');
+  return { audioBase64: audio.toString('base64'), mimeType: 'audio/mpeg' };
+}
+
+/** A single-use link to the tool-free preview agent. */
+export async function mintPreviewConversationUrl({ apiKey, agentId, fetchImpl = globalThis.fetch } = {}) {
+  if (!agentId) throw new Error('The preview agent is not set up yet.');
+  const response = await elevenLabs(fetchImpl, apiKey,
+    `/v1/convai/conversation/get-signed-url?agent_id=${encodeURIComponent(agentId)}`);
+  const signedUrl = clean((await response.json())?.signed_url, 2000);
+  if (!signedUrl) throw new Error('ElevenLabs did not return a preview link.');
+  return signedUrl;
 }

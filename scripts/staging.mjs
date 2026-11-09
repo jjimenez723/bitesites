@@ -35,7 +35,6 @@ export function parseStagingConfig(raw) {
     firebaseProjectId: clean(raw.firebaseProjectId),
     publicAppUrl: clean(raw.publicAppUrl),
     region: clean(raw.region),
-    sidebandService: clean(raw.sidebandService),
     externalDialing: clean(raw.externalDialing).toLowerCase()
   };
   return validateStagingConfig(config);
@@ -56,9 +55,6 @@ export function validateStagingConfig(config) {
     throw new Error('publicAppUrl must be a non-production HTTPS staging origin.');
   }
   if (config.region !== 'us-central1') throw new Error('Staging region must currently be us-central1.');
-  if (!/^[a-z][a-z0-9-]{2,62}$/.test(config.sidebandService) || !config.sidebandService.includes('staging')) {
-    throw new Error('sidebandService must be a valid, explicitly staging-named service.');
-  }
   if (config.externalDialing !== 'disabled') {
     throw new Error('Staging externalDialing must be exactly "disabled".');
   }
@@ -190,7 +186,6 @@ function deploy(config) {
   requireFirebaseCli();
   command('npm', ['run', 'build', '--', '--mode', 'staging']);
   command('npm', ['run', 'check', '--prefix', 'functions']);
-  command('npm', ['run', 'check', '--prefix', 'services/realtime-sideband']);
   command('firebase', [
     'deploy', '--only', 'firestore:rules,firestore:indexes,functions,hosting',
     '--project', config.firebaseProjectId

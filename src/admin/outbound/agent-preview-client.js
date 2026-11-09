@@ -1,65 +1,42 @@
-// Browser-only OpenAI Realtime preview transport.
+// Browser preview of an agent draft, on ElevenLabs.
 //
-// The server returns a short-lived client secret scoped to the already-compiled
-// draft. The standard OpenAI API key never exists in this bundle.
+// The server compiles the draft and returns either the voice sample as audio,
+// or a single-use link to the tool-free preview agent with the compiled prompt
+// and voice. The ElevenLabs key never reaches this bundle, and a preview can
+// never book, send or change anything.
 
 import { outbound } from './data';
-import {
-  CONTINUE_TRUNCATED_RESPONSE_INSTRUCTION,
-  MAX_RESPONSE_CONTINUATIONS,
-  isOutputAudioDrained,
-  realtimeResponseOutcome
-} from './realtime-audio-lifecycle';
 
-const SAMPLE_INSTRUCTION = 'Deliver the configured voice sample now. Follow the preview sandbox instructions exactly.';
-const CONVERSATION_INSTRUCTION = 'Begin the configured test conversation now with a brief greeting. The operator will role-play as the prospect.';
+const SAMPLE_LIMIT_MS = 45_000;
+const CONVERSATION_LIMIT_MS = 5 * 60 * 1000;
 
 let activePreview = null;
-
-const errorMessage = value => {
-  if (typeof value === 'string') return value;
-  return value?.message || value?.error?.message || 'The realtime preview reported an error.';
-};
-
-function waitForDataChannel(channel, peer, timeoutMs = 15000) {
-  if (channel.readyState === 'open') return Promise.resolve();
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => finish(new Error('The agent preview took too long to connect.')), timeoutMs);
-    const finish = error => {
-      clearTimeout(timer);
-      channel.removeEventListener('open', onOpen);
-      channel.removeEventListener('close', onClose);
-      peer.removeEventListener('connectionstatechange', onConnection);
-      if (error) reject(error); else resolve();
-    };
-    const onOpen = () => finish();
-    const onClose = () => finish(new Error('The agent preview closed before it connected.'));
-    const onConnection = () => {
-      if (['failed', 'closed', 'disconnected'].includes(peer.connectionState)) {
-        finish(new Error('The agent preview could not establish an audio connection.'));
-      }
-    };
-    channel.addEventListener('open', onOpen);
-    channel.addEventListener('close', onClose);
-    peer.addEventListener('connectionstatechange', onConnection);
-  });
-}
-
-export function previewTranscriptEvent(event) {
-  if (event?.type === 'conversation.item.input_audio_transcription.completed' && event.transcript) {
-    return { role: 'you', text: String(event.transcript).trim() };
-  }
-  if (event?.type === 'response.output_audio_transcript.done' && event.transcript) {
-    return { role: 'agent', text: String(event.transcript).trim() };
-  }
-  return null;
-}
 
 export async function stopAgentPreview() {
   const preview = activePreview;
   if (!preview) return;
   activePreview = null;
   await preview.stop();
+}
+
+function playSample({ token, audioElement, controller, onState, onError, onComplete }) {
+  const bytes = Uint8Array.from(atob(token.audioBase64), char => char.charCodeAt(0));
+  const url = URL.createObjectURL(new Blob([bytes], { type: token.mimeType || 'audio/mpeg' }));
+  controller.cleanUp = () => {
+    audioElement.pause();
+    audioElement.removeAttribute('src');
+    URL.revokeObjectURL(url);
+  };
+  audioElement.srcObject = null;
+  audioElement.src = url;
+  audioElement.onended = () => {
+    onComplete();
+    if (activePreview === controller) { activePreview = null; controller.stop(); }
+  };
+  onState('live');
+  return audioElement.play().catch(error => {
+    onError(`Your browser blocked preview audio: ${error?.message || 'playback failed'}`);
+  });
 }
 
 export async function startAgentPreview({
@@ -74,168 +51,76 @@ export async function startAgentPreview({
 }) {
   if (!['sample', 'conversation'].includes(mode)) throw new Error('Preview mode is not supported.');
   if (!audioElement) throw new Error('The preview audio player is unavailable.');
-  if (typeof RTCPeerConnection === 'undefined') throw new Error('This browser does not support WebRTC audio previews.');
 
   await stopAgentPreview();
   onState('connecting');
 
-  const abortController = new AbortController();
-  const peer = new RTCPeerConnection();
-  const channel = peer.createDataChannel('oai-events');
-  let microphone = null;
-  let completeTimer = null;
-  let sessionTimer = null;
   let stopped = false;
-  let pendingContinuationResponseId = '';
-  let continuationAttempts = 0;
-  let sampleEndAfterDrainId = '';
-  let sampleCompleted = false;
-
+  let timer = null;
   const controller = {
     mode,
+    cleanUp: () => {},
     async stop() {
       if (stopped) return;
       stopped = true;
-      if (completeTimer) clearTimeout(completeTimer);
-      if (sessionTimer) clearTimeout(sessionTimer);
-      abortController.abort();
-      try { channel.close(); } catch { /* already closed */ }
-      try { peer.close(); } catch { /* already closed */ }
-      microphone?.getTracks().forEach(track => track.stop());
-      if (audioElement.srcObject) audioElement.srcObject = null;
+      if (timer) clearTimeout(timer);
+      try { await controller.cleanUp(); } catch { /* already closed */ }
       onState('idle');
     }
   };
   activePreview = controller;
 
-  peer.addEventListener('track', event => {
-    audioElement.srcObject = event.streams[0];
-    audioElement.play().catch(error => onError(`Your browser blocked preview audio: ${errorMessage(error)}`));
-  });
-  peer.addEventListener('connectionstatechange', () => {
-    if (peer.connectionState === 'connected') onState('live');
-    if (peer.connectionState === 'failed') {
-      onError('The realtime audio connection failed.');
-      if (activePreview === controller) {
-        activePreview = null;
-        controller.stop();
-      }
-    }
-  });
-  channel.addEventListener('close', () => {
-    if (!stopped && activePreview === controller) {
-      activePreview = null;
-      controller.stop();
-    }
-  });
-  channel.addEventListener('message', message => {
-    let event;
-    try { event = JSON.parse(message.data); } catch { return; }
-    onEvent(event);
-    const transcript = previewTranscriptEvent(event);
-    if (transcript?.text) onTranscript(transcript);
-    if (event.type === 'error') onError(errorMessage(event.error));
-
-    if (event.type === 'input_audio_buffer.speech_started') {
-      // A real operator barge-in always wins over a queued token-limit
-      // continuation from the previous agent turn.
-      pendingContinuationResponseId = '';
-      continuationAttempts = 0;
-    }
-
-    const outcome = realtimeResponseOutcome(event);
-    if (outcome?.truncatedByTokenLimit
-        && outcome.responseId
-        && continuationAttempts < MAX_RESPONSE_CONTINUATIONS) {
-      continuationAttempts += 1;
-      pendingContinuationResponseId = outcome.responseId;
-    } else if (outcome) {
-      if (mode === 'sample') {
-        sampleEndAfterDrainId = outcome.responseId;
-        sampleCompleted = outcome.status === 'completed';
-      }
-      if (!['completed', 'cancelled'].includes(outcome.status)) {
-        onError(outcome.reason === 'max_output_tokens'
-          ? 'The agent reached its response limit before it could finish speaking.'
-          : `The realtime response ended early${outcome.reason ? `: ${outcome.reason}` : '.'}`);
-      }
-    }
-
-    if (isOutputAudioDrained(event, pendingContinuationResponseId)) {
-      pendingContinuationResponseId = '';
-      channel.send(JSON.stringify({
-        type: 'response.create',
-        response: {
-          instructions: CONTINUE_TRUNCATED_RESPONSE_INSTRUCTION,
-          metadata: { response_purpose: 'max_tokens_continuation' }
-        }
-      }));
-    } else if (mode === 'sample' && isOutputAudioDrained(event, sampleEndAfterDrainId)) {
-      if (sampleCompleted) onComplete();
-      sampleEndAfterDrainId = '';
-      // `output_audio_buffer.stopped` is the authoritative server-side drain
-      // signal. Keep a small grace period for the browser's RTP jitter buffer.
-      completeTimer = setTimeout(() => {
-        if (activePreview === controller) {
-          activePreview = null;
-          controller.stop();
-        }
-      }, 1000);
-    }
-  });
-
   try {
     if (mode === 'conversation') {
       if (!navigator?.mediaDevices?.getUserMedia) throw new Error('This browser cannot access a microphone.');
-      microphone = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
-      });
-      microphone.getAudioTracks().forEach(track => peer.addTrack(track, microphone));
-    } else {
-      peer.addTransceiver('audio', { direction: 'recvonly' });
+      // Ask for the mic before creating a session, so a blocked mic costs nothing.
+      const microphone = await navigator.mediaDevices.getUserMedia({ audio: true });
+      microphone.getTracks().forEach(track => track.stop());
     }
 
     const token = await outbound.createAgentPreviewSession(profile, mode);
-    if (!token?.clientSecret) throw new Error('The server did not return a preview credential.');
-
-    const offer = await peer.createOffer();
-    await peer.setLocalDescription(offer);
-    const response = await fetch('https://api.openai.com/v1/realtime/calls', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token.clientSecret}`,
-        'Content-Type': 'application/sdp'
-      },
-      body: offer.sdp,
-      signal: abortController.signal
-    });
-    const answerSdp = await response.text();
-    if (!response.ok) throw new Error(`OpenAI could not connect the preview (HTTP ${response.status}).`);
-    await peer.setRemoteDescription({ type: 'answer', sdp: answerSdp });
-    await waitForDataChannel(channel, peer);
     if (stopped) throw new Error('The preview was stopped.');
 
-    channel.send(JSON.stringify({
-      type: 'response.create',
-      response: {
-        instructions: mode === 'sample' ? SAMPLE_INSTRUCTION : CONVERSATION_INSTRUCTION,
-        metadata: { response_purpose: mode === 'sample' ? 'voice_sample' : 'preview_greeting' }
-      }
-    }));
-    sessionTimer = setTimeout(() => {
+    if (mode === 'sample') {
+      if (!token?.audioBase64) throw new Error('The server did not return a voice sample.');
+      await playSample({ token, audioElement, controller, onState, onError, onComplete });
+    } else {
+      if (!token?.signedUrl) throw new Error('The server did not return a preview link.');
+      const { Conversation } = await import('@elevenlabs/client');
+      const conversation = await Conversation.startSession({
+        signedUrl: token.signedUrl,
+        connectionType: 'websocket',
+        overrides: {
+          agent: { prompt: { prompt: token.prompt }, firstMessage: token.firstMessage || undefined },
+          tts: { voiceId: token.voiceId }
+        },
+        onConnect: () => onState('live'),
+        onDisconnect: () => {
+          if (activePreview === controller) { activePreview = null; controller.stop(); }
+        },
+        onError: message => onError(String(message || 'The preview hit a problem.')),
+        onMessage: ({ role, message }) => {
+          onEvent({ role, message });
+          const text = String(message || '').trim();
+          if (text) onTranscript({ role: role === 'user' ? 'you' : 'agent', text });
+        }
+      });
+      controller.cleanUp = () => conversation.endSession();
+      if (stopped) await conversation.endSession();
+    }
+
+    timer = setTimeout(() => {
       if (activePreview !== controller) return;
       onError(mode === 'sample'
         ? 'The voice sample reached its 45-second preview limit.'
         : 'The test conversation ended after the five-minute preview limit.');
       activePreview = null;
       controller.stop();
-    }, mode === 'sample' ? 45000 : 5 * 60 * 1000);
-    onState('live');
+    }, mode === 'sample' ? SAMPLE_LIMIT_MS : CONVERSATION_LIMIT_MS);
     return controller;
   } catch (error) {
     if (activePreview === controller) activePreview = null;
     await controller.stop();
-    if (error?.name === 'AbortError') throw new Error('The preview was stopped.');
     throw error;
   }
 }

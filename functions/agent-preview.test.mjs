@@ -5,9 +5,10 @@ import {
   AGENT_PREVIEW_SAMPLE_TEXT,
   auditionScript,
   buildAgentPreviewRuntime,
-  mintAgentPreviewClientSecret,
-  previewSafetyIdentifier
+  mintPreviewConversationUrl,
+  synthesizePreviewSample
 } from './agent-preview.js';
+import { LIVE_CALL_VOICES } from './live-call-elevenlabs.js';
 
 const profile = {
   id: 'preview-agent',
@@ -29,82 +30,54 @@ const profile = {
 };
 
 test('sample preview uses the live compiler but exposes no production tools', () => {
-  const preview = buildAgentPreviewRuntime({
-    profile,
-    mode: 'sample',
-    knowledgeChunks: [{ sourceId: 'kb-services/offer', title: 'Offer', text: 'BiteSites builds conversion-focused websites.', version: 2 }]
-  });
-  assert.equal(preview.session.type, 'realtime');
-  assert.equal(preview.session.model, 'gpt-realtime-2.1');
-  assert.equal(preview.session.audio.output.voice, 'cedar');
-  assert.equal(preview.session.audio.output.speed, 1.1);
-  assert.equal(Object.prototype.hasOwnProperty.call(preview.session, 'tools'), false);
-  assert.match(preview.session.instructions, /PREVIEW SANDBOX/i);
-  assert.match(preview.session.instructions, new RegExp(AGENT_PREVIEW_SAMPLE_TEXT.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
-  assert.match(preview.session.instructions, /BiteSites builds conversion-focused websites/i);
-  assert.equal(preview.compiled.effectiveConfigHash.length, 64);
+  const preview = buildAgentPreviewRuntime({ profile, mode: 'sample' });
+  assert.equal(preview.voiceId, LIVE_CALL_VOICES.cedar.id);
+  assert.equal(preview.sampleText, AGENT_PREVIEW_SAMPLE_TEXT);
+  assert.equal(preview.firstMessage, '');
+  assert.match(preview.prompt, /PREVIEW SANDBOX/i);
+  assert.equal('tools' in preview, false);
 });
 
-test('conversation preview is explicitly non-operational', () => {
+test('conversation preview is explicitly non-operational and opens with the AI disclosure', () => {
   const preview = buildAgentPreviewRuntime({ profile, mode: 'conversation' });
-  assert.match(preview.session.instructions, /not a real sales call/i);
-  assert.match(preview.session.instructions, /No external tools or business actions are available/i);
-  assert.match(preview.session.instructions, /role-play as the prospect/i);
-  assert.match(preview.session.instructions, /Stay in character through objections/i);
+  assert.match(preview.prompt, /not a real sales call/i);
+  assert.match(preview.prompt, /No external tools or business actions are available/i);
+  assert.match(preview.prompt, /role-play as the prospect/i);
+  assert.match(preview.firstMessage, /AI assistant/i);
 });
 
 test('a persona auditions with its own opener rather than the shared placeholder', () => {
-  const opener = 'Hey — is this the owner? My name’s Ava, I’m an AI calling from BiteSites.';
   const preview = buildAgentPreviewRuntime({
-    profile: { ...profile, auditionScript: opener },
-    mode: 'sample'
+    profile: { ...profile, auditionScript: 'Hi, is this the owner? I am calling about your website.' }, mode: 'sample'
   });
-  assert.equal(auditionScript(preview.compiled), opener);
-  assert.match(preview.session.instructions, /is this the owner/i);
-  assert.equal(preview.session.instructions.includes(AGENT_PREVIEW_SAMPLE_TEXT), false);
+  assert.match(preview.sampleText, /is this the owner/i);
+  assert.equal(auditionScript({}), AGENT_PREVIEW_SAMPLE_TEXT);
 });
 
-test('a persona without an audition script falls back to the shared sample', () => {
-  const preview = buildAgentPreviewRuntime({ profile, mode: 'sample' });
-  assert.equal(auditionScript(preview.compiled), AGENT_PREVIEW_SAMPLE_TEXT);
-});
-
-test('preview safety identifier is stable and does not reveal the uid', () => {
-  const first = previewSafetyIdentifier('user-private-123');
-  const second = previewSafetyIdentifier('user-private-123');
-  assert.equal(first, second);
-  assert.equal(first.length, 64);
-  assert.equal(first.includes('user-private-123'), false);
-});
-
-test('client secret is minted server-side with a privacy-preserving safety identifier', async () => {
-  let request;
-  const result = await mintAgentPreviewClientSecret({
-    apiKey: 'sk-server-only',
-    uid: 'user-private-123',
-    session: { type: 'realtime', model: 'gpt-realtime-2.1' },
-    fetchImpl: async (url, options) => {
-      request = { url, options };
-      return { ok: true, status: 200, text: async () => JSON.stringify({ value: 'ek_preview_123', expires_at: 123456 }) };
+test('the voice sample is spoken on the server and returned as audio', async () => {
+  let url = '';
+  let sentKey = '';
+  const result = await synthesizePreviewSample({
+    apiKey: 'test-key', text: 'Hello there', voiceId: 'AbCdEfGhIj0123456789',
+    fetchImpl: async (target, init) => {
+      url = target; sentKey = init.headers['xi-api-key'];
+      return { ok: true, arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer };
     }
   });
-
-  assert.equal(request.url, 'https://api.openai.com/v1/realtime/client_secrets');
-  assert.equal(request.options.headers.Authorization, 'Bearer sk-server-only');
-  assert.equal(request.options.headers['OpenAI-Safety-Identifier'], previewSafetyIdentifier('user-private-123'));
-  assert.deepEqual(JSON.parse(request.options.body), { session: { type: 'realtime', model: 'gpt-realtime-2.1' } });
-  assert.deepEqual(result, { value: 'ek_preview_123', expiresAt: 123456 });
+  assert.match(url, /text-to-speech\/AbCdEfGhIj0123456789/);
+  assert.equal(sentKey, 'test-key');
+  assert.equal(result.mimeType, 'audio/mpeg');
+  assert.equal(Buffer.from(result.audioBase64, 'base64').length, 3);
 });
 
-test('OpenAI errors do not accidentally return a missing credential as success', async () => {
-  await assert.rejects(
-    mintAgentPreviewClientSecret({
-      apiKey: 'sk-server-only', uid: 'user-1', session: { type: 'realtime' },
-      fetchImpl: async () => ({
-        ok: false, status: 400,
-        text: async () => JSON.stringify({ error: { message: 'Unsupported preview configuration.' } })
-      })
-    }),
-    /Unsupported preview configuration/i
-  );
+test('a preview link needs the preview agent and a real link back', async () => {
+  await assert.rejects(mintPreviewConversationUrl({ apiKey: 'k', agentId: '' }), /not set up/);
+  const link = await mintPreviewConversationUrl({
+    apiKey: 'k', agentId: 'agent_preview',
+    fetchImpl: async url => ({ ok: true, json: async () => ({ signed_url: `wss://example/${new URL(url).searchParams.get('agent_id')}` }) })
+  });
+  assert.equal(link, 'wss://example/agent_preview');
+  await assert.rejects(mintPreviewConversationUrl({
+    apiKey: 'k', agentId: 'agent_preview', fetchImpl: async () => ({ ok: false, status: 401, text: async () => 'bad key' })
+  }), /HTTP 401/);
 });

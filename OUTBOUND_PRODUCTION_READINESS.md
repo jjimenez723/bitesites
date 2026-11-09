@@ -159,6 +159,27 @@ exempt rep. His training pass remains unset; the other rep is unchanged. The
 full rules suite reproduces the same four prior fixture failures on baseline
 and patched rules, while the new end-to-end access and browser checks pass.
 
+**AI calling moved to ElevenLabs — built 2026-11-07, ElevenLabs set up 2026-11-08, not deployed.**
+On `feat/elevenlabs-live-calls` (on top of `feat/rep-onboarding`), the AI leg of
+a call now goes from Twilio over SIP to an ElevenLabs agent instead of OpenAI
+Realtime, and the Cloud Run sideband, its control endpoints and every OpenAI
+call in the dialer were deleted. The admin agent preview runs on ElevenLabs too.
+Per-call settings come from `hybridAICallInit`, tools run through
+`hybridAITools` with the same server-side grant checks, and transcripts arrive
+after the call through a signed post-call webhook. Handoffs are now done on the
+carrier (mute the AI, play the handoff line in the agent's voice, end the AI leg
+once a person owns the call), and an AI leg that ends while the AI still owns
+the call now ends the prospect's leg instead of leaving them alone. Verified:
+unit tests for the new path, the existing agent, dialer and browser suites, and
+a production build. The ElevenLabs agents, tools, SIP entry and
+initiation webhook were created on 2026-11-08 and read back. **Not verified:**
+the Functions are not deployed, no SIP call has reached ElevenLabs, the emulator
+suites run only in CI, and live transcripts during a call are gone (the
+reconciler fetches them about a minute after the call).
+The production sideband service deployed on 2026-10-27 is still running until
+someone removes it; nothing new calls it. AI calling stays off, and every gate
+in the launch authorization still applies.
+
 **Rep onboarding — built 2026-11-05, not deployed.** Welcome link, lessons, pricing, quiz, a printable one-page field guide and yes/no practice calls are on `feat/rep-onboarding`. That branch also moves practice calls and scoring to ElevenLabs and scores the transcript ElevenLabs recorded. Until it deploys, the training row below still describes production: OpenAI sessions, with the browser submitting the transcript. Status and limits are in `OUTBOUND_OWNER_CHECKLIST.md`.
 
 **Rep sign-in correction — deployed 2026-10-28:** `getRepTrainingStatus` was
@@ -279,7 +300,9 @@ prospect is called:
    The live path is **built and guarded**, and has **not been run**.
    `scripts/conversation-eval-model-adapter.mjs` drives the same corpus through
    a real model with the compiled seller runtime as its instructions and the
-   sideband's own tool schemas, and the same evaluator grades both. Three
+   live agent's own tool schemas (`functions/live-call-tool-schemas.js`), and
+   the same evaluator grades both. It is the one remaining OpenAI dependency,
+   and only when someone runs it by hand. Three
    independent things must be true before it spends anything — `--live`,
    `OPENAI_API_KEY`, and `CONVERSATION_EVAL_LIVE_RUN=authorized`, the recorded
    owner decision in [OUTBOUND_LAUNCH_AUTHORIZATION.md](./OUTBOUND_LAUNCH_AUTHORIZATION.md)
@@ -288,8 +311,8 @@ prospect is called:
    token estimates, sellers and output path without contacting anything.
 
    One limitation to carry into the decision: the adapter is a **text**
-   rehearsal and production speech is realtime audio (`gpt-realtime-2.1` over
-   the sideband). A green live run would not cover interruption, latency,
+   rehearsal and production speech is ElevenLabs voice over SIP (since
+   2026-11-07; see below). A green live run would not cover interruption, latency,
    accent, noise, or a dropped media leg.
 
 2. Require zero critical failures: wrong seller, missing AI disclosure, DNC

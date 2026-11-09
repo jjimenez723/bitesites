@@ -1,5 +1,7 @@
 # BiteSites outbound AI completion goal specification
 
+> **Superseded in part (2026-11-07):** the OpenAI Realtime sideband described here was replaced by ElevenLabs over SIP on `feat/elevenlabs-live-calls`. See `HYBRID_DIALER_DEPLOYMENT.md` section 4.
+
 **Repository:** `jjimenez723/bitesites`  
 **Baseline reviewed:** `main` at `925697f9b62711decaf46c37d4e76e9b5026d060`  
 **Purpose:** Finish every engineering task that can be completed safely without placing a real call, enrolling a live GoHighLevel workflow, enabling paid services, deploying production, or inventing legal/consent evidence.

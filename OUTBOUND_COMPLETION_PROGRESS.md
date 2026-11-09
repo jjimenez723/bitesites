@@ -1,5 +1,7 @@
 # Outbound completion — progress log
 
+> **Superseded in part (2026-11-07):** the OpenAI Realtime sideband described here was replaced by ElevenLabs over SIP on `feat/elevenlabs-live-calls`. See `HYBRID_DIALER_DEPLOYMENT.md` section 4.
+
 Working document for `OUTBOUND_COMPLETION_GOAL_SPEC.md`. One short entry per
 checkpoint: what changed, what proves it, what is left, and who is blocking.
 

@@ -83,6 +83,11 @@ const RUNTIME_LOCKED_PERMISSIONS = {
 };
 
 const VOICES = ['marin', 'cedar', 'alloy', 'ash', 'ballad', 'coral', 'echo', 'sage', 'shimmer', 'verse'];
+// The ElevenLabs voice each saved key plays (functions/live-call-elevenlabs.js).
+const VOICE_LABELS = {
+  marin: 'Jessica', cedar: 'Brian', alloy: 'River', ash: 'Eric', ballad: 'Roger',
+  coral: 'Matilda', echo: 'Chris', sage: 'Bill', shimmer: 'Bella', verse: 'Daniel'
+};
 const REASONING_MODELS = new Set(['gpt-realtime-2', 'gpt-realtime-2.1', 'gpt-realtime-2.1-mini']);
 const PRESET_SETTINGS = {
   friendly_consultant: { tone: 'Warm, concise, consultative, and confident.', pacing: 'natural', formality: 'professional', energy: 'balanced', emotion: 'warm' },
@@ -159,7 +164,7 @@ export default function AgentProfiles() {
     && readAccountId(kb.accountId, { fallback: LEGACY_ACCOUNT_ID }) === activeAccountId
   )), [knowledgeBases, activeAccountId]);
   const customVoiceInvalid = draft.voiceSettings.source === 'custom'
-    && !/^voice_[A-Za-z0-9_-]+$/.test(draft.voiceSettings.customVoiceId || '');
+    && !/^[A-Za-z0-9]{20}$/.test(draft.voiceSettings.customVoiceId || '');
   const reasoningCapable = REASONING_MODELS.has(draft.model);
 
   const selectProfile = id => {
@@ -373,19 +378,19 @@ export default function AgentProfiles() {
               <label><span>Voice source</span>
                 <select className="admin-select" value={draft.voiceSettings.source} onChange={event => setField(['voiceSettings', 'source'], event.target.value)}>
                   <option value="built_in">OpenAI built-in voice</option>
-                  <option value="custom">Custom voice ID</option>
+                  <option value="custom">ElevenLabs voice ID</option>
                 </select>
               </label>
               {draft.voiceSettings.source === 'built_in' ? (
                 <label><span>Built-in voice</span>
                   <select className="admin-select" value={draft.voiceSettings.builtInVoice} onChange={event => setField(['voiceSettings', 'builtInVoice'], event.target.value)}>
-                    {VOICES.map(voice => <option key={voice} value={voice}>{voice[0].toUpperCase() + voice.slice(1)}{['marin', 'cedar'].includes(voice) ? ' · recommended' : ''}</option>)}
+                    {VOICES.map(voice => <option key={voice} value={voice}>{VOICE_LABELS[voice]}{['marin', 'cedar'].includes(voice) ? ' · recommended' : ''}</option>)}
                   </select>
                 </label>
               ) : (
-                <label><span>Custom voice ID</span><input className={customVoiceInvalid ? 'is-invalid' : ''} value={draft.voiceSettings.customVoiceId}
-                  onChange={event => setField(['voiceSettings', 'customVoiceId'], event.target.value)} placeholder="voice_123abc" />
-                  {customVoiceInvalid && <small className="field-error">Must begin with voice_.</small>}
+                <label><span>ElevenLabs voice ID</span><input className={customVoiceInvalid ? 'is-invalid' : ''} value={draft.voiceSettings.customVoiceId}
+                  onChange={event => setField(['voiceSettings', 'customVoiceId'], event.target.value)} placeholder="21m00Tcm4TlvDq8ikWAM" />
+                  {customVoiceInvalid && <small className="field-error">Paste the 20-character voice ID from ElevenLabs.</small>}
                 </label>
               )}
               <label className="full hybrid-range-field"><span>Playback speed <strong>{Number(draft.voiceSettings.playbackSpeed).toFixed(2)}×</strong></span>

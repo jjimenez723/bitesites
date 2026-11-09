@@ -35,7 +35,7 @@
 // admission function below refuses on any one of them, in the same shape the
 // paid-screening gate uses.
 
-import { TOOL_SCHEMAS } from '../services/realtime-sideband/tool-schemas.js';
+import { TOOL_SCHEMAS } from '../functions/live-call-tool-schemas.js';
 
 const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses';
 
