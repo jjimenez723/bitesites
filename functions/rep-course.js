@@ -26,29 +26,34 @@ const BITESITES_FIELD_GUIDE = Object.freeze({
   ],
   priceNote: 'Starting prices, not quotes. Every project is custom, so ask questions to find the right price.',
   steps: [
-    { label: 'Open', line: 'Your name, BiteSites, why you are calling. Ask for a minute.' },
+    { label: 'Open', line: 'Your name, then ask for the owner. Say BiteSites and why you called.' },
     { label: 'Ask', line: 'One question about their business. Then stop talking.' },
     { label: 'Listen', line: 'Find the one problem they care about most.' },
-    { label: 'Connect', line: 'Show how we fix that one problem.' },
-    { label: 'Ask for the yes', line: 'Invite them to a 20-minute call. Don’t wait for them to offer.' }
+    { label: 'Offer', line: 'Match it to the free website demo or the AI receptionist demo.' },
+    { label: 'Ask for the yes', line: 'Book 20 minutes to show the demo. Offer two times.' }
   ],
   script: [
-    { label: 'Open', say: 'Hi, this is [your name] with BiteSites. I know I caught you out of the blue. Do you have a quick minute?' },
-    { label: 'Ask', say: 'When a call comes in and nobody can pick up, what happens to it right now?' },
-    { label: 'Connect', say: 'It sounds like [their problem] is the real issue. That’s exactly what we fix.' },
-    { label: 'Ask for the yes', say: 'Can we set up 20 minutes to map out what would work for you? Does Tuesday or Wednesday work better?' },
+    { label: 'Open', say: 'Hey, my name is [your name]. Is this the owner speaking?' },
+    { label: 'Not the owner', say: 'No problem. Who’s the best person to talk to about the business, and when can I catch them?' },
+    { label: 'Why you called', say: 'I’m with BiteSites, and I’ll be upfront: this is a cold call. Can I take 30 seconds to tell you why, and you tell me if it’s worth a chat?' },
+    { label: 'Website offer', say: 'We build websites for local businesses. We’ll make you a free demo of your new site first. If you love it, we launch it. If not, you owe nothing.' },
+    { label: 'Receptionist offer', say: 'We set up an AI receptionist that answers every call, day or night, and books the job. I can let you hear a free demo.' },
+    { label: 'Ask for the yes', say: 'Can I take 20 minutes to show you? Does Tuesday or Wednesday work better?' },
     { label: 'After the yes', say: 'Perfect, [day] at [time]. Thanks, [name]. Talk soon.' }
   ],
   questions: [
-    'When someone lands on your website, what’s the one thing you want them to do?',
-    'When a lead comes in on a Saturday, when does it get a reply?',
-    'Where do most of your new customers come from right now?'
+    'Do you have a website right now? How do new customers find you?',
+    'When a call comes in and nobody can pick up, what happens to it?',
+    'When a lead comes in on a Saturday, when does it get a reply?'
   ],
   objections: [
-    { they: 'I’m busy.', you: 'Totally fair, I’ll be quick. One question: [ask]. Or is there a better time to call back?' },
-    { they: 'How much is it?', you: 'Websites start around $1,000, and it depends on what you need, because everything we build is custom. Can I ask a couple of questions?' },
-    { they: 'I already have a web person.', you: 'That’s great, I’m not here to replace anyone. What’s working, and what do you wish it did better?' },
-    { they: 'Just send me some info.', you: 'Sure. So it’s actually useful, what’s the one thing you’d most want fixed?' },
+    { they: 'I’m busy.', you: 'Totally fair. When’s a better time today or tomorrow for two minutes?' },
+    { they: 'How much is it?', you: 'The demo is free. If you love it, websites start around $1,000, depending on what you need. Can I ask a couple of questions?' },
+    { they: 'What’s the catch with free?', you: 'No catch. You see the demo before you spend anything. If it’s not right, you walk away.' },
+    { they: 'I already have a web person.', you: 'That’s great, I’m not here to replace anyone. What do you wish your site did better?' },
+    { they: 'We get our work from word of mouth.', you: 'That’s the best kind. Those referrals still look you up before they call. What do they find?' },
+    { they: 'Will it sound like a robot?', you: 'Fair question. That’s why you hear the demo first. Want to hear it?' },
+    { they: 'Just send me some info.', you: 'Happy to. So it’s useful, what’s the one thing you’d most want fixed?' },
     { they: 'Not interested.', you: 'No problem at all. Thanks for your time, and have a great day.' },
     { they: 'Take me off your list.', you: 'Understood. I’ll take you off right now. Sorry for the interruption.', action: 'End the call and press Do not call.' }
   ],
@@ -56,6 +61,7 @@ const BITESITES_FIELD_GUIDE = Object.freeze({
     'Lie about who you are or why you are calling',
     'Promise results, rankings, revenue, or guarantees',
     'Make up a price, discount, or deadline',
+    'Say the website is free. The demo is free; launching it is paid',
     'Criticize their current vendor',
     'Keep pitching after a clear no',
     'Record a call unless they agree after answering',
@@ -83,16 +89,16 @@ const BITESITES_COURSE = Object.freeze({
       title: 'How a good call goes',
       summary: 'Five steps. Most calls take a few minutes.',
       points: [
-        'Open: say your name, that you are with BiteSites, and why you are calling. Ask if they have a minute.',
-        'Ask: one simple question about their business, then stop talking.',
-        'Listen: find the one problem they care about most.',
-        'Connect: tell them how we would help with that one problem.',
-        'Ask for the yes: invite them to the next step. Do not wait for them to offer.'
+        'Open: say your name and ask if you are speaking with the owner. If not, ask who is and when to call back.',
+        'Then say you are with BiteSites, be upfront that it is a cold call, and ask for 30 seconds.',
+        'Ask: one simple question about their business, then stop talking. Listen for the one problem they care about most.',
+        'Offer: no website or a weak one gets the free website demo. Missed calls get the AI receptionist demo.',
+        'Ask for the yes: book 20 minutes to show the demo. Offer two times. Do not wait for them to offer.'
       ],
       say: [
-        'Hi, this is [your name] with BiteSites. I know I caught you out of the blue. Do you have a quick minute?',
-        'When a call comes in and nobody can pick up, what happens to it right now?',
-        'It sounds like the missed calls are the real problem. We fix exactly that. Can we set up 20 minutes to map out what would work for you?'
+        'Hey, my name is [your name]. Is this the owner speaking?',
+        'I’m with BiteSites, and I’ll be upfront: this is a cold call. Can I take 30 seconds to tell you why, and you tell me if it’s worth a chat?',
+        'We’ll make you a free demo of your new site first. If you love it, we launch it. If not, you owe nothing. Can I take 20 minutes to show you?'
       ]
     },
     {
@@ -106,6 +112,7 @@ const BITESITES_COURSE = Object.freeze({
       ],
       points: [
         'These are starting prices, not final quotes. Everyone wants something different, so every price is custom.',
+        'The website demo and the AI receptionist demo are free. Launching the site or the receptionist is paid at normal prices.',
         'When someone asks about price, give the starting range honestly, say it is custom, then ask questions so we can get the right price for them.',
         'Good questions: What do you want this to do for your business? What do you have today? How many pages or channels do you need? What tools does it need to work with? When do you want it live?',
         'Never make up a number, a discount, or a deadline. If you are not sure, say so and bring it to the strategy call.'
