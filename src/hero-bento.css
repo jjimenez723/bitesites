@@ -29,8 +29,6 @@
   text-wrap: balance;
 }
 .hero-bento h1 .gradient-text { background: var(--gradient); -webkit-background-clip: text; background-clip: text; color: transparent; }
-.hero-bento .bento-intro-row { display: grid; grid-template-columns: clamp(84px, 8.4vw, 124px) minmax(0, 1fr); gap: 18px; align-items: start; }
-.hero-bento .bento-thumb { width: 100%; height: auto; aspect-ratio: 1; object-fit: cover; border-radius: 18px; }
 .hero-bento .lead { margin: 0; max-width: 46ch; color: var(--dim); font-size: clamp(14px, 1.05vw, 16px); line-height: 1.5; }
 .hero-bento .hero-actions { justify-content: flex-start; gap: 10px; margin-top: 16px; }
 .hero-bento .hero-actions .btn { padding: 11px 18px; font-size: 13px; }
@@ -74,7 +72,6 @@
   .hero-bento .bento-board { aspect-ratio: 1000 / 620; max-width: min(1400px, calc((100svh - var(--nav-max) - 40px) * 1000 / 620)); }
   .hero.hero-bento h1 { font-size: 3.8cqi; margin-bottom: 1.5cqi; }
   .hero-bento .eyebrow { margin-bottom: 1.2cqi; font-size: max(10px, .95cqi); }
-  .hero-bento .bento-intro-row { grid-template-columns: 8cqi minmax(0, 1fr); gap: 1.6cqi; }
   .hero-bento .lead { font-size: max(12px, 1.12cqi); }
   .hero-bento .hero-actions { flex-wrap: nowrap; gap: .8cqi; margin-top: 1.4cqi; }
   .hero-bento .hero-actions .btn { padding: .85cqi 1.3cqi; font-size: max(12px, 1.1cqi); }

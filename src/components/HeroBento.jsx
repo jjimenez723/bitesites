@@ -1,7 +1,6 @@
 import React from 'react';
 import { roundedPolygon } from '../lib/rounded-polygon';
 import projectWide from '../assets/portfolio/cliftonaveanimalhospital-poster.webp';
-import projectThumb from '../assets/portfolio/bodegaprojectapp-portrait-poster.webp';
 
 /*
  * Bento hero: a title card in the top-left corner, one project screenshot
@@ -26,10 +25,7 @@ export default function HeroBento({ positioning, Button, Eyebrow }) {
         <div className="bento-intro-body">
           <Eyebrow gradient>{positioning.eyebrow}</Eyebrow>
           <h1 id="hero-title">Stop losing leads.<br /><span className="gradient-text">Turn more inquiries into customers.</span></h1>
-          <div className="bento-intro-row">
-            <img className="bento-thumb" src={projectThumb} alt="" width="120" height="150" />
-            <p className="lead">{positioning.description}</p>
-          </div>
+          <p className="lead">{positioning.description}</p>
           <div className="hero-actions">
             <Button href="#start" variant="ai">Find My Revenue Leaks</Button>
             <Button href="/services" variant="ghost">See How the System Works</Button>
