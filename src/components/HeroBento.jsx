@@ -1,13 +1,19 @@
-import React from 'react';
+import React, { useState } from 'react';
+import MoltenBackdrop from './MoltenBackdrop';
 import { roundedPolygon } from '../lib/rounded-polygon';
-import projectWide from '../assets/portfolio/cliftonaveanimalhospital-poster.webp';
+import stonePoster from '../assets/portfolio/stonebellisimo-poster.webp';
+import nexusPoster from '../assets/portfolio/nexusverium-poster.webp';
+import stockroomPoster from '../assets/portfolio/stockroomnj-poster.webp';
+import cliftonPoster from '../assets/portfolio/cliftonaveanimalhospital-poster.webp';
+import bodegaPoster from '../assets/portfolio/bodegaproject-poster.webp';
 
 /*
  * Bento hero: a title card in the top-left corner, one project screenshot
  * that wraps around it, and an AI receptionist card cut into the
- * bottom-right corner. The three panels share one
- * 1000 x 620 board, and every edge that faces another panel runs parallel to it
- * with an even gap. Below 980px the panels stack as plain rounded cards.
+ * bottom-right corner, all floating on the original molten background. The
+ * three panels share one 1000 x 620 board, and every edge that faces another
+ * panel runs parallel to it with an even gap. Visitors can switch which
+ * project fills the screenshot. Below 980px the panels stack as rounded cards.
  */
 const BOARD = { width: 1000, height: 620, radius: 26 };
 const SHAPES = {
@@ -18,8 +24,25 @@ const SHAPES = {
 };
 const clip = Object.fromEntries(Object.entries(SHAPES).map(([key, points]) => [key, roundedPolygon(points, BOARD)]));
 
+export const HERO_PROJECTS = Object.freeze([
+  { id: 'nexus', name: 'Nexus Verium', image: nexusPoster, alt: 'Nexus Verium website: floating wetlands on a city river' },
+  { id: 'stone', name: 'Stone Bellisimo', image: stonePoster, alt: 'Stone Bellisimo website: a modern kitchen with stone countertops', focus: 'right top' },
+  { id: 'stockroom', name: 'The Stock Room', image: stockroomPoster, alt: 'The Stock Room website: a collector inspecting a sneaker in the shop' },
+  { id: 'clifton', name: 'Clifton Ave', image: cliftonPoster, alt: 'Clifton Ave Animal Hospital website' },
+  { id: 'bodega', name: 'Bodega Project', image: bodegaPoster, alt: 'Rutgers Newark Bodega Project website' }
+]);
+
 export default function HeroBento({ positioning, Button, Eyebrow }) {
+  const [active, setActive] = useState(HERO_PROJECTS[0].id);
+  // Only screenshots someone has asked for are loaded; the first loads with the page.
+  const [loaded, setLoaded] = useState(() => new Set([HERO_PROJECTS[0].id]));
+  const show = id => {
+    setActive(id);
+    setLoaded(previous => (previous.has(id) ? previous : new Set(previous).add(id)));
+  };
+
   return <section className="hero revenue-hero hero-bento" aria-labelledby="hero-title">
+    <div className="hero-bg"><MoltenBackdrop /><div className="hero-overlay" /></div>
     <div className="bento-board">
       <div className="bento-panel bento-intro" style={{ '--clip': clip.intro }}>
         <div className="bento-intro-body">
@@ -33,10 +56,29 @@ export default function HeroBento({ positioning, Button, Eyebrow }) {
         </div>
       </div>
 
-      <a className="bento-panel bento-shot" style={{ '--clip': clip.shot }} href="#portfolio">
-        <img src={projectWide} alt="Clifton Ave Animal Hospital website, built by BiteSites" />
-        <span className="bento-tag">Selected project · Clifton Ave Animal Hospital <span aria-hidden="true">→</span></span>
-      </a>
+      <div className="bento-panel bento-shot" style={{ '--clip': clip.shot }}>
+        {HERO_PROJECTS.filter(project => loaded.has(project.id)).map(project => <img
+          key={project.id}
+          src={project.image}
+          alt={project.id === active ? project.alt : ''}
+          aria-hidden={project.id === active ? undefined : 'true'}
+          className={project.id === active ? 'is-active' : ''}
+          style={project.focus ? { objectPosition: project.focus } : undefined}
+          decoding="async"
+        />)}
+        <div className="bento-switch" role="group" aria-label="Preview a website we built">
+          <span className="bento-switch-label">Our work</span>
+          {HERO_PROJECTS.map(project => <button
+            key={project.id}
+            type="button"
+            aria-pressed={project.id === active}
+            onClick={() => show(project.id)}
+          >{project.name}</button>)}
+          <a className="bento-switch-link" href="#portfolio" aria-label="See all projects">
+            <span aria-hidden="true">→</span>
+          </a>
+        </div>
+      </div>
 
       <a className="bento-panel bento-product" style={{ '--clip': clip.product }} href="#ai-receptionist">
         <span className="bento-product-body">

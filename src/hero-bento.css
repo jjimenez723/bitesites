@@ -9,11 +9,16 @@
   --bento-on-product: #fff;
   display: block;
   min-height: 0;
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
   padding: calc(var(--nav-max) + 4px) 16px 16px;
-  background: var(--bento-page);
+  /* The original molten background shows around and between the panels. */
+  background: #080c20;
   color: var(--text);
 }
-.hero-bento .bento-board { position: relative; max-width: 1400px; margin: 0 auto; container-type: inline-size; }
+.hero-bento > .hero-bg { position: absolute; inset: 0; z-index: 0; }
+.hero-bento .bento-board { position: relative; z-index: 1; max-width: 1400px; margin: 0 auto; container-type: inline-size; }
 .hero-bento .bento-panel { position: relative; display: block; overflow: hidden; border-radius: 24px; color: inherit; }
 
 /* Title card */
@@ -36,19 +41,59 @@
 
 /* Project screenshot */
 .hero-bento .bento-shot { min-height: 240px; background: #080c20; }
-.hero-bento .bento-shot img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: top center; transition: transform .6s cubic-bezier(.2, .75, .25, 1); }
+.hero-bento .bento-shot img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top center;
+  opacity: 0;
+  transition: opacity .45s ease, transform .6s cubic-bezier(.2, .75, .25, 1);
+}
+.hero-bento .bento-shot img.is-active { opacity: 1; }
 .hero-bento .bento-shot:hover img { transform: scale(1.02); }
-.hero-bento .bento-tag {
+
+/* Project switcher: a pill of names over the screenshot. */
+.hero-bento .bento-switch {
   position: absolute;
   left: 16px;
+  right: 16px;
   bottom: 16px;
-  padding: 9px 14px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: max-content;
+  max-width: calc(100% - 32px);
+  padding: 5px;
+  overflow-x: auto;
+  scrollbar-width: none;
   border-radius: 999px;
-  background: var(--bento-page);
-  color: var(--text);
-  font-size: 13px;
-  font-weight: 700;
+  background: rgba(255, 255, 255, .9);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 10px 30px rgba(8, 12, 32, .22);
 }
+.hero-bento .bento-switch::-webkit-scrollbar { display: none; }
+.hero-bento .bento-switch-label { padding: 0 8px 0 10px; color: var(--dim); font-size: 11px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; white-space: nowrap; }
+.hero-bento .bento-switch button {
+  flex: none;
+  padding: 7px 12px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background .2s ease, color .2s ease;
+}
+.hero-bento .bento-switch button:hover { background: rgba(8, 12, 32, .06); }
+.hero-bento .bento-switch button[aria-pressed="true"] { background: var(--text); color: #fff; }
+.hero-bento .bento-switch button:focus-visible,
+.hero-bento .bento-switch-link:focus-visible { outline: 2px solid #2f6bff; outline-offset: 2px; }
+.hero-bento .bento-switch-link { flex: none; display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: var(--gradient); color: #fff; font-weight: 800; }
 
 /* AI receptionist card */
 .hero-bento .bento-product { background: var(--bento-product); color: var(--bento-on-product); }
@@ -61,15 +106,20 @@
 @media (max-width: 979px) {
   .hero-bento .bento-board { display: grid; gap: 12px; }
   .hero-bento .bento-shot { order: 3; aspect-ratio: 1880 / 1080; min-height: 0; }
-  .hero-bento .bento-tag { left: 10px; bottom: 10px; padding: 6px 11px; font-size: 11px; }
+  .hero-bento .bento-shot { aspect-ratio: 16 / 11; }
+  .hero-bento .bento-switch { left: 8px; right: 8px; bottom: 8px; padding: 3px; }
+  .hero-bento .bento-switch button { padding: 5px 9px; font-size: 11px; }
+  .hero-bento .bento-switch-link { width: 24px; height: 24px; }
+  .hero-bento .bento-switch-label { display: none; }
   .hero-bento .bento-product { order: 4; }
 }
 
-/* Desktop: the four panels share one board and interlock. */
+/* Desktop: the three panels share one board and interlock. */
 @media (min-width: 980px) {
   .hero.hero-bento.revenue-hero { padding: calc(var(--nav-max) + 14px) 24px 24px; }
   /* The whole board fits in one screen under the header. */
-  .hero-bento .bento-board { aspect-ratio: 1000 / 620; max-width: 1400px; }
+  /* Fits one screen under the header, but never shrinks below the 980px layout. */
+  .hero-bento .bento-board { aspect-ratio: 1000 / 620; max-width: max(932px, min(1400px, calc((100svh - var(--nav-max) - 40px) * 1000 / 620))); }
   .hero.hero-bento h1 { font-size: 3.8cqi; margin-bottom: 1.5cqi; }
   .hero-bento .eyebrow { margin-bottom: 1.2cqi; font-size: max(10px, .95cqi); }
   .hero-bento .lead { font-size: max(11px, 1.12cqi); }
@@ -79,11 +129,12 @@
   .hero-bento .bento-panel { position: absolute; inset: 0; min-height: 0; border-radius: 0; clip-path: var(--clip); }
   .hero-bento .bento-intro-body { position: absolute; left: 0; top: 0; width: 40.5%; height: 53%; padding: 3% 0 0 3.2%; }
   .hero-bento .bento-shot { aspect-ratio: auto; }
-  .hero-bento .bento-tag { left: 2.4%; bottom: 4%; }
+  .hero-bento .bento-switch { left: 2.4%; bottom: 4%; max-width: 68%; }
   .hero-bento .bento-product-body { position: absolute; left: 80.5%; top: 72%; right: 2.2%; bottom: 4%; padding: 0; justify-content: flex-end; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .hero-bento .bento-shot img { transition: none; }
+  .hero-bento .bento-switch button { transition: none; }
   .hero-bento .bento-shot:hover img { transform: none; }
 }

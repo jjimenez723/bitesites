@@ -44,23 +44,19 @@ async function setup(options = {}, disableWebGL = false) {
 
 try {
   const page = await setup();
-  // The hero is a bento of images now; the final CTA keeps the molten background.
-  assert.equal(await page.locator('.molten-backdrop').count(), 1);
-  assert.equal(await page.locator('.revenue-hero .molten-backdrop').count(), 0);
-  assert.equal(await page.locator('.molten-cta canvas').count(), 0, 'Offscreen CTA does not mount a renderer');
-  const cta = page.locator('.molten-cta');
-  await cta.scrollIntoViewIfNeeded();
-  const canvas = cta.locator('canvas[data-rendered="true"]');
+  const hero = page.locator('.revenue-hero');
+  const canvas = hero.locator('canvas[data-rendered="true"]');
   await canvas.waitFor();
+  assert.equal(await page.locator('.molten-backdrop').count(), 2);
+  assert.equal(await page.locator('.molten-cta canvas').count(), 0, 'Offscreen CTA does not mount a renderer');
   assert.ok(await canvas.evaluate(el => el.width * el.height <= 1001000), 'Desktop pixel budget is bounded');
   const count = Number(await canvas.getAttribute('data-draws'));
   await page.waitForTimeout(500);
   const frames = Number(await canvas.getAttribute('data-draws')) - count;
   assert.ok(frames > 0 && frames <= 20, 'Visible background animates at a capped frame rate');
-  const ctaBox = await cta.boundingBox();
-  await page.mouse.move(ctaBox.x + ctaBox.width * .9, ctaBox.y + ctaBox.height / 2);
+  await page.mouse.move(1250, 430);
   await page.waitForFunction(() => {
-    const raw = document.querySelector('.molten-cta canvas')?.dataset.mouse;
+    const raw = document.querySelector('.revenue-hero canvas')?.dataset.mouse;
     return raw && JSON.parse(raw)[0] > .58;
   });
   await page.evaluate(() => {
@@ -73,11 +69,10 @@ try {
   await page.evaluate(() => { delete document.hidden; document.dispatchEvent(new Event('visibilitychange')); });
   await page.waitForTimeout(800);
   assert.ok(Number(await canvas.getAttribute('data-draws')) > paused);
-  await page.evaluate(() => window.scrollTo(0, 0));
-  await page.waitForFunction(() => !document.querySelector('.molten-cta canvas'));
   await page.screenshot({ path: '/tmp/bitesites-molten-desktop.png' });
-  await cta.scrollIntoViewIfNeeded();
+  await page.locator('.molten-cta').scrollIntoViewIfNeeded();
   await page.locator('.molten-cta canvas[data-rendered="true"]').waitFor();
+  await page.waitForFunction(() => !document.querySelector('.revenue-hero canvas'));
   await page.waitForTimeout(800);
   await page.locator('.molten-cta').screenshot({ path: '/tmp/bitesites-molten-final-cta.png' });
   await page.getByRole('link', { name: 'Get a Free Revenue Leak Audit', exact: true }).click();
@@ -90,7 +85,7 @@ try {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.evaluate(() => { document.documentElement.style.scrollBehavior = 'auto'; window.scrollTo(0, 0); });
   await page.waitForFunction(() => !document.querySelector('.molten-backdrop canvas'));
-  assert.notEqual(await page.locator('.molten-cta .molten-backdrop').evaluate(el => getComputedStyle(el).backgroundImage), 'none');
+  assert.notEqual(await hero.locator('.molten-backdrop').evaluate(el => getComputedStyle(el).backgroundImage), 'none');
   for (const width of [320, 390, 768, 900, 1024, 1440]) {
     await page.setViewportSize({ width, height: 1000 });
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Fits ${width}px`);
@@ -102,12 +97,14 @@ try {
   await page.close();
 
   const touch = await setup({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 3 });
+  await touch.locator('.revenue-hero canvas[data-rendered="true"]').waitFor();
+  assert.ok(await touch.locator('.revenue-hero canvas').evaluate(el => el.width * el.height <= 351000), 'Mobile has a smaller pixel budget');
+  await touch.waitForTimeout(800);
   await touch.screenshot({ path: '/tmp/bitesites-molten-mobile.png' });
   await touch.getByRole('link', { name: 'Find My Revenue Leaks', exact: true }).tap();
   await touch.waitForURL('**/#start');
   await touch.locator('.molten-cta').scrollIntoViewIfNeeded();
   await touch.locator('.molten-cta canvas[data-rendered="true"]').waitFor();
-  assert.ok(await touch.locator('.molten-cta canvas').evaluate(el => el.width * el.height <= 351000), 'Mobile has a smaller pixel budget');
   await touch.waitForTimeout(800);
   await touch.locator('.molten-cta').screenshot({ path: '/tmp/bitesites-molten-mobile-cta.png' });
   await touch.close();
@@ -120,5 +117,5 @@ try {
   await fallback.waitForURL('**/#start');
   await fallback.close();
   assert.deepEqual(errors, []);
-  console.log('PASS: Bento hero plus the molten CTA background, actual animation/pointer response, pixel/frame budgets, hidden-tab and offscreen behavior, desktop/mobile CTAs, custom form, reduced-motion/WebGL fallback and six widths.');
+  console.log('PASS: Two molten backgrounds, actual animation/pointer response, pixel/frame budgets, hidden-tab and offscreen behavior, desktop/mobile CTAs, custom form, reduced-motion/WebGL fallback and six widths.');
 } finally { await browser.close(); }
