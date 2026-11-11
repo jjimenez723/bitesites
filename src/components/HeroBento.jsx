@@ -1,13 +1,13 @@
 import React from 'react';
-import MoltenBackdrop from './MoltenBackdrop';
 import { roundedPolygon } from '../lib/rounded-polygon';
 import projectWide from '../assets/portfolio/cliftonaveanimalhospital-poster.webp';
 import projectThumb from '../assets/portfolio/bodegaprojectapp-portrait-poster.webp';
 
 /*
- * Bento hero: a title card in the top-left corner, the animated backdrop
- * wrapping around it, a wide project image along the bottom and an AI
- * receptionist card cut into the bottom-right corner. The four panels share one
+ * Bento hero: a title card in the top-left corner, one project screenshot
+ * seen through two panels that wrap around it, and an AI receptionist card
+ * cut into the bottom-right corner. Both image panels place the same picture
+ * on the whole board, so on desktop it reads as one image. The four panels share one
  * 1000 x 620 board, and every edge that faces another panel runs parallel to it
  * with an even gap. Below 1180px the panels stack as plain rounded cards.
  */
@@ -23,10 +23,9 @@ const clip = Object.fromEntries(Object.entries(SHAPES).map(([key, points]) => [k
 export default function HeroBento({ positioning, Button, Eyebrow }) {
   return <section className="hero revenue-hero hero-bento" aria-labelledby="hero-title">
     <div className="bento-board">
-      <div className="bento-panel bento-main" style={{ '--clip': clip.main }}>
-        <div className="hero-bg"><MoltenBackdrop /><div className="hero-overlay" /></div>
-        <p className="bento-trust">{positioning.trust}</p>
-      </div>
+      <a className="bento-panel bento-main bento-shot" style={{ '--clip': clip.main }} href="#portfolio" tabIndex={-1} aria-hidden="true">
+        <img src={projectWide} alt="" />
+      </a>
 
       <div className="bento-panel bento-intro" style={{ '--clip': clip.intro }}>
         <div className="bento-intro-body">
@@ -43,7 +42,7 @@ export default function HeroBento({ positioning, Button, Eyebrow }) {
         </div>
       </div>
 
-      <a className="bento-panel bento-wide" style={{ '--clip': clip.wide }} href="#portfolio">
+      <a className="bento-panel bento-wide bento-shot" style={{ '--clip': clip.wide }} href="#portfolio">
         <img src={projectWide} alt="Clifton Ave Animal Hospital website, built by BiteSites" />
         <span className="bento-tag">Selected project · Clifton Ave Animal Hospital <span aria-hidden="true">→</span></span>
       </a>
