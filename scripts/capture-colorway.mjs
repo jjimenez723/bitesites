@@ -17,7 +17,7 @@ for(const [label,viewport] of [['desktop',{width:1440,height:900}],['phone',{wid
     await page.goto(way==='current'?base:`${base}?colorway=${way}`,{waitUntil:'networkidle'});
     const total=await page.evaluate(()=>document.body.scrollHeight);
     let i=0;
-    for(let y=0;y<total && i<14;y+=viewport.height,i++){
+    for(let y=0;y<total && i<Number(process.env.COLORWAY_PAGES||14);y+=viewport.height,i++){
       await page.evaluate(top=>window.scrollTo(0,top),y);
       await page.waitForTimeout(900);
       await page.screenshot({path:`${out}/${way}-${label}-${String(i).padStart(2,'0')}.png`});

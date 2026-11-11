@@ -20,6 +20,7 @@ import ServicesOverview from './pages/ServicesOverview';
 import Pricing from './pages/Pricing';
 import { BitMascot } from './components/BitMascot';
 import MoltenBackdrop from './components/MoltenBackdrop';
+import HeroBento from './components/HeroBento';
 import StickyAuditCta from './components/StickyAuditCta';
 import SocialLinks from './components/SocialLinks';
 import ComingSoon from './pages/ComingSoon';
@@ -88,6 +89,7 @@ import './revenue.css';
 import './revenue-interactions.css';
 import './molten-sections.css';
 import './refresh.css';
+import './hero-bento.css';
 import './colorway.css';
 
 const tickerServices = [
@@ -1456,7 +1458,7 @@ export function App() {
       <Button href="#start" variant="ai" onClick={closeMenu} tabIndex={menuOpen ? undefined : -1}>Get a Free Audit</Button>
     </aside>
     <main id="top">
-      <section className="hero revenue-hero"><div className="hero-bg"><MoltenBackdrop /><div className="hero-overlay" /></div><div className="wrap hero-content"><Eyebrow gradient>{positioning.eyebrow}</Eyebrow><h1>Stop losing leads.<br /><span className="gradient-text">Turn more inquiries into customers.</span></h1><p className="lead">{positioning.description}</p><div className="hero-actions"><Button href="#start" variant="ai">Find My Revenue Leaks</Button><Button href="/services" variant="ghost">See How the System Works</Button></div><p className="revenue-trust">{positioning.trust}</p></div></section>
+      <HeroBento positioning={positioning} Button={Button} Eyebrow={Eyebrow} />
       <ProjectIntake selectedServices={selectedServices} setSelectedServices={setSelectedServices} />
       <section
         className={`portfolio-section ${portfolioPhase.expanded ? 'portfolio-expanded' : ''} ${portfolioPhase.story ? 'portfolio-story-visible' : ''} ${portfolioSwap ? `portfolio-swap-${portfolioSwap}` : ''}`}

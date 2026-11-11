@@ -1,0 +1,110 @@
+/*
+ * Bento hero. Shapes come from HeroBento.jsx as --clip. Colors read the
+ * colorway tokens when a palette is active, and fall back to the current brand.
+ */
+.hero.hero-bento.revenue-hero {
+  --bento-page: var(--cw-base, #fff);
+  --bento-intro: color-mix(in srgb, var(--cw-primary, #2f6bff) 8%, var(--bento-page));
+  --bento-product: var(--cw-accent, #ff5e9c);
+  --bento-on-product: var(--cw-on-accent, #fff);
+  display: block;
+  min-height: 0;
+  padding: calc(var(--nav-max) + 4px) 16px 16px;
+  background: var(--bento-page);
+  color: var(--text);
+}
+.hero-bento .bento-board { position: relative; max-width: 1400px; margin: 0 auto; container-type: inline-size; }
+.hero-bento .bento-panel { position: relative; display: block; overflow: hidden; border-radius: 24px; color: inherit; }
+
+/* Title card */
+.hero-bento .bento-intro { background: var(--bento-intro); }
+.hero-bento .bento-intro-body { padding: clamp(24px, 3.2vw, 44px); }
+.hero.hero-bento h1 {
+  max-width: none;
+  margin: 0 0 22px;
+  color: var(--text);
+  font-size: clamp(32px, 3.2vw, 52px);
+  line-height: 1.04;
+  letter-spacing: -.02em;
+  text-wrap: balance;
+}
+.hero-bento h1 .gradient-text { background: var(--gradient); -webkit-background-clip: text; background-clip: text; color: transparent; }
+html[data-colorway] .hero-bento h1 .gradient-text { background: none; color: var(--cw-accent-strong); }
+.hero-bento .bento-intro-row { display: grid; grid-template-columns: clamp(84px, 8.4vw, 124px) minmax(0, 1fr); gap: 18px; align-items: start; }
+.hero-bento .bento-thumb { width: 100%; height: auto; aspect-ratio: 1; object-fit: cover; border-radius: 18px; }
+.hero-bento .lead { margin: 0; max-width: 46ch; color: var(--dim); font-size: clamp(14px, 1.05vw, 16px); line-height: 1.5; }
+.hero-bento .hero-actions { justify-content: flex-start; gap: 10px; margin-top: 16px; }
+.hero-bento .hero-actions .btn { padding: 11px 18px; font-size: 13px; }
+.hero-bento .btn-ghost { color: var(--text); border-color: color-mix(in srgb, var(--text) 22%, transparent); background: transparent; }
+
+/* Animated backdrop panel */
+.hero-bento .bento-main { min-height: 260px; background: var(--cw-ink, #080c20); }
+.hero-bento .bento-main .hero-bg { position: absolute; inset: 0; z-index: 0; }
+.hero-bento .bento-trust {
+  position: absolute;
+  z-index: 1;
+  right: 20px;
+  bottom: 20px;
+  left: 20px;
+  margin: 0;
+  color: rgba(255, 255, 255, .86);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* Project image */
+.hero-bento .bento-wide { min-height: 240px; background: var(--cw-ink, #080c20); }
+.hero-bento .bento-wide img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: top center; transition: transform .6s cubic-bezier(.2, .75, .25, 1); }
+.hero-bento .bento-wide:hover img { transform: scale(1.03); }
+.hero-bento .bento-tag {
+  position: absolute;
+  left: 16px;
+  bottom: 16px;
+  padding: 9px 14px;
+  border-radius: 999px;
+  background: var(--bento-page);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+/* AI receptionist card */
+.hero-bento .bento-product { background: var(--bento-product); color: var(--bento-on-product); }
+.hero-bento .bento-product-body { display: flex; flex-direction: column; gap: 8px; padding: 24px; }
+.hero-bento .bento-kicker { font-size: 11px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; opacity: .85; }
+.hero-bento .bento-product strong { font-size: clamp(17px, 1.45vw, 22px); line-height: 1.2; }
+.hero-bento .bento-link { margin-top: 6px; font-size: 14px; font-weight: 700; text-decoration: underline; text-underline-offset: 4px; }
+
+/* Phones and tablets: stacked rounded cards. */
+@media (max-width: 1179px) {
+  .hero-bento .bento-board { display: grid; gap: 12px; }
+  .hero-bento .bento-main { order: 2; }
+  .hero-bento .bento-wide { order: 3; }
+  .hero-bento .bento-product { order: 4; }
+}
+
+/* Desktop: the four panels share one board and interlock. */
+@media (min-width: 1180px) {
+  .hero.hero-bento.revenue-hero { padding: calc(var(--nav-max) + 14px) 24px 24px; }
+  /* The whole board fits in one screen under the header. */
+  .hero-bento .bento-board { aspect-ratio: 1000 / 620; max-width: min(1400px, calc((100svh - var(--nav-max) - 40px) * 1000 / 620)); }
+  .hero.hero-bento h1 { font-size: 3.8cqi; margin-bottom: 1.5cqi; }
+  .hero-bento .eyebrow { margin-bottom: 1.2cqi; font-size: max(10px, .95cqi); }
+  .hero-bento .bento-intro-row { grid-template-columns: 8cqi minmax(0, 1fr); gap: 1.6cqi; }
+  .hero-bento .lead { font-size: max(12px, 1.12cqi); }
+  .hero-bento .hero-actions { flex-wrap: nowrap; gap: .8cqi; margin-top: 1.4cqi; }
+  .hero-bento .hero-actions .btn { padding: .85cqi 1.3cqi; font-size: max(12px, 1.1cqi); }
+  .hero-bento .bento-product strong { font-size: max(15px, 1.6cqi); }
+  .hero-bento .bento-trust { font-size: max(12px, 1.1cqi); }
+  .hero-bento .bento-panel { position: absolute; inset: 0; min-height: 0; border-radius: 0; clip-path: var(--clip); }
+  .hero-bento .bento-intro-body { position: absolute; left: 0; top: 0; width: 40.5%; height: 53%; padding: 3% 0 0 3.2%; }
+  .hero-bento .bento-trust { left: auto; right: 2.6%; top: 4.5%; bottom: auto; width: 34%; text-align: right; }
+  .hero-bento .bento-wide img { inset: auto; left: 0; top: 55.4%; width: 80%; height: 44.6%; }
+  .hero-bento .bento-tag { left: 2.4%; bottom: 4%; }
+  .hero-bento .bento-product-body { position: absolute; left: 80.5%; top: 72%; right: 2.2%; bottom: 4%; padding: 0; justify-content: flex-end; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-bento .bento-wide img { transition: none; }
+  .hero-bento .bento-wide:hover img { transform: none; }
+}
