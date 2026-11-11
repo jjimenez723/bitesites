@@ -118,8 +118,7 @@
 @media (min-width: 980px) {
   .hero.hero-bento.revenue-hero { padding: calc(var(--nav-max) + 14px) 24px 24px; }
   /* The whole board fits in one screen under the header. */
-  /* Fits one screen under the header, but never shrinks below the 980px layout. */
-  .hero-bento .bento-board { aspect-ratio: 1000 / 620; max-width: max(932px, min(1400px, calc((100svh - var(--nav-max) - 40px) * 1000 / 620))); }
+  .hero-bento .bento-board { aspect-ratio: 1000 / 620; max-width: 1480px; }
   .hero.hero-bento h1 { font-size: 3.8cqi; margin-bottom: 1.5cqi; }
   .hero-bento .eyebrow { margin-bottom: 1.2cqi; font-size: max(10px, .95cqi); }
   .hero-bento .lead { font-size: max(11px, 1.12cqi); }
@@ -138,3 +137,16 @@
   .hero-bento .bento-switch button { transition: none; }
   .hero-bento .bento-shot:hover img { transform: none; }
 }
+
+/* Homepage, top of the page: the header is see-through so the molten
+   background runs up behind it. It turns white again once the page scrolls. */
+body:has(.hero-bento) header.site-header:not(.scrolled) {
+  background: transparent;
+  border-color: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+body:has(.hero-bento) header.site-header:not(.scrolled) .nav-wing a:not(.btn) { color: rgba(255, 255, 255, .82); }
+body:has(.hero-bento) header.site-header:not(.scrolled) .nav-wing a:not(.btn):hover { color: #fff; }
+body:has(.hero-bento) header.site-header:not(.scrolled) .morph-logo-header { filter: invert(1); }
+body:has(.hero-bento) header.site-header:not(.scrolled) .menu-toggle { color: #fff; }
