@@ -7,7 +7,7 @@ import projectWide from '../assets/portfolio/cliftonaveanimalhospital-poster.web
  * that wraps around it, and an AI receptionist card cut into the
  * bottom-right corner. The three panels share one
  * 1000 x 620 board, and every edge that faces another panel runs parallel to it
- * with an even gap. Below 1180px the panels stack as plain rounded cards.
+ * with an even gap. Below 980px the panels stack as plain rounded cards.
  */
 const BOARD = { width: 1000, height: 620, radius: 26 };
 const SHAPES = {

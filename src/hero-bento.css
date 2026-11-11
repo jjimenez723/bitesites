@@ -58,7 +58,7 @@
 .hero-bento .bento-link { margin-top: 6px; font-size: 14px; font-weight: 700; text-decoration: underline; text-underline-offset: 4px; }
 
 /* Phones and tablets: stacked rounded cards. */
-@media (max-width: 1179px) {
+@media (max-width: 979px) {
   .hero-bento .bento-board { display: grid; gap: 12px; }
   .hero-bento .bento-shot { order: 3; aspect-ratio: 1880 / 1080; min-height: 0; }
   .hero-bento .bento-tag { left: 10px; bottom: 10px; padding: 6px 11px; font-size: 11px; }
@@ -66,15 +66,15 @@
 }
 
 /* Desktop: the four panels share one board and interlock. */
-@media (min-width: 1180px) {
+@media (min-width: 980px) {
   .hero.hero-bento.revenue-hero { padding: calc(var(--nav-max) + 14px) 24px 24px; }
   /* The whole board fits in one screen under the header. */
-  .hero-bento .bento-board { aspect-ratio: 1000 / 620; max-width: min(1400px, calc((100svh - var(--nav-max) - 40px) * 1000 / 620)); }
+  .hero-bento .bento-board { aspect-ratio: 1000 / 620; max-width: 1400px; }
   .hero.hero-bento h1 { font-size: 3.8cqi; margin-bottom: 1.5cqi; }
   .hero-bento .eyebrow { margin-bottom: 1.2cqi; font-size: max(10px, .95cqi); }
-  .hero-bento .lead { font-size: max(12px, 1.12cqi); }
+  .hero-bento .lead { font-size: max(11px, 1.12cqi); }
   .hero-bento .hero-actions { flex-wrap: nowrap; gap: .8cqi; margin-top: 1.4cqi; }
-  .hero-bento .hero-actions .btn { padding: .85cqi 1.3cqi; font-size: max(12px, 1.1cqi); }
+  .hero-bento .hero-actions .btn { padding: .85cqi 1.3cqi; font-size: max(11px, 1.1cqi); }
   .hero-bento .bento-product strong { font-size: max(15px, 1.6cqi); }
   .hero-bento .bento-panel { position: absolute; inset: 0; min-height: 0; border-radius: 0; clip-path: var(--clip); }
   .hero-bento .bento-intro-body { position: absolute; left: 0; top: 0; width: 40.5%; height: 53%; padding: 3% 0 0 3.2%; }
