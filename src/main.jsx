@@ -90,7 +90,6 @@ import './revenue-interactions.css';
 import './molten-sections.css';
 import './refresh.css';
 import './hero-bento.css';
-import './colorway.css';
 
 const tickerServices = [
   'Lead Recovery',
@@ -1739,12 +1738,6 @@ export function App() {
 const AdminApp = lazy(() => import('./admin/AdminApp'));
 
 export function HomepageSnapshot() { return <MemoryRouter><App /></MemoryRouter>; }
-
-// Colorway trial: ?colorway=lagoon, navy, forest or coral previews a palette (see colorway.css).
-if (typeof document !== 'undefined') {
-  const colorway = new URLSearchParams(window.location.search).get('colorway');
-  if (['lagoon', 'navy', 'forest', 'coral'].includes(colorway)) document.documentElement.dataset.colorway = colorway;
-}
 
 if (typeof document !== 'undefined') createRoot(document.getElementById('root')).render(
   <BrowserRouter>

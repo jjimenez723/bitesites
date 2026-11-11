@@ -1,12 +1,12 @@
 /*
- * Bento hero. Shapes come from HeroBento.jsx as --clip. Colors read the
- * colorway tokens when a palette is active, and fall back to the current brand.
+ * Bento hero. Shapes come from HeroBento.jsx as --clip. Colors use the
+ * existing brand tokens.
  */
 .hero.hero-bento.revenue-hero {
-  --bento-page: var(--cw-base, #fff);
-  --bento-intro: color-mix(in srgb, var(--cw-primary, #2f6bff) 8%, var(--bento-page));
-  --bento-product: var(--cw-accent, #ff5e9c);
-  --bento-on-product: var(--cw-on-accent, #fff);
+  --bento-page: #fff;
+  --bento-intro: color-mix(in srgb, #2f6bff 8%, var(--bento-page));
+  --bento-product: var(--gradient);
+  --bento-on-product: #fff;
   display: block;
   min-height: 0;
   padding: calc(var(--nav-max) + 4px) 16px 16px;
@@ -29,7 +29,6 @@
   text-wrap: balance;
 }
 .hero-bento h1 .gradient-text { background: var(--gradient); -webkit-background-clip: text; background-clip: text; color: transparent; }
-html[data-colorway] .hero-bento h1 .gradient-text { background: none; color: var(--cw-accent-strong); }
 .hero-bento .bento-intro-row { display: grid; grid-template-columns: clamp(84px, 8.4vw, 124px) minmax(0, 1fr); gap: 18px; align-items: start; }
 .hero-bento .bento-thumb { width: 100%; height: auto; aspect-ratio: 1; object-fit: cover; border-radius: 18px; }
 .hero-bento .lead { margin: 0; max-width: 46ch; color: var(--dim); font-size: clamp(14px, 1.05vw, 16px); line-height: 1.5; }
@@ -37,10 +36,10 @@ html[data-colorway] .hero-bento h1 .gradient-text { background: none; color: var
 .hero-bento .hero-actions .btn { padding: 11px 18px; font-size: 13px; }
 .hero-bento .btn-ghost { color: var(--text); border-color: color-mix(in srgb, var(--text) 22%, transparent); background: transparent; }
 
-/* Project screenshot, shared by the two image panels */
-.hero-bento .bento-shot { min-height: 240px; background: var(--cw-ink, #080c20); }
+/* Project screenshot */
+.hero-bento .bento-shot { min-height: 240px; background: #080c20; }
 .hero-bento .bento-shot img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: top center; transition: transform .6s cubic-bezier(.2, .75, .25, 1); }
-.hero-bento .bento-board:has(.bento-shot:hover) .bento-shot img { transform: scale(1.02); }
+.hero-bento .bento-shot:hover img { transform: scale(1.02); }
 .hero-bento .bento-tag {
   position: absolute;
   left: 16px;
@@ -63,8 +62,8 @@ html[data-colorway] .hero-bento h1 .gradient-text { background: none; color: var
 /* Phones and tablets: stacked rounded cards. */
 @media (max-width: 1179px) {
   .hero-bento .bento-board { display: grid; gap: 12px; }
-  .hero-bento .bento-main { display: none; }
-  .hero-bento .bento-wide { order: 3; aspect-ratio: 1880 / 1080; min-height: 0; }
+  .hero-bento .bento-shot { order: 3; aspect-ratio: 1880 / 1080; min-height: 0; }
+  .hero-bento .bento-tag { left: 10px; bottom: 10px; padding: 6px 11px; font-size: 11px; }
   .hero-bento .bento-product { order: 4; }
 }
 
@@ -82,12 +81,12 @@ html[data-colorway] .hero-bento h1 .gradient-text { background: none; color: var
   .hero-bento .bento-product strong { font-size: max(15px, 1.6cqi); }
   .hero-bento .bento-panel { position: absolute; inset: 0; min-height: 0; border-radius: 0; clip-path: var(--clip); }
   .hero-bento .bento-intro-body { position: absolute; left: 0; top: 0; width: 40.5%; height: 53%; padding: 3% 0 0 3.2%; }
-  .hero-bento .bento-wide { aspect-ratio: auto; }
+  .hero-bento .bento-shot { aspect-ratio: auto; }
   .hero-bento .bento-tag { left: 2.4%; bottom: 4%; }
   .hero-bento .bento-product-body { position: absolute; left: 80.5%; top: 72%; right: 2.2%; bottom: 4%; padding: 0; justify-content: flex-end; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .hero-bento .bento-shot img { transition: none; }
-  .hero-bento .bento-board:has(.bento-shot:hover) .bento-shot img { transform: none; }
+  .hero-bento .bento-shot:hover img { transform: none; }
 }
