@@ -14,8 +14,9 @@ import bodegaPoster from '../assets/portfolio/bodegaproject-poster.webp';
  * three panels share one 1000 x 620 board, and every edge that faces another
  * panel runs parallel to it with an even gap. The screenshot is a carousel of
  * our sites: it cross-fades to the next one every few seconds, and visitors can
- * pick one or pause it. It holds still on hover or focus, while off screen or in
- * a hidden tab, and never moves for reduced motion. Below 980px the panels
+ * pick one or pause it. It holds while the pointer is on the project pill, on
+ * keyboard focus, off screen and in a hidden tab. Reduced motion keeps the
+ * rotation but drops the zoom, and the pause button is always there. Below 980px the panels
  * stack as rounded cards.
  */
 const BOARD = { width: 1000, height: 620, radius: 26 };
@@ -43,14 +44,13 @@ export default function HeroBento({ positioning, Button, Eyebrow }) {
   const [loaded, setLoaded] = useState(() => new Set(HERO_PROJECTS.slice(0, 2).map(project => project.id)));
   const [stopped, setStopped] = useState(false);
   const [holds, setHolds] = useState({ hover: false, focus: false, hidden: false, offscreen: false });
-  const [reducedMotion, setReducedMotion] = useState(false);
   const sectionRef = useRef(null);
   const activeRef = useRef(active);
   const remaining = useRef(SLIDE_MS);
   activeRef.current = active;
 
   const hold = (reason, value) => setHolds(previous => (previous[reason] === value ? previous : { ...previous, [reason]: value }));
-  const autoplay = !stopped && !reducedMotion;
+  const autoplay = !stopped;
   const paused = !autoplay || Object.values(holds).some(Boolean);
   const nextOf = id => HERO_PROJECTS[(HERO_PROJECTS.findIndex(project => project.id === id) + 1) % HERO_PROJECTS.length].id;
   const show = id => {
@@ -63,15 +63,6 @@ export default function HeroBento({ positioning, Button, Eyebrow }) {
     const next = nextOf(active);
     setLoaded(previous => (previous.has(active) && previous.has(next) ? previous : new Set(previous).add(active).add(next)));
   }, [active]);
-
-  useEffect(() => {
-    const query = window.matchMedia?.('(prefers-reduced-motion: reduce)');
-    if (!query) return undefined;
-    const update = () => setReducedMotion(query.matches);
-    update();
-    query.addEventListener?.('change', update);
-    return () => query.removeEventListener?.('change', update);
-  }, []);
 
   useEffect(() => {
     const onVisibility = () => hold('hidden', document.hidden);
@@ -124,8 +115,6 @@ export default function HeroBento({ positioning, Button, Eyebrow }) {
         style={{ '--clip': clip.shot, '--slide-ms': `${SLIDE_MS}ms` }}
         aria-roledescription="carousel"
         aria-label="Websites we built"
-        onMouseEnter={() => hold('hover', true)}
-        onMouseLeave={() => hold('hover', false)}
         // Keyboard focus holds the slide; a mouse click on a name does not.
         onFocus={event => { if (event.target.matches?.(':focus-visible')) hold('focus', true); }}
         onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) hold('focus', false); }}
@@ -139,7 +128,15 @@ export default function HeroBento({ positioning, Button, Eyebrow }) {
           style={project.focus ? { objectPosition: project.focus } : undefined}
           decoding="async"
         />)}
-        <div className="bento-switch" role="group" aria-label="Preview a website we built" data-autoplay={autoplay || undefined} data-paused={paused || undefined}>
+        <div
+          className="bento-switch"
+          role="group"
+          aria-label="Preview a website we built"
+          data-autoplay={autoplay || undefined}
+          data-paused={paused || undefined}
+          onMouseEnter={() => hold('hover', true)}
+          onMouseLeave={() => hold('hover', false)}
+        >
           <span className="bento-switch-label">Our work</span>
           {HERO_PROJECTS.map(project => <button
             key={project.id}
@@ -147,14 +144,14 @@ export default function HeroBento({ positioning, Button, Eyebrow }) {
             aria-pressed={project.id === active}
             onClick={() => show(project.id)}
           >{project.name}</button>)}
-          {!reducedMotion && <button
+          <button
             type="button"
             className="bento-switch-toggle"
             aria-label={stopped ? 'Play the slideshow' : 'Pause the slideshow'}
             onClick={() => setStopped(value => !value)}
           ><svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true" focusable="false">
             {stopped ? <path d="M3 1.5v9l7.5-4.5z" fill="currentColor" /> : <path d="M2.5 1.5h2.6v9H2.5zM6.9 1.5h2.6v9H6.9z" fill="currentColor" />}
-          </svg></button>}
+          </svg></button>
           <a className="bento-switch-link" href="#portfolio" aria-label="See all projects">
             <span aria-hidden="true">→</span>
           </a>
