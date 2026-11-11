@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import MoltenBackdrop from './MoltenBackdrop';
 import { roundedPolygon } from '../lib/rounded-polygon';
 import stonePoster from '../assets/portfolio/stonebellisimo-poster.webp';
@@ -12,8 +12,11 @@ import bodegaPoster from '../assets/portfolio/bodegaproject-poster.webp';
  * that wraps around it, and an AI receptionist card cut into the
  * bottom-right corner, all floating on the original molten background. The
  * three panels share one 1000 x 620 board, and every edge that faces another
- * panel runs parallel to it with an even gap. Visitors can switch which
- * project fills the screenshot. Below 980px the panels stack as rounded cards.
+ * panel runs parallel to it with an even gap. The screenshot is a carousel of
+ * our sites: it cross-fades to the next one every few seconds, and visitors can
+ * pick one or pause it. It holds still on hover or focus, while off screen or in
+ * a hidden tab, and never moves for reduced motion. Below 980px the panels
+ * stack as rounded cards.
  */
 const BOARD = { width: 1000, height: 620, radius: 26 };
 const SHAPES = {
@@ -23,6 +26,8 @@ const SHAPES = {
   product: [[815, 427], [1000, 334], [1000, 620], [745, 620]]
 };
 const clip = Object.fromEntries(Object.entries(SHAPES).map(([key, points]) => [key, roundedPolygon(points, BOARD)]));
+
+const SLIDE_MS = 6000;
 
 export const HERO_PROJECTS = Object.freeze([
   { id: 'nexus', name: 'Nexus Verium', image: nexusPoster, alt: 'Nexus Verium website: floating wetlands on a city river' },
@@ -34,14 +39,72 @@ export const HERO_PROJECTS = Object.freeze([
 
 export default function HeroBento({ positioning, Button, Eyebrow }) {
   const [active, setActive] = useState(HERO_PROJECTS[0].id);
-  // Only screenshots someone has asked for are loaded; the first loads with the page.
-  const [loaded, setLoaded] = useState(() => new Set([HERO_PROJECTS[0].id]));
+  // The first screenshot loads with the page; each next one loads a slide ahead.
+  const [loaded, setLoaded] = useState(() => new Set(HERO_PROJECTS.slice(0, 2).map(project => project.id)));
+  const [stopped, setStopped] = useState(false);
+  const [holds, setHolds] = useState({ hover: false, focus: false, hidden: false, offscreen: false });
+  const [reducedMotion, setReducedMotion] = useState(false);
+  const sectionRef = useRef(null);
+  const activeRef = useRef(active);
+  const remaining = useRef(SLIDE_MS);
+  activeRef.current = active;
+
+  const hold = (reason, value) => setHolds(previous => (previous[reason] === value ? previous : { ...previous, [reason]: value }));
+  const autoplay = !stopped && !reducedMotion;
+  const paused = !autoplay || Object.values(holds).some(Boolean);
+  const nextOf = id => HERO_PROJECTS[(HERO_PROJECTS.findIndex(project => project.id === id) + 1) % HERO_PROJECTS.length].id;
   const show = id => {
+    if (id === activeRef.current) return;
+    remaining.current = SLIDE_MS;
     setActive(id);
-    setLoaded(previous => (previous.has(id) ? previous : new Set(previous).add(id)));
   };
 
-  return <section className="hero revenue-hero hero-bento" aria-labelledby="hero-title">
+  useEffect(() => {
+    const next = nextOf(active);
+    setLoaded(previous => (previous.has(active) && previous.has(next) ? previous : new Set(previous).add(active).add(next)));
+  }, [active]);
+
+  useEffect(() => {
+    const query = window.matchMedia?.('(prefers-reduced-motion: reduce)');
+    if (!query) return undefined;
+    const update = () => setReducedMotion(query.matches);
+    update();
+    query.addEventListener?.('change', update);
+    return () => query.removeEventListener?.('change', update);
+  }, []);
+
+  useEffect(() => {
+    const onVisibility = () => hold('hidden', document.hidden);
+    onVisibility();
+    document.addEventListener('visibilitychange', onVisibility);
+    const section = sectionRef.current;
+    const observer = section && 'IntersectionObserver' in window
+      ? new IntersectionObserver(([entry]) => hold('offscreen', !entry.isIntersecting), { threshold: .15 })
+      : null;
+    if (observer) observer.observe(section);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      observer?.disconnect();
+    };
+  }, []);
+
+  // One timer per slide. Pausing keeps the time left, so the progress bar and
+  // the switch stay in step when it resumes.
+  useEffect(() => {
+    if (paused) return undefined;
+    const slide = active;
+    const startedAt = performance.now();
+    const timer = setTimeout(() => {
+      remaining.current = SLIDE_MS;
+      setActive(nextOf(slide));
+    }, remaining.current);
+    return () => {
+      clearTimeout(timer);
+      if (activeRef.current === slide) remaining.current = Math.max(0, remaining.current - (performance.now() - startedAt));
+    };
+  }, [active, paused]);
+
+  return <section className="hero revenue-hero hero-bento" aria-labelledby="hero-title" ref={sectionRef}>
     <div className="hero-bg"><MoltenBackdrop /><div className="hero-overlay" /></div>
     <div className="bento-board">
       <div className="bento-panel bento-intro" style={{ '--clip': clip.intro }}>
@@ -56,7 +119,17 @@ export default function HeroBento({ positioning, Button, Eyebrow }) {
         </div>
       </div>
 
-      <div className="bento-panel bento-shot" style={{ '--clip': clip.shot }}>
+      <div
+        className="bento-panel bento-shot"
+        style={{ '--clip': clip.shot, '--slide-ms': `${SLIDE_MS}ms` }}
+        aria-roledescription="carousel"
+        aria-label="Websites we built"
+        onMouseEnter={() => hold('hover', true)}
+        onMouseLeave={() => hold('hover', false)}
+        // Keyboard focus holds the slide; a mouse click on a name does not.
+        onFocus={event => { if (event.target.matches?.(':focus-visible')) hold('focus', true); }}
+        onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) hold('focus', false); }}
+      >
         {HERO_PROJECTS.filter(project => loaded.has(project.id)).map(project => <img
           key={project.id}
           src={project.image}
@@ -66,7 +139,7 @@ export default function HeroBento({ positioning, Button, Eyebrow }) {
           style={project.focus ? { objectPosition: project.focus } : undefined}
           decoding="async"
         />)}
-        <div className="bento-switch" role="group" aria-label="Preview a website we built">
+        <div className="bento-switch" role="group" aria-label="Preview a website we built" data-autoplay={autoplay || undefined} data-paused={paused || undefined}>
           <span className="bento-switch-label">Our work</span>
           {HERO_PROJECTS.map(project => <button
             key={project.id}
@@ -74,6 +147,14 @@ export default function HeroBento({ positioning, Button, Eyebrow }) {
             aria-pressed={project.id === active}
             onClick={() => show(project.id)}
           >{project.name}</button>)}
+          {!reducedMotion && <button
+            type="button"
+            className="bento-switch-toggle"
+            aria-label={stopped ? 'Play the slideshow' : 'Pause the slideshow'}
+            onClick={() => setStopped(value => !value)}
+          ><svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true" focusable="false">
+            {stopped ? <path d="M3 1.5v9l7.5-4.5z" fill="currentColor" /> : <path d="M2.5 1.5h2.6v9H2.5zM6.9 1.5h2.6v9H6.9z" fill="currentColor" />}
+          </svg></button>}
           <a className="bento-switch-link" href="#portfolio" aria-label="See all projects">
             <span aria-hidden="true">→</span>
           </a>
