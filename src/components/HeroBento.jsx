@@ -13,7 +13,7 @@ import bodegaPoster from '../assets/portfolio/bodegaproject-poster.webp';
  * bottom-right corner, all floating on the original molten background. The
  * three panels share one 1000 x 620 board, and every edge that faces another
  * panel runs parallel to it with an even gap. The screenshot is a carousel of
- * our sites: it cross-fades to the next one every few seconds, and visitors can
+ * our sites: it cross-fades to the next one every four seconds, and visitors can
  * pick one or pause it. It holds while the pointer is on the project pill, on
  * keyboard focus, off screen and in a hidden tab. Reduced motion keeps the
  * rotation but drops the zoom, and the pause button is always there. Below 980px the panels
@@ -28,7 +28,7 @@ const SHAPES = {
 };
 const clip = Object.fromEntries(Object.entries(SHAPES).map(([key, points]) => [key, roundedPolygon(points, BOARD)]));
 
-const SLIDE_MS = 6000;
+const SLIDE_MS = 4000;
 
 export const HERO_PROJECTS = Object.freeze([
   { id: 'nexus', name: 'Nexus Verium', image: nexusPoster, alt: 'Nexus Verium website: floating wetlands on a city river' },
