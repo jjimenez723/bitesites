@@ -4,9 +4,11 @@
  *
  *   lagoon  Lagoon Blue #7BDFF2 · Cloud White #FCFFFF · Bubblegum Pink #F2B5D4
  *   navy    Navy #0E1A3A        · White #FFFFFF       · Hot Pink #FF2E88
+ *   forest  Forest Green #1F3D2B · Sand Beige #E8DCC4 · Electric Purple #8B5CF6
+ *   coral   Navy #14213D        · Cream #F4EDE0       · Coral #FF6B5B
  *
  * Each palette is scoped to html[data-colorway], so the live site is unchanged
- * until one is chosen. Preview with ?colorway=lagoon or ?colorway=navy. The
+ * until one is chosen. Preview with ?colorway=lagoon, navy, forest or coral. The
  * winner's selector becomes :root and the other block is deleted.
  * Loaded last, after refresh.css.
  */
@@ -190,3 +192,62 @@ html[data-colorway] .project-intake .project-service-icon { color: var(--cw-acce
 html[data-colorway] .project-intake .project-progress-dot { background: var(--cw-ink); border-color: var(--cw-ink); color: #fff; box-shadow: 0 0 0 4px color-mix(in srgb, var(--cw-primary) 30%, white); }
 html[data-colorway] .project-intake .project-next { background: var(--cw-ink); color: #fff; }
 html[data-colorway] .project-intake .project-next:hover { box-shadow: 0 6px 22px var(--cw-glow-b); }
+
+
+/* Forest and coral: a dark primary, a warm light base and one bright accent. */
+html[data-colorway="forest"] {
+  --cw-primary: #1f3d2b;
+  --cw-base: #f6f1e6;
+  --cw-sand: #e8dcc4;
+  --cw-accent: #8b5cf6;
+  --cw-primary-strong: #1f3d2b;
+  --cw-primary-tile: linear-gradient(150deg, #2f5a40, #1f3d2b);
+  --cw-accent-strong: #7444e8;
+  --cw-accent-tile: linear-gradient(150deg, #a07dff, #7444e8);
+  --cw-ink: #1f3d2b;
+  --cw-ink-2: #29503a;
+  --cw-on-accent: #ffffff;
+  --cw-button: var(--cw-accent);
+  --cw-glow-a: rgba(139, 92, 246, .30);
+  --cw-glow-b: rgba(232, 220, 196, .16);
+  --cw-step: #3f7a57;
+  --cw-step-rgb: 63, 122, 87;
+  --cw-shader-filter: hue-rotate(150deg) saturate(.45) brightness(.8);
+}
+html[data-colorway="coral"] {
+  --cw-primary: #14213d;
+  --cw-base: #f8f3ea;
+  --cw-sand: #f4ede0;
+  --cw-accent: #ff6b5b;
+  --cw-primary-strong: #14213d;
+  --cw-primary-tile: linear-gradient(150deg, #263a66, #14213d);
+  --cw-accent-strong: #e94f3f;
+  --cw-accent-tile: linear-gradient(150deg, #ff8a7c, #e94f3f);
+  --cw-ink: #14213d;
+  --cw-ink-2: #1d2f55;
+  --cw-on-accent: #ffffff;
+  --cw-button: var(--cw-accent);
+  --cw-glow-a: rgba(255, 107, 91, .30);
+  --cw-glow-b: rgba(80, 110, 190, .20);
+  --cw-step: #3c5499;
+  --cw-step-rgb: 60, 84, 153;
+  --cw-shader-filter: hue-rotate(160deg) saturate(.55) brightness(.85);
+}
+html:is([data-colorway="forest"], [data-colorway="coral"]) :is(#portfolio.portfolio-section, #consultation.alt, #pricing.alt, .revenue-system, #industries) { background: var(--cw-base); }
+html:is([data-colorway="forest"], [data-colorway="coral"]) .revenue-about-section { background: radial-gradient(ellipse at 95% 5%, var(--cw-sand), transparent 55%), var(--cw-base); }
+html:is([data-colorway="forest"], [data-colorway="coral"]) header.scrolled,
+html:is([data-colorway="forest"], [data-colorway="coral"]) header { background: color-mix(in srgb, var(--cw-base) 90%, transparent); }
+html:is([data-colorway="forest"], [data-colorway="coral"]) .project-intake { background: var(--cw-base); }
+html:is([data-colorway="forest"], [data-colorway="coral"]) .recovery-path li,
+html:is([data-colorway="forest"], [data-colorway="coral"]) .recovery-path li[data-tone="violet"],
+html:is([data-colorway="forest"], [data-colorway="coral"]) .recovery-path li[data-tone="teal"] { --step: var(--cw-step); }
+html:is([data-colorway="forest"], [data-colorway="coral"]) .recovery-section .holo-card:not([data-tone="rose"]) { --holo-accent: var(--cw-step); --holo-rgb: var(--cw-step-rgb); }
+html:is([data-colorway="forest"], [data-colorway="coral"]) :is(.holo-card, .holo-card[data-tone="violet"], .holo-card[data-tone="teal"], .project-service--web, .project-service--ai, .project-service--custom) { --holo-rgb: var(--cw-step-rgb); --holo-wash: var(--cw-sand); }
+html[data-colorway="forest"] :is(.holo-card[data-tone="rose"], .project-service--social) { --holo-rgb: 116, 68, 232; }
+html[data-colorway="coral"] :is(.holo-card[data-tone="rose"], .project-service--social) { --holo-rgb: 233, 79, 63; }
+html:is([data-colorway="forest"], [data-colorway="coral"]) .reactivation-section { background: var(--cw-accent); color: #fff; }
+html[data-colorway="forest"] .hero .gradient-text { background: linear-gradient(115deg, #e8dcc4 10%, #a98bff 80%); -webkit-background-clip: text; background-clip: text; }
+html[data-colorway="coral"] .hero .gradient-text { background: linear-gradient(115deg, #f4ede0 10%, #ff6b5b 80%); -webkit-background-clip: text; background-clip: text; }
+html:is([data-colorway="forest"], [data-colorway="coral"]) .agent-name-byte { background-image: linear-gradient(115deg, #ffffff, var(--cw-sand)); }
+html[data-colorway="forest"] .agent-name-bit { background-image: linear-gradient(115deg, #b9a0ff, #8b5cf6); }
+html[data-colorway="coral"] .agent-name-bit { background-image: linear-gradient(115deg, #ff9a8f, #ff6b5b); }

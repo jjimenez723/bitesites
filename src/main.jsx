@@ -1738,10 +1738,10 @@ const AdminApp = lazy(() => import('./admin/AdminApp'));
 
 export function HomepageSnapshot() { return <MemoryRouter><App /></MemoryRouter>; }
 
-// Colorway trial: ?colorway=lagoon or ?colorway=navy previews a palette (see colorway.css).
+// Colorway trial: ?colorway=lagoon, navy, forest or coral previews a palette (see colorway.css).
 if (typeof document !== 'undefined') {
   const colorway = new URLSearchParams(window.location.search).get('colorway');
-  if (colorway === 'lagoon' || colorway === 'navy') document.documentElement.dataset.colorway = colorway;
+  if (['lagoon', 'navy', 'forest', 'coral'].includes(colorway)) document.documentElement.dataset.colorway = colorway;
 }
 
 if (typeof document !== 'undefined') createRoot(document.getElementById('root')).render(
