@@ -169,6 +169,8 @@ body { background: #fff; }
   transition: opacity var(--r-fast) ease, transform var(--r-slow) var(--r-ease), background var(--r-fast);
 }
 .sticky-audit-cta.is-shown { opacity: 1; transform: none; pointer-events: auto; }
+/* Out of the way while the menu or a portfolio project is open, like the chat launcher. */
+body.menu-open .sticky-audit-cta.is-shown, body.portfolio-open .sticky-audit-cta.is-shown { opacity: 0; pointer-events: none; }
 .sticky-audit-cta:hover { background: #1c2340; }
 .sticky-audit-cta:focus-visible { outline: 3px solid var(--r-cyan); outline-offset: 3px; }
 .sticky-audit-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--gradient); box-shadow: 0 0 0 3px rgba(255, 94, 156, .22); }
@@ -185,9 +187,20 @@ body { background: #fff; }
   .industry-card.holo-card { min-height: 140px; padding: 24px; }
   .sticky-audit-cta { left: 16px; bottom: 16px; padding: 12px 20px; font-size: 14px; }
 }
-/* On phones the chat launcher and its prompt fill the bottom row, so the CTA sits above them. */
-@media (max-width: 480px) {
-  .sticky-audit-cta { bottom: 96px; }
+/* Phones: the audit pill and the Chat with Bit launcher share the bottom row at
+   the same height. The launcher's "Need help scoping a project?" prompt is
+   dropped on phones to make room; desktop keeps it. */
+@media (max-width: 760px) {
+  .chat-launcher.nudged p { display: none; }
+}
+@media (max-width: 560px) {
+  .sticky-audit-cta { height: 50px; padding: 0 18px; gap: 10px; }
+  .chat-launcher button { height: 50px; padding: 0 16px 0 12px; }
+}
+@media (max-width: 360px) {
+  .sticky-audit-cta { left: 12px; bottom: 12px; padding: 0 12px; gap: 8px; font-size: 13px; }
+  .chat-launcher { right: 12px; bottom: 12px; }
+  .chat-launcher button { gap: 7px; padding: 0 11px 0 8px; font-size: 12px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .project-intake::before { animation: none; }

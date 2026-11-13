@@ -1,0 +1,149 @@
+/* Glass console.
+ *
+ * Frosted panels float over a soft backdrop in the brand colours: the
+ * sidebar, the top bar and every card blur what sits behind them. Stat tiles
+ * lift on hover, and each page fades in out of a blur when you switch.
+ *
+ * Only top-level surfaces become see-through. Tooltips, menus and the
+ * surface tokens stay as they are, so text over text never loses contrast.
+ * Loaded after admin.css; every rule is scoped under .bs-admin.
+ */
+
+.bs-admin {
+  --bg: #070913;
+  --glass: rgba(20, 22, 36, .5);
+  --glass-strong: rgba(16, 18, 30, .78);
+  --glass-edge: rgba(255, 255, 255, .12);
+  --glass-shine: inset 0 1px 0 rgba(255, 255, 255, .07);
+  --glass-blur: blur(22px) saturate(150%);
+  --glass-shadow: 0 18px 44px rgba(0, 0, 0, .32);
+  --line: rgba(255, 255, 255, .1);
+  isolation: isolate;
+}
+
+/* Backdrop: slow-moving colour fields under a fine grain. It sits fixed
+   behind everything, so the glass always has something to blur. */
+.admin-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  background:
+    linear-gradient(160deg, #0b1230 0%, #070913 55%, #10071d 100%);
+  pointer-events: none;
+}
+.admin-backdrop i {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(80px);
+  opacity: .7;
+  animation: glass-drift 28s ease-in-out infinite alternate;
+}
+.admin-backdrop i:nth-child(1) { width: 46vw; height: 46vw; left: -8vw; top: -12vw; background: #0071e3; }
+.admin-backdrop i:nth-child(2) { width: 38vw; height: 38vw; right: -6vw; top: 10vh; background: #7c3aed; animation-duration: 34s; animation-delay: -8s; }
+.admin-backdrop i:nth-child(3) { width: 30vw; height: 30vw; left: 30vw; bottom: -14vw; background: #ff5e9c; opacity: .42; animation-duration: 40s; animation-delay: -16s; }
+.admin-backdrop i:nth-child(4) { width: 24vw; height: 24vw; right: 18vw; bottom: 4vh; background: #34c9eb; opacity: .4; animation-duration: 31s; animation-delay: -4s; }
+@keyframes glass-drift {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  to { transform: translate3d(6vw, 4vh, 0) scale(1.12); }
+}
+
+/* Shared glass recipe. */
+.bs-admin .admin-sidebar,
+.bs-admin .admin-topbar,
+.bs-admin .admin-card,
+.bs-admin .admin-auth-card {
+  background: var(--glass);
+  border: 1px solid var(--glass-edge);
+  box-shadow: var(--glass-shine), var(--glass-shadow);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+}
+
+/* Sidebar: a floating panel with a gap on every side. */
+.bs-admin .admin-shell { padding: 14px 0 0 14px; gap: 14px; }
+.bs-admin .admin-sidebar {
+  top: 14px;
+  height: calc(100vh - 28px);
+  border-radius: 22px;
+}
+/* A site-wide nav rule centres links; the console list reads left to right. */
+.bs-admin .admin-nav { align-items: stretch; }
+.bs-admin .admin-nav a { border-radius: 12px; }
+.bs-admin .admin-nav a:hover { background: rgba(255, 255, 255, .07); }
+.bs-admin .admin-nav a.active {
+  background: rgba(255, 255, 255, .13);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .1);
+}
+.bs-admin .admin-nav a.active::before { display: none; }
+.bs-admin .admin-sidebar-foot { border-top-color: var(--glass-edge); }
+
+/* Top bar: a floating glass strip instead of a full-width band. */
+.bs-admin .admin-main { padding-right: 14px; }
+.bs-admin .admin-topbar {
+  top: 14px;
+  margin: 0 0 4px;
+  border-radius: 20px;
+  padding: 16px 24px;
+}
+.bs-admin .admin-body { padding: 22px 10px 64px; }
+
+/* Cards and controls inside them. */
+.bs-admin .admin-card { border-radius: 20px; }
+.bs-admin .admin-segment,
+.bs-admin .admin-search,
+.bs-admin .admin-select,
+.bs-admin .btn-admin:not(.primary) {
+  background: rgba(255, 255, 255, .06);
+  border-color: rgba(255, 255, 255, .12);
+}
+.bs-admin .admin-segment button[aria-pressed='true'] { background: rgba(255, 255, 255, .16); }
+.bs-admin .btn-admin:not(.primary):hover { background: rgba(255, 255, 255, .12); }
+
+/* Stat tiles lift on hover, as in the reference. */
+.bs-admin .admin-card:has(> .stat-tile),
+.bs-admin .admin-card.stat-tile {
+  transition: transform var(--dur-slow) var(--ease), box-shadow var(--dur-slow) var(--ease), border-color var(--dur-slow) var(--ease);
+}
+.bs-admin .admin-card:has(> .stat-tile):hover,
+.bs-admin .admin-card.stat-tile:hover {
+  transform: translateY(-5px);
+  border-color: rgba(255, 255, 255, .2);
+  box-shadow: var(--glass-shine), 0 26px 54px rgba(0, 0, 0, .42);
+}
+
+/* Drawer and sign-in. The drawer sits over content, so it stays mostly opaque. */
+.bs-admin .admin-panel {
+  background: var(--glass-strong);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border-left-color: var(--glass-edge);
+}
+.bs-admin .admin-auth-card { border-radius: 24px; }
+
+/* Page change: the new page fades up out of a blur. */
+.bs-admin .admin-page { display: flex; flex-direction: column; min-width: 0; animation: glass-page-in .45s var(--ease) both; }
+@keyframes glass-page-in {
+  from { opacity: 0; filter: blur(10px); transform: translateY(10px) scale(.99); }
+  to { opacity: 1; filter: none; transform: none; }
+}
+
+/* Browsers without backdrop blur get a solid panel instead of a see-through one. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .bs-admin { --glass: rgba(20, 22, 36, .94); --glass-strong: #12141f; }
+}
+
+@media (max-width: 860px) {
+  .bs-admin .admin-shell { padding: 0; gap: 0; }
+  .bs-admin .admin-sidebar { top: 0; height: auto; border-radius: 0 0 20px 20px; }
+  .bs-admin .admin-main { padding: 0 10px; }
+  .bs-admin .admin-topbar { top: 8px; }
+  .bs-admin .admin-body { padding-left: 0; padding-right: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .admin-backdrop i { animation: none; }
+  .bs-admin .admin-page { animation: none; }
+  .bs-admin .admin-card:has(> .stat-tile):hover,
+  .bs-admin .admin-card.stat-tile:hover { transform: none; }
+}

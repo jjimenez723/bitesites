@@ -8,7 +8,7 @@
 // security boundary; hiding a route is only a usability affordance.
 
 import React, { useEffect, useState } from 'react';
-import { Link, NavLink, Navigate, Route, Routes } from 'react-router-dom';
+import { Link, NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import {
   watchSession, signIn, signInWithGoogle, completeRedirectSignIn,
   signOutUser, resetPassword, friendlyAuthError
@@ -27,6 +27,7 @@ import OutboundExperiencePreview from './outbound/OutboundExperiencePreview';
 import { FINANCE_OWNER_EMAILS } from './finance-seed';
 import adminLogo from '../assets/bitesites-admin-logo.svg';
 import './admin.css';
+import './glass.css';
 
 const Icon = ({ d }) => (
   <svg className="admin-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -66,6 +67,11 @@ const GoogleMark = () => (
     <path fill="#FBBC05" d="M3.96 10.71a5.41 5.41 0 0 1 0-3.42V4.96H.96a9 9 0 0 0 0 8.08l3-2.33z" />
     <path fill="#EA4335" d="M9 3.58c1.32 0 2.51.45 3.44 1.35l2.58-2.59C13.46.89 11.43 0 9 0A9 9 0 0 0 .96 4.96l3 2.33C4.67 5.16 6.65 3.58 9 3.58z" />
   </svg>
+);
+
+// The soft colour fields the glass panels blur. Purely decorative.
+const GlassBackdrop = () => (
+  <div className="admin-backdrop" aria-hidden="true"><i /><i /><i /><i /></div>
 );
 
 function SignIn() {
@@ -115,6 +121,7 @@ function SignIn() {
 
   return (
     <div className="bs-admin">
+      <GlassBackdrop />
       <div className="admin-auth">
         <div className="admin-auth-card">
           <AdminLogo />
@@ -154,6 +161,7 @@ function SignIn() {
 function Denied() {
   return (
     <div className="bs-admin">
+      <GlassBackdrop />
       <div className="admin-auth">
         <div className="admin-auth-card admin-denied">
           <AdminLogo />
@@ -177,7 +185,11 @@ function AuthenticatedAdminApp() {
   if (!session.user) return <SignIn />;
   const staffRoles = ['admin', 'outbound_rep', 'outbound_manager'];
   if (!staffRoles.includes(session.role)) return <Denied />;
+  return <AdminShell session={session} />;
+}
 
+function AdminShell({ session }) {
+  const location = useLocation();
   const email = session.user.email || '';
   const name = session.profile?.displayName || session.user.displayName || email.split('@')[0];
   const initials = name.slice(0, 2).toUpperCase();
@@ -189,6 +201,7 @@ function AuthenticatedAdminApp() {
 
   return (
     <div className="bs-admin">
+      <GlassBackdrop />
       <a className="admin-skip" href="#admin-main">Skip to content</a>
       <div className="admin-shell">
         <aside className="admin-sidebar">
@@ -225,6 +238,8 @@ function AuthenticatedAdminApp() {
         </aside>
 
         <main className="admin-main" id="admin-main" tabIndex={-1}>
+          {/* Keyed by path so each page plays the fade-in when you switch. */}
+          <div className="admin-page" key={location.pathname}>
           <Routes>
             {isAdminUser && <Route index element={<Overview />} />}
             {isAdminUser && <Route path="performance" element={<Performance />} />}
@@ -238,15 +253,30 @@ function AuthenticatedAdminApp() {
             {isAdminUser && <Route path="users" element={<Users />} />}
             <Route path="*" element={<Navigate to={isAdminUser ? '/admin' : '/admin/outbound'} replace />} />
           </Routes>
+          </div>
         </main>
       </div>
     </div>
   );
 }
 
+// Dev server only: open /admin?glass-preview to see the console shell without
+// signing in. Pages that read Firestore show their error or empty states.
+// import.meta.env.DEV is false in production builds, so this never ships.
+function devGlassPreview() {
+  if (!import.meta.env.DEV) return false;
+  try {
+    if (new URLSearchParams(window.location.search).has('glass-preview')) sessionStorage.setItem('bs-glass-preview', '1');
+    return sessionStorage.getItem('bs-glass-preview') === '1';
+  } catch { return false; }
+}
+
 export default function AdminApp() {
   if (import.meta.env.DEV && window.location.pathname === '/admin/outbound-preview') {
     return <OutboundExperiencePreview />;
+  }
+  if (import.meta.env.DEV && devGlassPreview()) {
+    return <AdminShell session={{ user: { uid: 'preview', email: 'preview@localhost' }, role: 'admin', profile: { displayName: 'Preview' } }} />;
   }
   return <AuthenticatedAdminApp />;
 }
