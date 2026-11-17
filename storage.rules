@@ -1,0 +1,13 @@
+rules_version = '2';
+
+// Cloud Storage holds generated invoice PDFs (invoices/{clientId}/...). They are
+// written and read only by the billing Cloud Functions with the Admin SDK, which
+// bypasses these rules; admins download them through the billingInvoicePdf
+// callable. No browser has direct access to anything in the bucket.
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
