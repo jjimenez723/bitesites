@@ -173,6 +173,11 @@ export function createBillingService({
     if (existing.exists) return { created: false, invoice: { id: existing.id, ...existing.data() } };
     const client = await getClient(clientId);
     if (!client) fail('not-found', 'That billing client does not exist.');
+    // A month is billed only once it is over (New York time); counting leads earlier
+    // would undercount, and the invoice id makes the draft one-per-month for good.
+    if (billingToday(now()) <= period.periodEnd) {
+      fail('failed-precondition', `${period.periodLabel} isn't over yet. Its invoice can be drafted from ${addDays(period.periodEnd, 1)}.`);
+    }
 
     // The network call happens before the transaction: transactions retry, and
     // a WordPress request is not something to repeat on contention.

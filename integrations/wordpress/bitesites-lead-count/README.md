@@ -12,7 +12,7 @@ CAAH site goes through that site's own deployment gates (backup, review, deploy)
 
 `{prefix}caah_leads` — the first-party lead table the CAAH theme writes
 (`inc/caah-lead-capture.php`) and the Team View lead queue reads. Rows created in
-`[start, end)` (site timezone) are counted after Team View's two rules:
+`[start, end)` — midnights in America/New_York (override with `BITESITES_LEADS_BILLING_TZ`), converted to the site clock that `created_at` uses — are counted after Team View's two rules:
 
 1. test/evaluation rows are excluded (email contains `.invalid`, or the name contains
    `test` or `eval`);

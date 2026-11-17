@@ -2,7 +2,7 @@
 /**
  * Plugin Name: BiteSites Lead Count
  * Description: Read-only, secret-protected REST endpoint that tells BiteSites how many operational leads the site received in a date range, for monthly "Lead Generation" invoicing. Returns counts only — never names, emails or phone numbers.
- * Version: 1.0.0
+ * Version: 1.1.0
  * Requires at least: 6.0
  * Requires PHP: 8.0
  * Author: BiteSites
@@ -12,9 +12,12 @@
  *   GET /wp-json/bitesites/v1/lead-count?start=YYYY-MM-DD&end=YYYY-MM-DD
  *   Header: X-BiteSites-Secret: <BITESITES_LEADS_SECRET>
  *
- *   `start` is inclusive and `end` is exclusive, both midnight in the site's
- *   timezone (Settings → General), which is the clock `created_at` is written in
- *   (`current_time('mysql')` in the theme's lead capture).
+ *   `start` is inclusive and `end` is exclusive, both midnight in the BILLING
+ *   timezone (America/New_York unless BITESITES_LEADS_BILLING_TZ is defined).
+ *   Those instants are converted to the site's timezone (Settings → General),
+ *   the clock `created_at` is written in (`current_time('mysql')`), before
+ *   querying — so a month means the business's calendar month even when the
+ *   site clock is UTC.
  *
  * Configuration (wp-config.php, above "That's all, stop editing!"):
  *   define('BITESITES_LEADS_SECRET', '<same value as the BiteSites WP_LEADS_SECRET>');
@@ -68,15 +71,18 @@ function bitesites_lead_count_permission(WP_REST_Request $request)
 {
     $expected = defined('BITESITES_LEADS_SECRET') ? (string) BITESITES_LEADS_SECRET : '';
     if (strlen($expected) < 24) {
-        return new WP_Error('bitesites_not_configured', 'Lead count endpoint is not configured.', ['status' => 503]);
+        return new WP_Error('bitesites_not_configured', 'BITESITES_LEADS_SECRET is missing or shorter than 24 characters on this site.', ['status' => 503]);
     }
     $allow_http = defined('BITESITES_LEADS_ALLOW_HTTP') && BITESITES_LEADS_ALLOW_HTTP;
     if (!is_ssl() && !$allow_http) {
-        return new WP_Error('bitesites_https_required', 'HTTPS is required.', ['status' => 403]);
+        return new WP_Error('bitesites_https_required', 'Request must use HTTPS.', ['status' => 403]);
     }
     $provided = (string) $request->get_header('x_bitesites_secret');
-    if ($provided === '' || !hash_equals($expected, $provided)) {
-        return new WP_Error('bitesites_forbidden', 'Forbidden.', ['status' => 401]);
+    if ($provided === '') {
+        return new WP_Error('bitesites_secret_missing', 'X-BiteSites-Secret header is missing.', ['status' => 401]);
+    }
+    if (!hash_equals($expected, $provided)) {
+        return new WP_Error('bitesites_secret_mismatch', 'X-BiteSites-Secret does not match this site\'s BITESITES_LEADS_SECRET.', ['status' => 401]);
     }
     return true;
 }
@@ -149,15 +155,37 @@ function bitesites_lead_count_distinct($rows)
     return count($roots);
 }
 
+/**
+ * Apply Team View's rules and return [operational row count, distinct lead count].
+ *
+ * On CAAH, Team View's rules live in the portal-pet-manager plugin
+ * (ppm_operational_lead_rows: drops test/evaluation rows; ppm_deduplicate_lead_rows:
+ * collapses repeat submissions). Calling those exact functions means the billed count
+ * cannot drift from what staff see in Team View. The embedded copies above are used
+ * only on a site that does not have that plugin.
+ */
+function bitesites_lead_count_apply_rules($rows)
+{
+    if (function_exists('ppm_operational_lead_rows') && function_exists('ppm_deduplicate_lead_rows')) {
+        [$operational] = ppm_operational_lead_rows($rows);
+        [$visible] = ppm_deduplicate_lead_rows($operational);
+        return [count($operational), count($visible)];
+    }
+    $operational = array_values(array_filter($rows, static fn($row) => !bitesites_lead_count_is_test($row)));
+    return [count($operational), bitesites_lead_count_distinct($operational)];
+}
+
 function bitesites_lead_count_response(WP_REST_Request $request)
 {
     global $wpdb;
 
     $start = (string) $request->get_param('start');
     $end = (string) $request->get_param('end');
-    $timezone = wp_timezone();
-    $start_at = new DateTimeImmutable($start . ' 00:00:00', $timezone);
-    $end_at = new DateTimeImmutable($end . ' 00:00:00', $timezone);
+    $billing_tz = new DateTimeZone(defined('BITESITES_LEADS_BILLING_TZ') ? (string) BITESITES_LEADS_BILLING_TZ : 'America/New_York');
+    $site_tz = wp_timezone();
+    // Midnight in the billing timezone, expressed on the site clock used by created_at.
+    $start_at = (new DateTimeImmutable($start . ' 00:00:00', $billing_tz))->setTimezone($site_tz);
+    $end_at = (new DateTimeImmutable($end . ' 00:00:00', $billing_tz))->setTimezone($site_tz);
     if ($end_at <= $start_at) {
         return new WP_Error('bitesites_bad_range', 'end must be after start.', ['status' => 400]);
     }
@@ -173,26 +201,29 @@ function bitesites_lead_count_response(WP_REST_Request $request)
 
     // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table name is internal.
     $rows = $wpdb->get_results($wpdb->prepare(
-        "SELECT first_name, last_name, email, phone FROM {$table} WHERE created_at >= %s AND created_at < %s",
+        "SELECT id, created_at, first_name, last_name, email, phone FROM {$table} WHERE created_at >= %s AND created_at < %s",
         $start_at->format('Y-m-d H:i:s'),
         $end_at->format('Y-m-d H:i:s')
     ));
-    if (!is_array($rows)) {
+    // A failed query leaves an empty result, which must not be billed as zero leads.
+    if (!is_array($rows) || '' !== (string) $wpdb->last_error) {
         return new WP_Error('bitesites_query_failed', 'Could not read the lead table.', ['status' => 500]);
     }
 
-    $operational = array_values(array_filter($rows, static fn($row) => !bitesites_lead_count_is_test($row)));
-    $count = bitesites_lead_count_distinct($operational);
+    [$operational_count, $count] = bitesites_lead_count_apply_rules($rows);
 
     $response = new WP_REST_Response([
         'count' => $count,
         'total_rows' => count($rows),
-        'excluded_test' => count($rows) - count($operational),
-        'duplicates' => count($operational) - $count,
+        'excluded_test' => count($rows) - $operational_count,
+        'duplicates' => $operational_count - $count,
         'start' => $start,
         'end' => $end,
         'end_exclusive' => true,
-        'timezone' => wp_timezone_string(),
+        'timezone' => $billing_tz->getName(),
+        'site_timezone' => wp_timezone_string(),
+        'query_from' => $start_at->format('Y-m-d H:i:s'),
+        'query_to' => $end_at->format('Y-m-d H:i:s'),
         'rule' => BITESITES_LEAD_COUNT_RULE,
     ], 200);
     $response->header('Cache-Control', 'no-store, private');

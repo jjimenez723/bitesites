@@ -128,6 +128,22 @@ Team View reads — and applies Team View's rules (exclude test/eval rows, colla
 by name/email/phone within the month). It returns counts only, behind
 `X-BiteSites-Secret` = `WP_LEADS_SECRET`. See its README for install steps.
 
+**Each invoice bills exactly its own month.** A month is midnight on the 1st to midnight
+on the next 1st, New York time (DST-correct), so consecutive invoices touch end to end
+with no overlap and no gap. Three guards keep it that way:
+
+- One invoice per client per month (id `{clientId}_{YYYY-MM}`); re-runs return the
+  existing draft and never pull again.
+- A month can't be drafted until it is over in New York (`failed-precondition`
+  otherwise), so a count is never taken from an unfinished month.
+- BiteSites rejects a count unless the plugin reports `timezone: America/New_York`
+  (plugin v1.1+). v1.0 split months at the site clock (UTC on CAAH), which moved leads
+  from the last evening of a month into the next.
+
+Pull failures say what to fix (key mismatch, header stripped, plugin inactive, key not
+set on the site, timeout, redirect, non-JSON response, old plugin) — see
+`describeLeadCountError` in `functions/billing-leads.js`.
+
 ## PDF and email
 
 `functions/billing-pdf.js` (pdfkit) reproduces the foundation: Letter, Montserrat

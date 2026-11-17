@@ -32,7 +32,7 @@ function harness({ leadCount = 12, leadStatus = 200, stripe = null, now = DEC_1 
     loadStripe: async () => stripe,
     fetchImpl: async url => {
       leadRequests.push(url);
-      return { ok: leadStatus < 300, status: leadStatus, json: async () => ({ count: leadCount }) };
+      return { ok: leadStatus < 300, status: leadStatus, json: async () => ({ count: leadCount, timezone: 'America/New_York' }) };
     }
   });
   return { service, files, sent, leadRequests };
@@ -83,7 +83,7 @@ test('numbering is sequential per client and a re-run never allocates a second n
   const { service } = harness();
   const first = await service.createDraft('caah', '2026-11');
   const again = await service.createDraft('caah', '2026-11');
-  const [concurrentA, concurrentB] = await Promise.all([service.createDraft('caah', '2026-12'), service.createDraft('caah', '2026-12')]);
+  const [concurrentA, concurrentB] = await Promise.all([service.createDraft('caah', '2026-10'), service.createDraft('caah', '2026-10')]);
   const other = await service.createDraft('other', '2026-11');
   assert.equal(first.created, true);
   assert.equal(again.created, false);
@@ -103,7 +103,7 @@ test('a failed lead pull leaves the count empty, blocks finalizing, and a manual
   const { invoice } = await service.createDraft('caah', '2026-11');
   assert.equal(invoice.leadCount, null);
   assert.equal(invoice.leadPull.status, 'failed');
-  assert.match(invoice.leadPull.error, /rejected the lead-count secret/);
+  assert.match(invoice.leadPull.error, /refused the request \(HTTP 401\)/);
   assert.equal(invoice.totalCents, 180000);
   await assert.rejects(service.finalize(invoice.id), /lead count/);
   await assert.rejects(service.refreshLeadCount(invoice.id), /Lead count not updated/);
@@ -225,7 +225,7 @@ test('auto-approval clients are finalized and sent by the monthly run; void stop
   assert.equal(sent.length, 1);
   assert.equal((await db.doc('invoices/caah_2026-11').get()).get('status'), 'sent');
 
-  const { invoice } = await service.createDraft('caah', '2026-12');
+  const { invoice } = await service.createDraft('caah', '2026-10');
   await service.voidInvoice(invoice.id, { reason: 'Duplicate' });
   await assert.rejects(service.send(invoice.id), /voided invoice/);
   const { pdf } = await service.getPdf('caah_2026-11');
@@ -241,4 +241,19 @@ test('client edits never touch autopay, which belongs to the Stripe side', async
   const created = await service.saveClient('', { ...CAAH_BILLING_CLIENT, name: 'Field Day', leadRateCents: 0, leadSource: { type: 'manual' } });
   assert.equal(created.id, 'field-day');
   assert.equal(created.autopay, undefined);
+});
+
+test('a month cannot be drafted until it is over in New York, so its lead count is complete', async () => {
+  await seedCaah();
+  // 11:59 pm New York on November 30 — still November there (04:59 UTC Dec 1).
+  const lateNov30 = harness({ now: new Date('2026-12-01T04:59:00Z') });
+  await assert.rejects(lateNov30.service.createDraft('caah', '2026-11'), /November 2026 isn't over yet/);
+  assert.equal(lateNov30.leadRequests.length, 0, 'no lead pull for an unfinished month');
+  // 12:01 am New York on December 1.
+  const earlyDec1 = harness({ now: new Date('2026-12-01T05:01:00Z') });
+  const { created, invoice } = await earlyDec1.service.createDraft('caah', '2026-11');
+  assert.equal(created, true);
+  const url = new URL(earlyDec1.leadRequests[0]);
+  assert.deepEqual([url.searchParams.get('start'), url.searchParams.get('end')], ['2026-11-01', '2026-12-01']);
+  assert.equal(invoice.periodLabel, 'November 2026');
 });
