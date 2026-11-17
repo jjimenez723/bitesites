@@ -49,8 +49,10 @@ export async function loadStripeModule(importer = () => import('./billing-stripe
   try {
     mod = await importer();
   } catch (error) {
-    const missing = error?.code === 'ERR_MODULE_NOT_FOUND' && /billing-stripe(\.js)?['"]?/.test(String(error?.message || ''))
-      && !/Cannot find package/.test(String(error?.message || ''));
+    // Only "this exact file does not exist" counts as absent. A missing package
+    // or helper imported *by* billing-stripe.js is a broken module, not an absent one.
+    const missing = error?.code === 'ERR_MODULE_NOT_FOUND'
+      && /^Cannot find module '[^']*billing-stripe\.js'/.test(String(error?.message || ''));
     if (missing) return null;
     throw error;
   }
@@ -300,11 +302,15 @@ export function createBillingService({
         if (link?.sessionId) payment.stripeCheckoutSessionId = link.sessionId;
       }
     }
+    // Autopay is charged right after the first send, so the date printed is the
+    // issue date or, when an admin approves later than that, today.
+    const today = billingToday(now());
+    const autopayChargeDate = today > invoice.issueDate ? today : invoice.issueDate;
     const locked = {
       ...invoice,
       status: 'finalized',
       autopay,
-      ...(autopay ? { autopayChargeDate: invoice.issueDate } : {}),
+      ...(autopay ? { autopayChargeDate } : {}),
       payment
     };
     const { path } = await storePdf(locked, client);
@@ -314,7 +320,7 @@ export function createBillingService({
       if (latest.get('status') !== 'draft') fail('aborted', 'This invoice changed while it was being finalized. Refresh and try again.');
       tx.update(ref, {
         status: 'finalized', autopay, payment, pdfPath: path,
-        ...(autopay ? { autopayChargeDate: invoice.issueDate } : {}),
+        ...(autopay ? { autopayChargeDate } : {}),
         finalizedAt: stamp(), finalizedBy: uid, updatedAt: stamp()
       });
     });

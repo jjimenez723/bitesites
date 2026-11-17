@@ -76,3 +76,15 @@ test('the invoice email escapes client-provided text and refuses to send without
   assert.throws(() => buildInvoiceEmail({ invoice: invoiceWith(), client: { ...CAAH_BILLING_CLIENT, billingEmails: [] }, pdf: Buffer.from('x') }), /billing email/);
   assert.throws(() => buildInvoiceEmail({ invoice: invoiceWith(), client: CAAH_BILLING_CLIENT, pdf: null }), /PDF/);
 });
+
+test('the Stripe loader treats only a missing billing-stripe.js as absent', async () => {
+  const { loadStripeModule } = await import('./billing-core.js');
+  const notFound = message => () => { const error = new Error(message); error.code = 'ERR_MODULE_NOT_FOUND'; throw error; };
+  assert.equal(await loadStripeModule(), null, 'functions/billing-stripe.js is not on this branch');
+  assert.equal(await loadStripeModule(notFound("Cannot find module '/srv/functions/billing-stripe.js' imported from /srv/functions/billing-core.js")), null);
+  await assert.rejects(loadStripeModule(notFound("Cannot find package 'stripe' imported from /srv/functions/billing-stripe.js")), /stripe/);
+  await assert.rejects(loadStripeModule(notFound("Cannot find module '/srv/functions/stripe-helpers.js' imported from /srv/functions/billing-stripe.js")), /helpers/);
+  assert.equal(await loadStripeModule(async () => ({ isStripeConfigured: () => false })), null);
+  const configured = { isStripeConfigured: async () => true };
+  assert.equal(await loadStripeModule(async () => configured), configured);
+});

@@ -21,7 +21,9 @@ intake form and the Bit chat write directly to Firestore from the browser; there
 API server to run. Access is enforced by `firestore.rules` and gated by App Check, and
 a Cloud Function syncs each new lead into GoHighLevel. Current service pricing is served
 only to authenticated accounts, and Resend handles branded account, lead, feedback,
-preference-managed broadcast and admin operational email.
+preference-managed broadcast, admin operational and client invoice email. Monthly client
+invoicing (drafts on the 1st, PDF, email, payment status) lives in **Admin → Billing**;
+see [BILLING_INVOICING.md](BILLING_INVOICING.md).
 
 See **[FIREBASE_SETUP.md](FIREBASE_SETUP.md)** for the data model, the security model,
 and the remaining setup steps.

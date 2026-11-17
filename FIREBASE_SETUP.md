@@ -778,6 +778,13 @@ npm run deploy:functions
 npm run deploy:hosting
 ```
 
+## Monthly client invoicing
+
+Admin → Billing, the `billingClients` and `invoices` collections, the
+`billingMonthlyInvoices` schedule, invoice PDFs in Cloud Storage and the WordPress
+lead-count plugin are documented in [BILLING_INVOICING.md](BILLING_INVOICING.md),
+including the secrets (`RESEND_API_KEY`, `WP_LEADS_SECRET`) and the pre-deploy checklist.
+
 ## Commands
 
 ```bash
