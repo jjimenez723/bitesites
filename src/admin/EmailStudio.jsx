@@ -463,7 +463,7 @@ function LeadEmailComposer({ initialLeadId, initialQuestionnaire = false, onOpen
         </main>
 
         <aside className="admin-card lead-email-preview">
-          <div className="lead-email-preview-head"><span className="email-eyebrow">Recipient view</span><h3>Ready to review</h3><p>This is the content that will be sent through Postmark.</p></div>
+          <div className="lead-email-preview-head"><span className="email-eyebrow">Recipient view</span><h3>Ready to review</h3><p>This is the content that will be sent through Resend.</p></div>
           <div className="lead-email-paper">
             <img src="https://bitesites.org/apple-touch-icon.png" width="60" height="60" alt="BiteSites" />
             <div className="lead-email-paper-content">
@@ -628,9 +628,9 @@ function TemplateLibrary({ onOpenComposer }) {
     try {
       const result = await sendTemplateEmail({ templateId: draft.id, recipients: recipientList, variables });
       const skipped = result.skipped ? ` ${result.skipped} opted-out or suppressed recipient${result.skipped === 1 ? ' was' : 's were'} skipped.` : '';
-      setNotice({ kind: 'success', text: `${result.sent} email${result.sent === 1 ? '' : 's'} accepted by Postmark.${skipped}` });
+      setNotice({ kind: 'success', text: `${result.sent} email${result.sent === 1 ? '' : 's'} accepted by Resend.${skipped}` });
     } catch (error) {
-      setNotice({ kind: 'error', text: error?.message || 'Postmark could not send this email.' });
+      setNotice({ kind: 'error', text: error?.message || 'Resend could not send this email.' });
     } finally { setBusy(''); }
   };
 
@@ -755,7 +755,7 @@ function TemplateLibrary({ onOpenComposer }) {
               <div className="card-head"><div><span className="email-eyebrow">Delivery</span><h3>Send this email</h3><p>{draft.category === 'broadcast' ? 'A selected group will receive this announcement individually through the broadcast stream.' : 'Each selected recipient will receive their own account or action email through the transactional stream.'}</p></div></div>
               <label><span>Recipients <small>{recipientList.length}/50</small></span><textarea rows="4" value={recipients} onChange={event => setRecipients(event.target.value)} placeholder="alex@example.com, sam@example.com" /></label>
               <div className="email-recipient-actions"><button className="btn-admin" type="button" onClick={() => setRecipients(users.map(user => user.email).filter(Boolean).slice(0, 50).join(', '))}>Use all account emails ({Math.min(users.length, 50)})</button><button className="btn-admin" type="button" onClick={() => setRecipients('')}>Clear</button></div>
-              <button className="btn-admin primary email-send-button" type="button" disabled={Boolean(busy) || !draft.id || recipientList.length < 1 || recipientList.length > 50} onClick={send}>{busy === 'send' ? 'Sending through Postmark…' : `Send ${recipientList.length || ''} email${recipientList.length === 1 ? '' : 's'}`}</button>
+              <button className="btn-admin primary email-send-button" type="button" disabled={Boolean(busy) || !draft.id || recipientList.length < 1 || recipientList.length > 50} onClick={send}>{busy === 'send' ? 'Sending through Resend…' : `Send ${recipientList.length || ''} email${recipientList.length === 1 ? '' : 's'}`}</button>
               {!draft.id && <p className="admin-note">Save this new template before sending it.</p>}
             </section>
           </main>}

@@ -172,7 +172,7 @@ email/phone-shaped strings anywhere in the payload.
    should set allocations on `financeAccounts/fine-line-group`.
 4. **Email** — Fine Line nurture sequences belong in GHL workflows, gated on a
    Fine Line sending subdomain (SPF/DKIM/DMARC; needs their DNS). **Never**
-   send cold outreach through the Postmark stack (transactional only — it
+   send cold outreach through the Resend stack (transactional only — it
    would torch BiteSites deliverability).
 5. **Referral-partner outreach** — the repo's `/admin/outbound` system (built,
    inert) is the intended tool for a human-dialed B2B campaign. Prereqs per

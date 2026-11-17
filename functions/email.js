@@ -1,5 +1,8 @@
 // Server-only email primitives shared by the auth triggers and admin console.
 // Templates live in Firestore so BiteSites staff can edit them without a deploy.
+// Delivery goes through Resend (https://resend.com) over its REST API.
+
+import { createHmac, timingSafeEqual } from 'node:crypto';
 
 export const EMAIL_BRAND = {
   name: 'BiteSites',
@@ -357,31 +360,93 @@ export async function seedEmailTemplates(db) {
   return results;
 }
 
-export async function sendPostmark(token, messages) {
-  if (!token || token.length < 10) throw new Error('Postmark is not configured. Set POSTMARK_SERVER_TOKEN.');
+// ------------------------------------------------------------------ Resend
+
+export const RESEND_API_URL = 'https://api.resend.com';
+// Resend's batch endpoint accepts at most 100 messages and no attachments.
+export const RESEND_BATCH_LIMIT = 100;
+
+// Resend tag names and values may only contain ASCII letters, numbers,
+// underscores and dashes (max 256 chars). Anything else is replaced so a tag
+// can never be the reason a send is rejected.
+export const resendTagValue = value => String(value ?? '')
+  .replace(/[^A-Za-z0-9_-]/g, '_')
+  .slice(0, 256) || 'none';
+
+const resendError = (status, result) => {
+  const detail = result?.message || result?.error || result?.name || 'send failed';
+  const error = new Error(`Resend ${status}: ${detail}`);
+  error.status = status;
+  error.code = result?.name || '';
+  return error;
+};
+
+/**
+ * Sends one message (POST /emails) or several (POST /emails/batch).
+ *
+ * Returns `{ id }` for a single message and `[{ id }, ...]` for a batch, in
+ * the same order as the input. `idempotencyKey` is forwarded as Resend's
+ * `Idempotency-Key` header so a retried request cannot deliver twice.
+ */
+export async function sendResend(apiKey, messages, { idempotencyKey = '', fetchImpl = fetch } = {}) {
+  if (!apiKey || apiKey.length < 10 || apiKey === 'unset') {
+    throw new Error('Resend is not configured. Set RESEND_API_KEY.');
+  }
   const batch = Array.isArray(messages) ? messages : [messages];
-  const endpoint = batch.length === 1 ? 'https://api.postmarkapp.com/email' : 'https://api.postmarkapp.com/email/batch';
-  const response = await fetch(endpoint, {
+  if (!batch.length) return Array.isArray(messages) ? [] : null;
+  if (batch.length > RESEND_BATCH_LIMIT) throw new Error(`Resend accepts at most ${RESEND_BATCH_LIMIT} messages per batch.`);
+  const single = !Array.isArray(messages) || batch.length === 1;
+  if (!single && batch.some(message => message.attachments?.length)) {
+    throw new Error('Resend batch sends cannot include attachments; send those messages one at a time.');
+  }
+  const headers = { Accept: 'application/json', 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` };
+  if (idempotencyKey) headers['Idempotency-Key'] = String(idempotencyKey).slice(0, 256);
+  const response = await fetchImpl(`${RESEND_API_URL}/emails${single ? '' : '/batch'}`, {
     method: 'POST',
-    headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-Postmark-Server-Token': token },
-    body: JSON.stringify(batch.length === 1 ? batch[0] : batch)
+    headers,
+    body: JSON.stringify(single ? batch[0] : batch)
   });
   const result = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(`Postmark ${response.status}: ${result.Message || 'send failed'}`);
-  const failures = (Array.isArray(result) ? result : [result]).filter(item => item.ErrorCode);
-  if (failures.length) throw new Error(`Postmark rejected ${failures.length} message(s): ${failures[0].Message}`);
-  return result;
+  if (!response.ok) throw resendError(response.status, result);
+  if (single) {
+    const sent = { id: result.id || result.data?.id || '' };
+    return Array.isArray(messages) ? [sent] : sent;
+  }
+  const data = Array.isArray(result.data) ? result.data : [];
+  if (Array.isArray(result.errors) && result.errors.length) {
+    throw new Error(`Resend rejected ${result.errors.length} message(s): ${result.errors[0]?.message || 'invalid message'}`);
+  }
+  return data.map(item => ({ id: item?.id || '' }));
 }
 
-export function buildMessage({ from, to, template, variables, stream = 'outbound', tag }) {
+/** Message ids from a `sendResend` result, whichever shape it returned. */
+export const resendIds = result => (Array.isArray(result) ? result : [result])
+  .map(item => item?.id || '')
+  .filter(Boolean);
+
+/**
+ * Renders a stored template into a Resend message.
+ *
+ * `stream` is kept for call-site compatibility: Resend has no message streams,
+ * so the category travels as a tag and broadcast mail is distinguished by its
+ * List-Unsubscribe headers instead.
+ */
+export function buildMessage({ from, to, template, variables, stream = 'outbound', tag, replyTo }) {
   const rendered = renderTemplate(template, {
     brand_url: 'https://bitesites.org',
     logo_url: EMAIL_BRAND.logoUrl,
     ...variables
   });
+  const tags = [{ name: 'stream', value: resendTagValue(stream) }];
+  if (tag) tags.push({ name: 'category', value: resendTagValue(tag) });
   return {
-    From: from, To: to, Subject: rendered.subject, HtmlBody: rendered.html, TextBody: rendered.text,
-    MessageStream: stream, Tag: tag, TrackOpens: true, TrackLinks: 'HtmlOnly'
+    from,
+    to: Array.isArray(to) ? to : [to],
+    subject: rendered.subject,
+    html: rendered.html,
+    text: rendered.text,
+    tags,
+    ...(replyTo ? { reply_to: replyTo } : {})
   };
 }
 
@@ -390,22 +455,89 @@ export function buildMessage({ from, to, template, variables, stream = 'outbound
 export function addBroadcastUnsubscribe(message, preferenceUrl, oneClickUrl = preferenceUrl) {
   if (!preferenceUrl) return message;
   const footer = `<p style="margin:24px 0 0;color:#777777;font-size:12px;line-height:19px;">Don’t want BiteSites announcements? <a href="${escapeHtml(preferenceUrl)}" style="color:#555555;">Manage email preferences</a>.</p>`;
-  const html = message.HtmlBody.includes(preferenceUrl)
-    ? message.HtmlBody
-    : message.HtmlBody.includes('</body>')
-      ? message.HtmlBody.replace('</body>', `${footer}</body>`)
-      : `${message.HtmlBody}${footer}`;
-  const text = message.TextBody.includes(preferenceUrl)
-    ? message.TextBody
-    : `${message.TextBody}\n\nManage email preferences: ${preferenceUrl}`;
+  const html = message.html.includes(preferenceUrl)
+    ? message.html
+    : message.html.includes('</body>')
+      ? message.html.replace('</body>', `${footer}</body>`)
+      : `${message.html}${footer}`;
+  const text = message.text.includes(preferenceUrl)
+    ? message.text
+    : `${message.text}\n\nManage email preferences: ${preferenceUrl}`;
   return {
     ...message,
-    HtmlBody: html,
-    TextBody: text,
-    Headers: [
-      ...(Array.isArray(message.Headers) ? message.Headers : []),
-      { Name: 'List-Unsubscribe', Value: `<${oneClickUrl}>` },
-      { Name: 'List-Unsubscribe-Post', Value: 'List-Unsubscribe=One-Click' }
-    ]
+    html,
+    text,
+    headers: {
+      ...(message.headers && typeof message.headers === 'object' ? message.headers : {}),
+      'List-Unsubscribe': `<${oneClickUrl}>`,
+      'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click'
+    }
+  };
+}
+
+// ---------------------------------------------------------- Resend webhooks
+
+const WEBHOOK_TOLERANCE_SECONDS = 5 * 60;
+
+/**
+ * Verifies a Resend webhook, which Resend signs with Svix.
+ *
+ * The signed content is `${svix-id}.${svix-timestamp}.${raw body}`, HMAC-SHA256
+ * keyed with the base64 part of the `whsec_…` secret. `svix-signature` holds one
+ * or more space-separated `v1,<base64>` signatures (several during a secret
+ * rotation). Returns the parsed JSON payload, or throws.
+ */
+export function verifyResendWebhook({ payload, headers, secret, nowSeconds = Math.floor(Date.now() / 1000) }) {
+  const header = name => {
+    if (typeof headers?.get === 'function') return headers.get(name) || '';
+    return headers?.[name] || headers?.[name.toLowerCase()] || '';
+  };
+  const id = String(header('svix-id'));
+  const timestamp = String(header('svix-timestamp'));
+  const signatures = String(header('svix-signature'));
+  if (!secret || !String(secret).startsWith('whsec_')) throw new Error('webhook-secret-not-configured');
+  if (!id || !timestamp || !signatures) throw new Error('missing-signature-headers');
+  const sentAt = Number(timestamp);
+  if (!Number.isFinite(sentAt) || Math.abs(nowSeconds - sentAt) > WEBHOOK_TOLERANCE_SECONDS) {
+    throw new Error('stale-or-invalid-timestamp');
+  }
+  const body = Buffer.isBuffer(payload) ? payload.toString('utf8') : String(payload ?? '');
+  const key = Buffer.from(String(secret).slice('whsec_'.length), 'base64');
+  const expected = createHmac('sha256', key).update(`${id}.${timestamp}.${body}`).digest();
+  const valid = signatures.split(' ').some(entry => {
+    const [version, signature] = entry.split(',');
+    if (version !== 'v1' || !signature) return false;
+    const provided = Buffer.from(signature, 'base64');
+    return provided.length === expected.length && timingSafeEqual(provided, expected);
+  });
+  if (!valid) throw new Error('invalid-signature');
+  return JSON.parse(body);
+}
+
+/**
+ * Maps one Resend webhook event onto the suppression decisions BiteSites keeps
+ * in `emailPreferences`. Pure, so the policy is testable without Firestore.
+ */
+export function resendEventPolicy(event) {
+  const type = String(event?.type || '');
+  const data = event?.data && typeof event.data === 'object' ? event.data : {};
+  const recipients = (Array.isArray(data.to) ? data.to : [data.to]).filter(Boolean).map(value => String(value).trim().toLowerCase());
+  const bounceType = String(data.bounce?.type || '').toLowerCase();
+  const update = {};
+  if (type === 'email.complained') {
+    update.broadcasts = false;
+    update.transactionalBlocked = true;
+  }
+  // A permanent (hard) bounce means the mailbox does not exist; keep sending to
+  // it and the sending domain's reputation suffers. Transient bounces retry.
+  if (type === 'email.bounced' && bounceType === 'permanent') update.transactionalBlocked = true;
+  return {
+    type,
+    status: type.startsWith('email.') ? type.slice('email.'.length) : type,
+    emailId: String(data.email_id || ''),
+    recipients,
+    occurredAt: String(event?.created_at || data.created_at || ''),
+    description: String(data.bounce?.message || data.bounce?.subType || data.failed?.reason || ''),
+    preferenceUpdate: Object.keys(update).length ? update : null
   };
 }

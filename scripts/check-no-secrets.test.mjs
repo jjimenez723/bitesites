@@ -184,3 +184,14 @@ test('a finding never carries the value that produced it', () => {
   assert.equal(JSON.stringify(findings).includes(value), false,
     'the finding must not carry the matched value into logs');
 });
+
+test('Resend API keys and Svix webhook secrets are detected; fillers are not', () => {
+  const { randomBytes } = process.getBuiltinModule('node:crypto');
+  const alnum = bytes => randomBytes(bytes).toString('base64').replace(/[^A-Za-z0-9]/g, '').slice(0, 24);
+  const resendKey = ['re', alnum(12).slice(0, 8), alnum(32)].join('_');
+  const svixSecret = ['whsec', randomBytes(24).toString('base64')].join('_');
+  assert.deepEqual(secretMatches(`const key = '${resendKey}';`), ['Resend API key']);
+  assert.deepEqual(secretMatches(`secret: ${svixSecret}`), ['Svix webhook secret']);
+  assert.deepEqual(secretMatches(['re', 'xxxxxxxx', 'x'.repeat(20)].join('_')), []);
+  assert.deepEqual(secretMatches(`RESEND_API_KEY=${'replace-me-'.repeat(2)}`), []);
+});

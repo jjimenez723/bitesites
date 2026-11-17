@@ -877,6 +877,50 @@
 .finance-form-preview small { grid-column: 1/-1; color: var(--ink-3); font-size: 9.5px; }
 .finance-form-actions { display: flex; gap: 8px; padding-top: 15px; border-top: 1px solid var(--line); }
 
+/* ------------------------------------------------------------ billing */
+/* Admin → Billing reuses the finance form, stat and table styles; these rules
+   cover only what invoices add: the line editor, the PDF preview and status. */
+
+.billing-notice {
+  padding: 10px 14px; border: 1px solid rgba(12,163,12,.35); border-radius: 10px;
+  background: rgba(12,163,12,.08); color: var(--ink); font-size: 12.5px;
+}
+.billing-table td { vertical-align: top; }
+.billing-detail { display: flex; flex-direction: column; gap: 17px; }
+.billing-detail-summary {
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px;
+  border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--line);
+}
+.billing-detail-summary > div { display: flex; flex-direction: column; gap: 5px; padding: 11px 12px; background: var(--surface-1); min-width: 0; }
+.billing-detail-summary span { color: var(--ink-3); font-size: 10.5px; font-weight: 650; }
+.billing-detail-summary strong { font-family: var(--font-display, "Natalie"), sans-serif; font-size: 19px; font-weight: 400; }
+.billing-detail-summary b { font-size: 12.5px; font-weight: 600; }
+.billing-lines { display: flex; flex-direction: column; gap: 7px; }
+.billing-line {
+  display: grid; grid-template-columns: minmax(0, 1fr) 58px 104px 78px 28px; align-items: center; gap: 7px;
+}
+.billing-line > input, .billing-line .finance-input-affix input {
+  box-sizing: border-box; width: 100%; min-height: 36px; border: 1px solid var(--line);
+  border-radius: 9px; padding: 8px 9px; color: var(--ink); background: var(--surface-2);
+  outline: 0; font: inherit; font-size: 11.5px; color-scheme: dark;
+}
+.billing-line > input:focus { border-color: var(--brand-violet); box-shadow: 0 0 0 3px rgba(124,58,237,.12); }
+.billing-line > input:disabled, .billing-line input:disabled { color: var(--ink-2); opacity: .8; }
+.billing-line .num { text-align: right; font-size: 12px; }
+.billing-line-head span { color: var(--ink-3); font-size: 10.5px; font-weight: 650; }
+.billing-client-line { grid-template-columns: minmax(150px, 1fr) minmax(100px, .5fr) 28px; }
+.billing-preview { display: flex; flex-direction: column; gap: 9px; }
+.billing-preview iframe {
+  width: 100%; height: 640px; border: 1px solid var(--line); border-radius: 12px; background: #fff;
+}
+.billing-preview .btn-admin { align-self: flex-start; text-decoration: none; }
+.billing-actions { flex-wrap: wrap; }
+@media (max-width: 640px) {
+  .billing-detail-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .billing-line { grid-template-columns: minmax(0, 1fr) 52px 92px 28px; }
+  .billing-line .num { display: none; }
+}
+
 /* ------------------------------------------------------------ email studio */
 
 .lead-email-page { gap: 16px; }

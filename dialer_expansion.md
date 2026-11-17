@@ -144,7 +144,7 @@ The current application uses:
 * Firebase Hosting.
 * Firebase App Check.
 * GoHighLevel/LeadConnector.
-* Postmark.
+* Resend (transactional and broadcast email; replaced Postmark in November 2026).
 
 Important existing files include:
 

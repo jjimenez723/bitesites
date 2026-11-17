@@ -832,6 +832,22 @@ service cloud.firestore {
       }
     }
 
+    // ------------------------------------------------------------ billing
+    // Monthly client invoicing (BILLING_INVOICING.md). Admins can read; every
+    // write goes through the billing Cloud Functions, which enforce numbering,
+    // status transitions and amount arithmetic. `billingClients.autopay` is
+    // written only by the server-side Stripe integration.
+
+    match /billingClients/{clientId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    match /invoices/{invoiceId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
     // Anything not matched above is denied.
     match /{document=**} {
       allow read, write: if false;

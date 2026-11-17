@@ -26,12 +26,17 @@ const SECRET_ENV_NAMES = Object.freeze([
   'ELEVENLABS_API_KEY',
   'OPENAI_WEBHOOK_SECRET',
   'OUTBOUND_WEBHOOK_SECRET',
+  // Postmark was retired for Resend; its names stay scanned in case an old
+  // .env is pasted into a tracked file.
   'POSTMARK_SERVER_TOKEN',
   'POSTMARK_WEBHOOK_SECRET',
+  'RESEND_API_KEY',
+  'RESEND_WEBHOOK_SECRET',
   'TWILIO_ACCOUNT_SID',
   'TWILIO_AUTH_TOKEN',
   'TWILIO_TWIML_APP_SID',
-  'VOICE_WEBHOOK_SECRET'
+  'VOICE_WEBHOOK_SECRET',
+  'WP_LEADS_SECRET'
 ]);
 
 // Anchored to a whole line so that `--set-secrets OPENAI_API_KEY=OPENAI_API_KEY:latest`
@@ -89,6 +94,13 @@ const SECRET_PATTERNS = Object.freeze([
   ['Slack token', /\bxox[baprs]-[A-Za-z0-9-]{20,}\b/],
   ['AWS access key', /\bAKIA[0-9A-Z]{16}\b/],
   ['Stripe live secret', /\bsk_live_[A-Za-z0-9]{20,}\b/],
+
+  // Resend API keys are `re_` + an id + `_` + the secret. Svix (Resend's
+  // webhook signer) secrets are `whsec_` + base64. Tests generate both at run
+  // time, so a committed literal is always a leak; the entropy filter still
+  // lets obvious fillers like `re_xxxxxxxx_xxxxxxxxxxxxxxxx` through.
+  ['Resend API key', /\bre_[A-Za-z0-9]{6,}_[A-Za-z0-9]{16,}\b/, { highEntropy: true }],
+  ['Svix webhook secret', /\bwhsec_[A-Za-z0-9+/]{24,}={0,2}/, { highEntropy: true }],
 
   // Google API key — LEAD_SOURCE_API_KEY (Places) and anything else keyed the
   // same way. `src/` is exempt because the Firebase web SDK config and the

@@ -30,8 +30,11 @@ import {
   buildMessage,
   getEmailTemplate,
   normalizeEmailActions,
+  resendEventPolicy,
+  resendIds,
   seedEmailTemplates,
-  sendPostmark
+  sendResend,
+  verifyResendWebhook
 } from './email.js';
 import {
   inboundInquiryEmailLifecycle,
@@ -49,8 +52,8 @@ setGlobalOptions({ region: 'us-central1', maxInstances: 10 });
 const GHL_WEBHOOK_URL = defineSecret('GHL_WEBHOOK_URL');
 const VOICE_WEBHOOK_SECRET = defineSecret('VOICE_WEBHOOK_SECRET');
 const GHL_API_TOKEN = defineSecret('GHL_API_TOKEN');
-const POSTMARK_SERVER_TOKEN = defineSecret('POSTMARK_SERVER_TOKEN');
-const POSTMARK_WEBHOOK_SECRET = defineSecret('POSTMARK_WEBHOOK_SECRET');
+const RESEND_API_KEY = defineSecret('RESEND_API_KEY');
+const RESEND_WEBHOOK_SECRET = defineSecret('RESEND_WEBHOOK_SECRET');
 const LEAD_LIFECYCLE_WEBHOOK_SECRET = defineSecret('LEAD_LIFECYCLE_WEBHOOK_SECRET');
 const SEARCH_CONSOLE_SITE_URL = defineString('SEARCH_CONSOLE_SITE_URL', { default: 'sc-domain:bitesites.org' });
 
@@ -298,7 +301,7 @@ async function postJson(url, body, headers = {}) {
 export const syncLeadToGoHighLevel = onDocumentCreated(
   {
     document: 'leads/{leadId}',
-    secrets: [GHL_WEBHOOK_URL, POSTMARK_SERVER_TOKEN]
+    secrets: [GHL_WEBHOOK_URL, RESEND_API_KEY]
   },
   async event => {
     const snapshot = event.data;
@@ -1487,11 +1490,12 @@ export const importVoiceHistory = onRequest(
 // getServicePricing after Firebase has verified their ID token.
 
 const emailEnvironment = () => ({
-  from: process.env.POSTMARK_FROM_EMAIL || 'BiteSites <jensy@bitesites.org>',
+  from: process.env.RESEND_FROM_EMAIL || 'BiteSites <jensy@bitesites.org>',
   admin: process.env.ADMIN_NOTIFICATION_EMAIL || 'jensy@bitesites.org',
   appUrl: (process.env.APP_URL || 'https://bitesites.org').replace(/\/$/, ''),
-  transactionalStream: process.env.POSTMARK_MESSAGE_STREAM || 'outbound',
-  broadcastStream: process.env.POSTMARK_BROADCAST_STREAM || 'broadcast'
+  // Resend has no message streams; these become a `stream` tag on each send.
+  transactionalStream: 'transactional',
+  broadcastStream: 'broadcast'
 });
 
 const firstName = user => {
@@ -1567,13 +1571,13 @@ async function sendLifecycleEmail({ db, templateId, to, variables, tag, kind = t
   const env = emailEnvironment();
   const template = await getEmailTemplate(db, templateId);
   try {
-    const result = await sendPostmark(POSTMARK_SERVER_TOKEN.value(), buildMessage({
+    const result = await sendResend(RESEND_API_KEY.value(), buildMessage({
       from: env.from, to: address, template, variables,
       stream: env.transactionalStream, tag
     }));
     await recordDelivery(db, {
       templateId, kind, recipientCount: 1, recipientKey: emailKey(address),
-      status: 'sent', postmark: [result.MessageID].filter(Boolean)
+      status: 'sent', provider: 'resend', providerIds: resendIds(result)
     });
     return { status: 'sent', result };
   } catch (error) {
@@ -1609,7 +1613,7 @@ async function createOperationalAlert(db, { key, title, message, component, refe
   if ((await emailPreference(db, env.admin)).transactionalBlocked) return;
   const template = await getEmailTemplate(db, 'operational_alert');
   try {
-    const result = await sendPostmark(POSTMARK_SERVER_TOKEN.value(), buildMessage({
+    const result = await sendResend(RESEND_API_KEY.value(), buildMessage({
       from: env.from, to: env.admin, template,
       variables: {
         alert_title: title, alert_message: message, component, reference: reference || '—',
@@ -1619,7 +1623,7 @@ async function createOperationalAlert(db, { key, title, message, component, refe
     }));
     await recordDelivery(db, {
       templateId: 'operational_alert', kind: 'operational-alert', recipientCount: 1,
-      status: 'sent', postmark: [result.MessageID].filter(Boolean)
+      status: 'sent', provider: 'resend', providerIds: resendIds(result)
     });
   } catch (error) {
     console.error('[email] operational alert could not be delivered:', error.message);
@@ -1682,7 +1686,7 @@ async function requireAdmin(request) {
 // One durable lead event owns both sides of the handoff: the visitor gets a
 // receipt and the team gets a native alert even if the CRM workflow is missing.
 export const sendLeadLifecycleEmails = onDocumentCreated(
-  { document: 'leads/{leadId}', secrets: [POSTMARK_SERVER_TOKEN], maxInstances: 10 },
+  { document: 'leads/{leadId}', secrets: [RESEND_API_KEY], maxInstances: 10 },
   async event => {
     const lead = event.data?.data();
     if (!lead) return;
@@ -1781,7 +1785,7 @@ export const sendLeadLifecycleEmails = onDocumentCreated(
       await createOperationalAlert(db, {
         key: `lead-email:${leadId}`, title: 'Lead email delivery failed',
         message: failed[0].reason?.message || 'One or more lead lifecycle emails failed.',
-        component: 'Postmark', reference: leadId, notify: false
+        component: 'Resend', reference: leadId, notify: false
       });
     }
 
@@ -1807,7 +1811,7 @@ export const sendLeadLifecycleEmails = onDocumentCreated(
 // bookings alike produce an email that states the real day, time, and
 // reference instead of the generic "schedule a consultation" receipt.
 export const sendMeetingBookedEmails = onDocumentWritten(
-  { document: 'appointments/{appointmentId}', secrets: [POSTMARK_SERVER_TOKEN], maxInstances: 10 },
+  { document: 'appointments/{appointmentId}', secrets: [RESEND_API_KEY], maxInstances: 10 },
   async event => {
     const after = event.data?.after?.data();
     if (!after || after.status !== 'booked') return;
@@ -1870,7 +1874,7 @@ export const sendMeetingBookedEmails = onDocumentWritten(
       await createOperationalAlert(db, {
         key: `meeting-email:${event.params.appointmentId}`,
         title: 'Meeting confirmation email failed',
-        message: error.message, component: 'Postmark',
+        message: error.message, component: 'Resend',
         reference: event.params.appointmentId, notify: false
       });
     }
@@ -1889,7 +1893,7 @@ export const getServicePricing = onCall(
 // sign-ups. Customer confirmation is sent through Firebase Auth at sign-up;
 // this trigger is only for the internal new-account notification.
 export const sendAccountCreatedEmails = onDocumentCreated(
-  { document: 'users/{uid}', secrets: [POSTMARK_SERVER_TOKEN], maxInstances: 10 },
+  { document: 'users/{uid}', secrets: [RESEND_API_KEY], maxInstances: 10 },
   async event => {
     const profile = event.data?.data();
     if (!profile?.email) return;
@@ -1912,7 +1916,7 @@ export const sendAccountCreatedEmails = onDocumentCreated(
       console.error('[email] account-created send failed:', error.message);
       await createOperationalAlert(db, {
         key: `new-account-email:${event.params.uid}`, title: 'New-account notice failed',
-        message: error.message, component: 'Postmark', reference: event.params.uid, notify: false
+        message: error.message, component: 'Resend', reference: event.params.uid, notify: false
       });
     }
   }
@@ -1922,7 +1926,7 @@ export const sendAccountCreatedEmails = onDocumentCreated(
 // an account. App Check plus the per-address cooldown prevents it becoming a
 // free mail relay or an inbox flooding endpoint.
 export const requestPasswordReset = onCall(
-  { enforceAppCheck: true, secrets: [POSTMARK_SERVER_TOKEN], maxInstances: 10 },
+  { enforceAppCheck: true, secrets: [RESEND_API_KEY], maxInstances: 10 },
   async request => {
     const email = str(request.data?.email, 200).toLowerCase();
     const generic = { ok: true, message: 'If that address has an account, a reset link is on its way.' };
@@ -1957,7 +1961,7 @@ export const requestPasswordReset = onCall(
     const resetUrl = await auth.generatePasswordResetLink(email, { url: `${env.appUrl}/#pricing` });
     const template = await getEmailTemplate(db, 'password_reset');
     try {
-      const result = await sendPostmark(POSTMARK_SERVER_TOKEN.value(), buildMessage({
+      const result = await sendResend(RESEND_API_KEY.value(), buildMessage({
         from: env.from,
         to: email,
         template,
@@ -1967,7 +1971,7 @@ export const requestPasswordReset = onCall(
       }));
       await recordDelivery(db, {
         templateId: 'password_reset', kind: 'password-reset', recipientCount: 1,
-        uid: user.uid, status: 'sent', postmark: [result.MessageID].filter(Boolean)
+        uid: user.uid, status: 'sent', provider: 'resend', providerIds: resendIds(result)
       });
     } catch (error) {
       console.error('[email] password reset send failed:', error.message);
@@ -1982,7 +1986,7 @@ export const requestPasswordReset = onCall(
 );
 
 export const resendAccountConfirmation = onCall(
-  { enforceAppCheck: true, secrets: [POSTMARK_SERVER_TOKEN], maxInstances: 10 },
+  { enforceAppCheck: true, secrets: [RESEND_API_KEY], maxInstances: 10 },
   async request => {
     if (!request.auth?.uid) throw new HttpsError('unauthenticated', 'Sign in first.');
     const db = getFirestore();
@@ -1997,14 +2001,14 @@ export const resendAccountConfirmation = onCall(
       const env = emailEnvironment();
       const verifyUrl = await auth.generateEmailVerificationLink(user.email, { url: `${env.appUrl}/#pricing` });
       const template = await getEmailTemplate(db, 'welcome');
-      const result = await sendPostmark(POSTMARK_SERVER_TOKEN.value(), buildMessage({
+      const result = await sendResend(RESEND_API_KEY.value(), buildMessage({
         from: env.from, to: user.email, template,
         variables: { first_name: firstName(user), verify_url: verifyUrl, pricing_url: `${env.appUrl}/#pricing` },
         stream: env.transactionalStream, tag: 'account-confirmation'
       }));
       await recordDelivery(db, {
         templateId: 'welcome', kind: 'account-confirmation', recipientCount: 1,
-        uid: user.uid, status: 'sent', postmark: [result.MessageID].filter(Boolean)
+        uid: user.uid, status: 'sent', provider: 'resend', providerIds: resendIds(result)
       });
       return { ok: true, alreadyVerified: false };
     } catch (error) {
@@ -2074,7 +2078,7 @@ export const deleteEmailTemplate = onCall(
 );
 
 export const sendAdminEmail = onCall(
-  { enforceAppCheck: true, secrets: [POSTMARK_SERVER_TOKEN], timeoutSeconds: 60, maxInstances: 5 },
+  { enforceAppCheck: true, secrets: [RESEND_API_KEY], timeoutSeconds: 60, maxInstances: 5 },
   async request => {
     const db = await requireAdmin(request);
     const templateId = str(request.data?.templateId, 80);
@@ -2115,11 +2119,11 @@ export const sendAdminEmail = onCall(
       return { ok: true, sent: 0, skipped, message: 'Every selected recipient is suppressed or opted out.' };
     }
     try {
-      const result = await sendPostmark(POSTMARK_SERVER_TOKEN.value(), messages);
+      const result = await sendResend(RESEND_API_KEY.value(), messages);
       await recordDelivery(db, {
         templateId, kind: 'admin-send', recipientCount: messages.length, skipped,
         sentBy: request.auth.uid, status: 'sent',
-        postmark: (Array.isArray(result) ? result : [result]).map(item => item.MessageID || '').filter(Boolean)
+        provider: 'resend', providerIds: resendIds(result)
       });
       return { ok: true, sent: messages.length, skipped };
     } catch (error) {
@@ -2133,7 +2137,7 @@ export const sendAdminEmail = onCall(
 );
 
 export const sendLeadEmail = onCall(
-  { enforceAppCheck: true, secrets: [POSTMARK_SERVER_TOKEN], timeoutSeconds: 30, maxInstances: 5 },
+  { enforceAppCheck: true, secrets: [RESEND_API_KEY], timeoutSeconds: 30, maxInstances: 5 },
   async request => {
     const db = await requireAdmin(request);
     const email = str(request.data?.email, 200).toLowerCase();
@@ -2205,7 +2209,7 @@ export const sendLeadEmail = onCall(
     });
     const env = emailEnvironment();
     try {
-      const result = await sendPostmark(POSTMARK_SERVER_TOKEN.value(), buildMessage({
+      const result = await sendResend(RESEND_API_KEY.value(), buildMessage({
         from: env.from,
         to: email,
         template,
@@ -2227,7 +2231,7 @@ export const sendLeadEmail = onCall(
       await recordDelivery(db, {
         templateId: 'lead-follow-up', kind: 'lead-follow-up', recipientCount: 1,
         recipientKey: emailKey(email), leadId: leadId || null, actionType, actions,
-        sentBy: request.auth.uid, status: 'sent', postmark: [result.MessageID].filter(Boolean)
+        sentBy: request.auth.uid, status: 'sent', provider: 'resend', providerIds: resendIds(result)
       });
 
       {
@@ -2310,7 +2314,7 @@ export const sendLeadEmail = onCall(
 );
 
 export const sendQueuedFeedbackEmails = onSchedule(
-  { schedule: 'every 15 minutes', secrets: [POSTMARK_SERVER_TOKEN], timeoutSeconds: 120, maxInstances: 1 },
+  { schedule: 'every 15 minutes', secrets: [RESEND_API_KEY], timeoutSeconds: 120, maxInstances: 1 },
   async () => {
     const db = getFirestore();
     const now = Date.now();
@@ -2337,7 +2341,7 @@ export const sendQueuedFeedbackEmails = onSchedule(
       const feedbackUrl = `${env.appUrl}/feedback?token=${encodeURIComponent(job.token)}`;
       try {
         const template = await getEmailTemplate(db, 'conversation_feedback');
-        const result = await sendPostmark(POSTMARK_SERVER_TOKEN.value(), buildMessage({
+        const result = await sendResend(RESEND_API_KEY.value(), buildMessage({
           from: env.from, to: job.recipient, template,
           variables: {
             first_name: job.firstName || 'there', agent_name: job.agentName || (job.agent === 'byte' ? 'Voice AI agent' : 'Bit'),
@@ -2350,12 +2354,12 @@ export const sendQueuedFeedbackEmails = onSchedule(
         }));
         await jobDoc.ref.set({
           status: 'sent', completedAt: FieldValue.serverTimestamp(),
-          postmarkMessageId: result.MessageID || '', token: FieldValue.delete()
+          resendId: result.id || '', token: FieldValue.delete()
         }, { merge: true });
         await recordDelivery(db, {
           templateId: 'conversation_feedback', kind: 'conversation-feedback', recipientCount: 1,
           recipientKey: emailKey(job.recipient), status: 'sent',
-          postmark: [result.MessageID].filter(Boolean), sourceId: job.sourceId
+          provider: 'resend', providerIds: resendIds(result), sourceId: job.sourceId
         });
       } catch (error) {
         const attempts = (job.attempts || 0) + 1;
@@ -2370,7 +2374,7 @@ export const sendQueuedFeedbackEmails = onSchedule(
         });
         await createOperationalAlert(db, {
           key: `feedback-email:${jobDoc.id}`, title: 'Feedback email delivery failed',
-          message: error.message, component: 'Postmark', reference: jobDoc.id, notify: false
+          message: error.message, component: 'Resend', reference: jobDoc.id, notify: false
         });
       }
     }
@@ -2401,7 +2405,7 @@ export const getConversationFeedback = onCall(
 );
 
 export const submitConversationFeedback = onCall(
-  { enforceAppCheck: true, secrets: [POSTMARK_SERVER_TOKEN], maxInstances: 10 },
+  { enforceAppCheck: true, secrets: [RESEND_API_KEY], maxInstances: 10 },
   async request => {
     const rating = Number(request.data?.rating);
     const comment = str(request.data?.comment, 2000);
@@ -2531,51 +2535,58 @@ export const unsubscribeEmail = onRequest(
   }
 );
 
-export const recordPostmarkEvent = onRequest(
-  { secrets: [POSTMARK_WEBHOOK_SECRET], maxInstances: 10 },
+// Resend delivery webhooks (Svix-signed). Configure the endpoint in Resend as
+// https://bitesites.org/api/resend-events and store its signing secret
+// (whsec_…) as RESEND_WEBHOOK_SECRET. Hard bounces and complaints suppress the
+// address; every event updates emailMessageStatus and, for invoices, the
+// invoice's email.lastEvent.
+export const recordResendEvent = onRequest(
+  { secrets: [RESEND_WEBHOOK_SECRET], maxInstances: 10 },
   async (req, res) => {
     if (req.method !== 'POST') { res.set('Allow', 'POST').status(405).json({ error: 'method-not-allowed' }); return; }
-    const expected = str(POSTMARK_WEBHOOK_SECRET.value(), 200);
-    const authorization = str(req.get('authorization'), 500);
-    let basicPassword = '';
-    if (authorization.startsWith('Basic ')) {
-      try {
-        const decoded = Buffer.from(authorization.slice(6), 'base64').toString('utf8');
-        basicPassword = decoded.slice(decoded.indexOf(':') + 1);
-      } catch { /* malformed credentials are rejected below */ }
+    const secret = str(RESEND_WEBHOOK_SECRET.value(), 500);
+    if (!secret.startsWith('whsec_')) { res.status(503).json({ error: 'not-configured' }); return; }
+    let event;
+    try {
+      event = verifyResendWebhook({
+        payload: req.rawBody || JSON.stringify(req.body || {}),
+        headers: { 'svix-id': req.get('svix-id'), 'svix-timestamp': req.get('svix-timestamp'), 'svix-signature': req.get('svix-signature') },
+        secret
+      });
+    } catch {
+      res.status(401).json({ error: 'unauthorised' });
+      return;
     }
-    const provided = str(req.get('x-webhook-secret'), 200) || str(basicPassword, 200);
-    if (expected.length < 16 || expected === 'unset') { res.status(503).json({ error: 'not-configured' }); return; }
-    if (provided !== expected) { res.status(401).json({ error: 'unauthorised' }); return; }
-    const event = req.body && typeof req.body === 'object' ? req.body : {};
-    const recordType = str(event.RecordType, 80).toLowerCase();
-    const messageId = str(event.MessageID, 200);
-    const recipient = normalizedEmail(event.Recipient || event.Email);
-    const eventId = createHash('sha256').update(JSON.stringify({
-      recordType, messageId, recipient, at: event.DeliveredAt || event.BouncedAt || event.ReceivedAt || event.Date || '',
-      type: event.Type || event.TypeCode || ''
-    })).digest('hex');
+    const policy = resendEventPolicy(event);
+    const svixId = str(req.get('svix-id'), 200);
     const db = getFirestore();
+    const recipient = normalizedEmail(policy.recipients[0] || '');
+    const eventId = createHash('sha256').update(svixId || JSON.stringify(event)).digest('hex');
     await db.doc(`emailDeliveryEvents/${eventId}`).set({
-      recordType, messageId, recipientKey: recipient ? emailKey(recipient) : '',
-      type: str(event.Type || event.TypeCode, 100), description: str(event.Description || event.Details, 1000),
-      inactive: Boolean(event.Inactive), receivedAt: FieldValue.serverTimestamp()
+      provider: 'resend', recordType: policy.status, messageId: policy.emailId,
+      recipientKey: recipient ? emailKey(recipient) : '',
+      type: str(policy.type, 100), description: str(policy.description, 1000),
+      occurredAt: str(policy.occurredAt, 60), receivedAt: FieldValue.serverTimestamp()
     }, { merge: true });
-    if (messageId) {
-      await db.doc(`emailMessageStatus/${messageId.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 300)}`).set({
-        messageId, status: recordType, recipientKey: recipient ? emailKey(recipient) : '',
-        updatedAt: FieldValue.serverTimestamp()
+    if (policy.emailId) {
+      await db.doc(`emailMessageStatus/${policy.emailId.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 300)}`).set({
+        messageId: policy.emailId, provider: 'resend', status: policy.status,
+        recipientKey: recipient ? emailKey(recipient) : '', updatedAt: FieldValue.serverTimestamp()
       }, { merge: true });
+      // Invoices keep their own delivery state so the Billing screen can show it.
+      const invoices = await db.collection('invoices').where('email.resendId', '==', policy.emailId).limit(5).get();
+      await Promise.all(invoices.docs.map(doc => doc.ref.update({
+        'email.lastEvent': policy.status,
+        'email.lastEventAt': FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp()
+      })));
     }
-    if (recipient) {
-      const preferenceUpdate = { email: recipient, updatedAt: FieldValue.serverTimestamp(), source: `postmark-${recordType}` };
-      if (recordType === 'spamcomplaint') preferenceUpdate.broadcasts = false;
-      if (recordType === 'subscriptionchange') {
-        preferenceUpdate.broadcasts = typeof event.SuppressSending === 'boolean' ? !event.SuppressSending : false;
-      }
-      if (recordType === 'spamcomplaint' || (recordType === 'bounce' && event.Inactive)) preferenceUpdate.transactionalBlocked = true;
-      if ('broadcasts' in preferenceUpdate || 'transactionalBlocked' in preferenceUpdate) {
-        await db.doc(`emailPreferences/${emailKey(recipient)}`).set(preferenceUpdate, { merge: true });
+    if (policy.preferenceUpdate) {
+      for (const address of policy.recipients.map(normalizedEmail).filter(value => EMAIL_PATTERN.test(value))) {
+        await db.doc(`emailPreferences/${emailKey(address)}`).set({
+          email: address, ...policy.preferenceUpdate,
+          updatedAt: FieldValue.serverTimestamp(), source: `resend-${policy.status}`
+        }, { merge: true });
       }
     }
     res.status(200).json({ ok: true });
@@ -2583,7 +2594,7 @@ export const recordPostmarkEvent = onRequest(
 );
 
 export const monitorOperations = onSchedule(
-  { schedule: 'every 15 minutes', secrets: [POSTMARK_SERVER_TOKEN], timeoutSeconds: 60, maxInstances: 1 },
+  { schedule: 'every 15 minutes', secrets: [RESEND_API_KEY], timeoutSeconds: 60, maxInstances: 1 },
   async () => {
     const db = getFirestore();
     const health = await db.doc('systemHealth/voice-poll').get();
@@ -2602,9 +2613,9 @@ export const monitorOperations = onSchedule(
     const failures = recent.docs.filter(doc => doc.get('status') === 'failed' && (doc.get('createdAt')?.toMillis?.() || 0) >= cutoff);
     if (failures.length >= 3) {
       await createOperationalAlert(db, {
-        key: 'postmark-repeated-failures', title: 'Repeated Postmark failures',
+        key: 'email-repeated-failures', title: 'Repeated email delivery failures',
         message: `${failures.length} email sends failed during the last hour.`,
-        component: 'Postmark', reference: failures[0].id
+        component: 'Resend', reference: failures[0].id
       });
     }
     for (const collectionName of ['feedbackRequests', 'emailPreferenceTokens']) {
@@ -2729,7 +2740,7 @@ async function callerRole(db, auth) {
 }
 
 export const setUserRole = onCall(
-  { enforceAppCheck: true, secrets: [POSTMARK_SERVER_TOKEN], maxInstances: 5 },
+  { enforceAppCheck: true, secrets: [RESEND_API_KEY], maxInstances: 5 },
   async request => {
     const db = getFirestore();
     const auth = getAuth();
@@ -2791,7 +2802,7 @@ export const setUserRole = onCall(
           tag: 'access-revoked', kind: 'access-revoked'
         }).catch(error => createOperationalAlert(db, {
           key: `access-revoked-email:${uid}`, title: 'Access removal email failed',
-          message: error.message, component: 'Postmark', reference: uid, notify: false
+          message: error.message, component: 'Resend', reference: uid, notify: false
         }));
       }
       console.log(`[roles] ${request.auth.token?.email || request.auth.uid} revoked ${target.email}`);
@@ -2842,7 +2853,7 @@ export const setUserRole = onCall(
         tag: 'access-granted', kind: 'access-granted'
       }).catch(error => createOperationalAlert(db, {
         key: `access-granted-email:${uid}`, title: 'Access approval email failed',
-        message: error.message, component: 'Postmark', reference: uid, notify: false
+        message: error.message, component: 'Resend', reference: uid, notify: false
       }));
     }
     console.log(`[roles] ${request.auth.token?.email || request.auth.uid} granted ${role} to ${target.email}`);

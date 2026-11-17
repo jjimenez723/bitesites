@@ -3,6 +3,9 @@
     "rules": "firestore.rules",
     "indexes": "firestore.indexes.json"
   },
+  "storage": {
+    "rules": "storage.rules"
+  },
   "functions": {
     "source": "functions",
     "ignore": ["node_modules", ".git", "*.local", "*.test.mjs"]
@@ -15,7 +18,7 @@
     "rewrites": [
       { "source": "/api/visit-location", "function": { "functionId": "recordVisitLocation", "region": "us-central1" } },
       { "source": "/api/email-preferences", "function": { "functionId": "unsubscribeEmail", "region": "us-central1" } },
-      { "source": "/api/postmark-events", "function": { "functionId": "recordPostmarkEvent", "region": "us-central1" } },
+      { "source": "/api/resend-events", "function": { "functionId": "recordResendEvent", "region": "us-central1" } },
       { "source": "/api/twilio-compliance-status", "function": { "functionId": "recordTwilioComplianceStatus", "region": "us-central1" } },
       { "source": "/api/lead-lifecycle", "function": { "functionId": "recordLeadLifecycle", "region": "us-central1" } },
       { "source": "/api/hybrid-outbound-events", "function": { "functionId": "recordHybridCallEvent", "region": "us-central1" } },
@@ -58,6 +61,7 @@
   "emulators": {
     "auth": { "port": 9099 },
     "firestore": { "port": 8085 },
+    "storage": { "port": 9199 },
     "hosting": { "port": 5000 },
     "ui": { "enabled": true }
   }

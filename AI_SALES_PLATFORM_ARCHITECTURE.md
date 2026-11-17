@@ -97,7 +97,7 @@ The existing BiteSites application uses:
 - Firebase Cloud Functions v2
 - Firebase Hosting
 - GoHighLevel / LeadConnector
-- Postmark
+- Resend (email; replaced Postmark in November 2026)
 
 Existing reusable outbound concepts remain:
 
