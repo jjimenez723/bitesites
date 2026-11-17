@@ -117,6 +117,26 @@ function fakeStripe() {
     },
     setupIntents: {
       retrieve: async id => { record('setupIntents.retrieve', { id }); return setupIntents.get(id); }
+    },
+    paymentMethodStore: new Map(),
+    paymentMethods: {
+      retrieve: async id => {
+        record('paymentMethods.retrieve', { id });
+        return stripe.paymentMethodStore.get(id) || { id, type: 'us_bank_account' };
+      }
+    },
+    // Mirrors an account that starts with only its default configuration.
+    configurations: [{ id: 'pmc_default', name: 'Default', is_default: true, active: true,
+      card: { display_preference: { preference: 'on' } }, klarna: { display_preference: { preference: 'on' } },
+      us_bank_account: { display_preference: { preference: 'off' } } }],
+    paymentMethodConfigurations: {
+      list: async () => { record('paymentMethodConfigurations.list', {}); return { data: stripe.configurations }; },
+      create: async (params, options) => {
+        record('paymentMethodConfigurations.create', params, options);
+        const config = { id: next('pmc'), active: true, is_default: false, ...params };
+        stripe.configurations.push(config);
+        return config;
+      }
     }
   };
   return stripe;
@@ -224,14 +244,22 @@ test('createPayNowLink creates the customer once, a card + ACH session, and a st
   assert.match(first.url, /^https:\/\/bitesites\.org\/api\/pay\/[A-Za-z0-9_-]{32}$/);
   const [create] = callsOf('checkout.sessions.create');
   assert.equal(create.params.mode, 'payment');
-  assert.deepEqual(create.params.payment_method_types, ['card', 'us_bank_account']);
+  assert.equal(create.params.payment_method_types, undefined, 'Checkout no longer accepts payment_method_types');
+  const bankConfig = stripe.configurations.find(c => c.id === create.params.payment_method_configuration);
+  assert.equal(bankConfig.name, 'BiteSites invoices — bank (ACH) only');
+  assert.equal(bankConfig.us_bank_account.display_preference.preference, 'on');
+  assert.equal(bankConfig.card.display_preference.preference, 'off');
+  assert.equal(bankConfig.klarna.display_preference.preference, 'off');
+  assert.equal(create.params.payment_method_options.us_bank_account.verification_method, 'automatic', 'instant verification, micro-deposits as fallback');
   assert.equal(create.params.line_items[0].price_data.unit_amount, 240000);
-  assert.deepEqual(create.params.metadata, { invoiceId: 'inv_1', clientId: 'client_a', invoiceNumber: 'INV-1001', source: 'pay_now' });
+  assert.deepEqual(create.params.metadata, { invoiceId: 'inv_1', clientId: 'client_a', invoiceNumber: 'INV-1001', source: 'pay_now', method: 'bank' });
   assert.deepEqual(create.params.payment_intent_data.metadata, create.params.metadata);
   assert.ok(create.params.expires_at - Math.floor(Date.now() / 1000) <= 24 * 3600);
   assert.ok(create.params.expires_at - Math.floor(Date.now() / 1000) > 23 * 3600);
   assert.match(create.params.success_url, /^https:\/\/bitesites\.org\/pay\/success\?/);
-  assert.equal(create.params.cancel_url, 'https://bitesites.org/pay/cancel');
+  const token = first.url.split('/').pop();
+  assert.equal(create.params.cancel_url, `https://bitesites.org/pay/cancel?pay=${token}&method=bank&alt=card`);
+  assert.equal(first.cardUrl, `${first.url}?method=card`);
 
   const stored = await readInvoice('inv_1');
   assert.equal(stored.payment.payNowUrl, first.url);
@@ -248,11 +276,11 @@ test('createPayNowLink creates the customer once, a card + ACH session, and a st
   assert.equal(callsOf('checkout.sessions.create').length, 1);
 });
 
-test('createPayNowLink refuses drafts, void, paid, and sub-minimum invoices', async () => {
+test('createPayNowLink refuses void, paid, and sub-minimum invoices', async () => {
   await reset();
   const client = await seedClient();
   for (const [overrides, pattern] of [
-    [{ status: 'draft' }, /draft/], [{ status: 'void' }, /void/], [{ status: 'paid' }, /already paid/],
+    [{ status: 'void' }, /void/], [{ status: 'paid' }, /already paid/],
     [{ totalCents: 10 }, /at least 50/], [{ totalCents: 12.5 }, /whole number/]
   ]) {
     await assert.rejects(billing.createPayNowLink(await seedInvoice('inv_x', overrides), client), pattern);
@@ -272,7 +300,7 @@ test('the stable link redirects to the open session, re-mints a lapsed one, and 
   const fresh = await billing.resolvePayLink(token);
   assert.notEqual(fresh, stripe.sessions.get(sessionId).url);
   const link = (await db.doc(`billingPayLinks/${token}`).get()).data();
-  assert.equal(link.attempts, 2);
+  assert.equal(link.attempts.bank, 2);
   assert.equal((await readInvoice('inv_1')).payment.payNowUrl, url, 'the emailed URL never changes');
 
   await db.doc('invoices/inv_1').set({ status: 'paid' }, { merge: true });
@@ -327,7 +355,7 @@ test('chargeAutopay charges off-session with the invoice id as the idempotency k
   const invoice = await seedInvoice('inv_1', { autopay: true });
   const result = await billing.chargeAutopay(invoice, client);
 
-  assert.equal(result.status, 'paid');
+  assert.equal(result.status, 'succeeded');
   const [create] = callsOf('paymentIntents.create');
   assert.equal(create.options.idempotencyKey, 'inv_1');
   assert.equal(create.params.off_session, true);
@@ -336,6 +364,8 @@ test('chargeAutopay charges off-session with the invoice id as the idempotency k
   assert.equal(create.params.customer, 'cus_saved');
   assert.equal(create.params.payment_method, 'pm_saved');
   assert.equal(create.params.metadata.source, 'autopay');
+  assert.equal(create.params.payment_method_types, undefined);
+  assert.equal(stripe.configurations.find(c => c.id === create.params.payment_method_configuration).name, 'BiteSites invoices — bank (ACH) only');
 
   const stored = await readInvoice('inv_1');
   assert.equal(stored.status, 'paid');
@@ -354,7 +384,7 @@ test('chargeAutopay that needs the client marks payment_failed and falls back to
   const client = await seedClient('client_a', enrolled);
   stripe.nextIntentOutcome = 'requires_action';
   const result = await billing.chargeAutopay(await seedInvoice('inv_1', { autopay: true }), client);
-  assert.equal(result.status, 'payment_failed');
+  assert.equal(result.status, 'failed');
   assert.match(result.payNowUrl, /\/api\/pay\//);
   const stored = await readInvoice('inv_1');
   assert.equal(stored.status, 'payment_failed');
@@ -367,7 +397,7 @@ test('a declined card (thrown StripeCardError) marks payment_failed with a Pay N
   const client = await seedClient('client_a', enrolled);
   stripe.nextIntentOutcome = 'card_error';
   const result = await billing.chargeAutopay(await seedInvoice('inv_1', { autopay: true }), client);
-  assert.equal(result.status, 'payment_failed');
+  assert.equal(result.status, 'failed');
   assert.ok(result.paymentIntentId);
   assert.ok(result.payNowUrl);
   assert.equal((await readInvoice('inv_1')).status, 'payment_failed');
@@ -393,9 +423,11 @@ test('chargeAutopay without enrollment charges nothing and returns a Pay Now lin
   await reset();
   const client = await seedClient();
   const result = await billing.chargeAutopay(await seedInvoice('inv_1', { autopay: true }), client);
-  assert.equal(result.status, 'skipped');
+  assert.equal(result.status, 'failed');
+  assert.equal(result.reason, 'not_enrolled');
   assert.ok(result.payNowUrl);
   assert.equal(callsOf('paymentIntents.create').length, 0);
+  assert.equal((await readInvoice('inv_1')).status, 'payment_failed');
 });
 
 test('chargeInvoiceNow retries a failed charge with a fresh key and is admin-only', async () => {
@@ -408,7 +440,7 @@ test('chargeInvoiceNow retries a failed charge with a fresh key and is admin-onl
   await assert.rejects(adminCall(api.chargeInvoiceNow, { invoiceId: 'inv_1' }, 'client_uid'), { code: 'permission-denied' });
   stripe.nextIntentOutcome = 'succeeded';
   const result = await adminCall(api.chargeInvoiceNow, { invoiceId: 'inv_1' });
-  assert.equal(result.status, 'paid');
+  assert.equal(result.status, 'succeeded');
   const keys = callsOf('paymentIntents.create').map(call => call.options.idempotencyKey);
   assert.deepEqual(keys, ['inv_1', 'inv_1:retry-1']);
   assert.equal((await readInvoice('inv_1')).status, 'paid');
@@ -438,8 +470,18 @@ test('createAutopaySetupLink opens a setup-mode session for card + ACH', async (
   assert.match(result.url, /^https:\/\/checkout\.stripe\.test\//);
   const [create] = callsOf('checkout.sessions.create');
   assert.equal(create.params.mode, 'setup');
-  assert.deepEqual(create.params.payment_method_types, ['card', 'us_bank_account']);
-  assert.deepEqual(create.params.setup_intent_data.metadata, { clientId: 'client_a', source: 'autopay_setup' });
+  assert.equal(create.params.payment_method_types, undefined);
+  assert.equal(stripe.configurations.find(c => c.id === create.params.payment_method_configuration).name, 'BiteSites invoices — bank (ACH) only');
+  assert.equal(create.params.payment_method_options.us_bank_account.verification_method, 'automatic');
+  assert.deepEqual(create.params.setup_intent_data.metadata, { clientId: 'client_a', source: 'autopay_setup', method: 'bank' });
+  assert.equal(result.method, 'bank');
+
+  const card = await adminCall(api.createAutopaySetupLink, { clientId: 'client_a', method: 'card' });
+  assert.equal(card.method, 'card');
+  const cardCreate = callsOf('checkout.sessions.create').at(-1);
+  assert.equal(stripe.configurations.find(c => c.id === cardCreate.params.payment_method_configuration).name, 'BiteSites invoices — card only');
+  assert.equal(cardCreate.params.payment_method_options, undefined);
+  assert.equal(callsOf('paymentMethodConfigurations.create').length, 2, 'each configuration is created once, then reused');
   assert.equal((await readClient('client_a')).autopay.enabled, false, 'sending the link does not enable autopay');
   await assert.rejects(adminCall(api.createAutopaySetupLink, { clientId: '../etc' }), { code: 'invalid-argument' });
 });
@@ -605,4 +647,87 @@ test('live-mode events are ignored unless live billing is authorized', async () 
   const out = await deliver(event('payment_intent.succeeded', { id: 'pi_live', metadata: { invoiceId: 'inv_1' } }, { livemode: true }));
   assert.equal(out.body.outcome, 'ignored-live-mode-not-authorized');
   assert.equal((await readInvoice('inv_1')).status, 'sent');
+});
+
+// ---------------------------------------------------------------- bank first
+
+test('the card alternative is a separate card-only checkout behind the same link', async () => {
+  await reset();
+  const client = await seedClient();
+  const { url } = await billing.createPayNowLink(await seedInvoice(), client);
+  const token = url.split('/').pop();
+  const cardCheckout = await billing.resolvePayLink(token, 'card');
+  const cardCreate = callsOf('checkout.sessions.create').at(-1);
+  assert.equal(stripe.configurations.find(c => c.id === cardCreate.params.payment_method_configuration).name, 'BiteSites invoices — card only');
+  assert.equal(cardCreate.params.metadata.method, 'card');
+  assert.equal(cardCreate.params.cancel_url, `https://bitesites.org/pay/cancel?pay=${token}&method=card&alt=bank`);
+  assert.equal(cardCheckout, stripe.sessions.get([...stripe.sessions.keys()].at(-1)).url);
+  // Asking again reuses each open session rather than minting more.
+  assert.equal(await billing.resolvePayLink(token, 'card'), cardCheckout);
+  assert.equal((await readInvoice('inv_1')).payment.payNowUrl, url, 'the stored link stays the bank link');
+  assert.equal(callsOf('checkout.sessions.create').length, 2);
+
+  const { res, out } = fakeRes();
+  await api.billingPayNow({ method: 'GET', path: `/${token}`, query: { method: 'card' }, headers: {}, get: () => '' }, res);
+  assert.equal(out.location, cardCheckout);
+});
+
+test('payNowOptions lists bank (ACH) first, then card', async () => {
+  await reset();
+  const client = await seedClient();
+  const { url } = await billing.createPayNowLink(await seedInvoice(), client);
+  const options = billing.payNowOptions(await readInvoice('inv_1'));
+  assert.deepEqual(options.map(option => [option.method, option.label, option.primary]),
+    [['bank', 'Pay by bank (ACH)', true], ['card', 'Pay by card', false]]);
+  assert.equal(options[0].url, url);
+  assert.equal(options[1].url, `${url}?method=card`);
+  assert.deepEqual(billing.payNowOptions({ payment: { payNowUrl: 'https://evil.example/pay' } }), []);
+});
+
+test('a client paying the bank invoice by card closes the open bank checkout', async () => {
+  await reset();
+  const client = await seedClient();
+  const { url, sessionId: bankSession } = await billing.createPayNowLink(await seedInvoice(), client);
+  await billing.resolvePayLink(url.split('/').pop(), 'card');
+  const cardSession = [...stripe.sessions.keys()].at(-1);
+  await deliver(event('checkout.session.completed', {
+    id: cardSession, mode: 'payment', payment_status: 'paid', payment_intent: 'pi_card', amount_total: 240000,
+    metadata: { invoiceId: 'inv_1', clientId: 'client_a', source: 'pay_now', method: 'card' }
+  }));
+  assert.equal((await readInvoice('inv_1')).status, 'paid');
+  assert.equal(stripe.sessions.get(bankSession).status, 'expired');
+});
+
+test('a card on file is charged through the card-only configuration', async () => {
+  await reset();
+  const client = await seedClient('client_a', { ...enrolled, defaultPaymentMethodId: 'pm_card' });
+  stripe.paymentMethodStore.set('pm_card', { id: 'pm_card', type: 'card' });
+  await billing.chargeAutopay(await seedInvoice('inv_1', { autopay: true }), client);
+  const [create] = callsOf('paymentIntents.create');
+  assert.equal(stripe.configurations.find(c => c.id === create.params.payment_method_configuration).name, 'BiteSites invoices — card only');
+});
+
+test('a bad request that is not about the payment method is not blamed on the client', async () => {
+  await reset();
+  const client = await seedClient('client_a', enrolled);
+  stripe.paymentIntents.create = async () => {
+    throw Object.assign(new Error('The `payment_method_types` parameter is no longer supported.'), { type: 'StripeInvalidRequestError', param: 'payment_method_types' });
+  };
+  await assert.rejects(billing.chargeAutopay(await seedInvoice('inv_1', { autopay: true }), client), /no longer supported/);
+  assert.equal((await readInvoice('inv_1')).status, 'sent');
+
+  stripe.paymentIntents.create = async () => {
+    throw Object.assign(new Error('No such PaymentMethod'), { type: 'StripeInvalidRequestError', param: 'payment_method', code: 'resource_missing' });
+  };
+  const result = await billing.chargeAutopay(await seedInvoice('inv_2', { autopay: true }), client);
+  assert.equal(result.status, 'failed');
+  assert.equal((await readInvoice('inv_2')).status, 'payment_failed');
+});
+
+test('createPayNowLink accepts a draft being finalized; the link refuses a draft', async () => {
+  await reset();
+  const client = await seedClient();
+  const { url } = await billing.createPayNowLink(await seedInvoice('inv_1', { status: 'draft' }), client);
+  assert.equal(await billing.resolvePayLink(url.split('/').pop()), 'https://bitesites.org/pay/cancel?reason=unavailable');
+  assert.equal(billing.stripeSecrets, billing.STRIPE_SECRETS, 'the name the invoicing loader looks for');
 });

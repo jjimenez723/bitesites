@@ -778,12 +778,23 @@ remaining blockers are in [`STRIPE_BILLING.md`](STRIPE_BILLING.md); this section
 the setup.
 
 Test mode first. Both values come from the Stripe dashboard **in test mode**
-(Developers → API keys, and Developers → Webhooks after the endpoint exists):
+(Developers → API keys, and Developers → Webhooks after the endpoint exists). Always name
+the project explicitly:
 
 ```bash
-firebase functions:secrets:set STRIPE_SECRET_KEY       # sk_test_… or rk_test_…
-firebase functions:secrets:set STRIPE_WEBHOOK_SECRET   # whsec_… from the endpoint below
+# Staging (test keys). STRIPE_SECRET_KEY is already set here (2026-11-16).
+firebase functions:secrets:set STRIPE_SECRET_KEY     --project bitesites-outbound-staging   # sk_test_…
+firebase functions:secrets:set STRIPE_WEBHOOK_SECRET --project bitesites-outbound-staging   # whsec_… from the staging endpoint
+
+# Production — only after the owner authorizes go-live. Nothing is set yet.
+firebase functions:secrets:set STRIPE_SECRET_KEY     --project bitesites-org   # sk_live_… / rk_live_…
+firebase functions:secrets:set STRIPE_WEBHOOK_SECRET --project bitesites-org   # whsec_… from https://bitesites.org/api/stripe-webhook
 ```
+
+Payment methods are not toggled in the dashboard for this: on first use the code creates two
+Payment Method Configurations in the key's account, `BiteSites invoices — bank (ACH) only` and
+`BiteSites invoices — card only`, and uses them for every Checkout and charge (see
+STRIPE_BILLING.md, "Bank first"). Pin existing ones with `STRIPE_PMC_BANK` / `STRIPE_PMC_CARD`.
 
 Webhook endpoint (register it after the functions are deployed):
 
@@ -796,9 +807,14 @@ Events to send: `checkout.session.completed`, `checkout.session.async_payment_su
 `payment_intent.payment_failed`, `setup_intent.succeeded`, `charge.refunded`,
 `payment_method.detached`.
 
-For local webhook testing without deploying, `stripe listen --forward-to
-http://127.0.0.1:5001/bitesites-org/us-central1/stripeWebhook` prints a temporary `whsec_…`
-to use as `STRIPE_WEBHOOK_SECRET` in the emulator environment.
+For local end-to-end testing without deploying, put the test key and the CLI's signing secret
+in `functions/.secret.local` (gitignored and blocked by the secret scanner) and run:
+
+```bash
+stripe listen --api-key "$STRIPE_TEST_KEY" --print-secret        # → STRIPE_WEBHOOK_SECRET for .secret.local
+npx firebase emulators:start --only functions,firestore --project demo-bitesites
+stripe listen --api-key "$STRIPE_TEST_KEY" --forward-to http://127.0.0.1:5001/demo-bitesites/us-central1/stripeWebhook
+```
 
 A live key does nothing on its own: `isStripeConfigured()` stays false and the webhook
 ignores live events until `STRIPE_LIVE_MODE_AUTHORIZED=true` is set in

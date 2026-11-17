@@ -3,14 +3,14 @@
 // these handlers; this file only adds authentication and HTTP.
 //
 //   Callables (admin only):
-//     createAutopaySetupLink({ clientId })      -> { url, sessionId, expiresAt }
+//     createAutopaySetupLink({ clientId, method? })  -> { url, sessionId, method, expiresAt }  (bank by default)
 //     setAutopay({ clientId, enabled })         -> { enabled }
 //     refreshPayNowLink({ invoiceId })          -> { url, sessionId }
 //     chargeInvoiceNow({ invoiceId })           -> { status, paymentIntentId, payNowUrl? }
 //
 //   HTTPS:
 //     stripeWebhook     POST /api/stripe-webhook   (Stripe-Signature verified)
-//     billingPayNow     GET  /api/pay/{token}      (redirects to Stripe Checkout)
+//     billingPayNow     GET  /api/pay/{token}[?method=card]  (bank Checkout by default)
 
 import { onCall, onRequest, HttpsError } from 'firebase-functions/v2/https';
 import { getFirestore } from 'firebase-admin/firestore';
@@ -61,7 +61,8 @@ async function asHttps(work) {
 export const createAutopaySetupLink = onCall(callOptions, async request => {
   await requireBillingAdmin(request);
   const clientId = id(request.data?.clientId);
-  return asHttps(() => createAutopaySetupLinkForClient(clientId));
+  const method = request.data?.method === 'card' ? 'card' : 'bank';
+  return asHttps(() => createAutopaySetupLinkForClient(clientId, { method }));
 });
 
 export const setAutopay = onCall(callOptions, async request => {
@@ -124,7 +125,7 @@ export const billingPayNow = onRequest({ secrets: STRIPE_SECRETS, maxInstances: 
   const token = String(req.path || '').split('/').filter(Boolean).pop() || '';
   try {
     if (!isStripeConfigured()) throw new Error('Stripe is not configured');
-    res.redirect(303, await resolvePayLink(token));
+    res.redirect(303, await resolvePayLink(token, req.query?.method === 'card' ? 'card' : 'bank'));
   } catch (error) {
     console.error('[billing] pay link failed', { message: error.message });
     res.redirect(303, `${SITE_ORIGIN}/pay/cancel?reason=error`);

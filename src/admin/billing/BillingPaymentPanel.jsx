@@ -1,7 +1,11 @@
 // Stripe payment controls for one invoice, mounted by the invoicing UI on the
 // invoice detail page:
 //
-//   <BillingPaymentPanel invoice={invoice} client={client} />
+//   <BillingPaymentPanel invoice={invoice} client={client} onChange={refresh} />
+//
+// Bank first: the Pay Now link and the autopay setup link default to bank
+// (ACH) — 0.8% capped at $5 against 2.9% + 30¢ for a card — and card is
+// offered as the alternative.
 //
 // `invoice` and `client` are the Firestore documents (with `id`) from the
 // shared contract in STRIPE_BILLING.md. The panel also subscribes to both
@@ -76,7 +80,7 @@ const DashboardLink = ({ kind, id, children }) => (id
   ? <a className="billing-stripe-link" href={stripeDashboardUrl(kind, id)} target="_blank" rel="noreferrer">{children || id} ↗</a>
   : null);
 
-export default function BillingPaymentPanel({ invoice: invoiceProp, client: clientProp }) {
+export default function BillingPaymentPanel({ invoice: invoiceProp, client: clientProp, onChange }) {
   const invoiceId = invoiceProp?.id || '';
   const clientId = clientProp?.id || invoiceProp?.clientId || '';
   const invoice = useLiveDoc(invoiceId ? `invoices/${invoiceId}` : '', invoiceProp);
@@ -102,7 +106,9 @@ export default function BillingPaymentPanel({ invoice: invoiceProp, client: clie
     setError('');
     setNotice('');
     try {
-      return await work();
+      const result = await work();
+      onChange?.();
+      return result;
     } catch (caught) {
       setError(errorMessage(caught));
       return null;
@@ -111,8 +117,8 @@ export default function BillingPaymentPanel({ invoice: invoiceProp, client: clie
     }
   }
 
-  const sendSetupLink = () => run('setup', async () => {
-    const result = await createAutopaySetupLink(clientId);
+  const sendSetupLink = (method = 'bank') => run(method === 'card' ? 'setup-card' : 'setup', async () => {
+    const result = await createAutopaySetupLink(clientId, method);
     setSetupLink(result);
   });
 
@@ -130,10 +136,11 @@ export default function BillingPaymentPanel({ invoice: invoiceProp, client: clie
     setConfirmingCharge(false);
     const result = await chargeInvoiceNow(invoiceId);
     const messages = {
-      paid: 'Charged. The invoice is paid.',
-      processing: 'Bank debit submitted. It settles in a few business days; the invoice updates automatically.',
-      payment_failed: `The charge failed${result.message ? `: ${result.message}` : '.'} A Pay Now link is ready to send.`,
-      skipped: 'Autopay is not set up for this client, so nothing was charged. Use the Pay Now link.'
+      succeeded: 'Charged. The invoice is paid.',
+      processing: 'Bank (ACH) debit submitted. It settles in a few business days; the invoice updates automatically.',
+      failed: result.reason === 'not_enrolled'
+        ? 'Autopay is not set up for this client, so nothing was charged. Send the Pay Now link.'
+        : `The charge failed${result.message ? `: ${result.message}` : '.'} A Pay Now link is ready to send.`
     };
     setNotice(messages[result.status] || `Charge result: ${result.status}`);
   });
@@ -170,7 +177,13 @@ export default function BillingPaymentPanel({ invoice: invoiceProp, client: clie
           ['Checkout', payment.stripeCheckoutSessionId ? <DashboardLink kind="checkout_session" id={payment.stripeCheckoutSessionId} /> : '']
         ]} />
 
-        <CopyField label="Pay Now link" value={invoice.status === 'paid' ? '' : payment.payNowUrl} />
+        {invoice.status !== 'paid' && payment.payNowUrl && (
+          <>
+            <CopyField label="Pay by bank (ACH) — send this link" value={payment.payNowUrl} />
+            <CopyField label="Card alternative" value={`${payment.payNowUrl.split('?')[0]}?method=card`} />
+            <p className="admin-note">Bank is the default: 0.8% capped at $5 per payment, against 2.9% + 30¢ by card. The bank page links to the card page and back.</p>
+          </>
+        )}
         <div className="billing-actions">
           {canRegenerate && (
             <button className="btn-admin" type="button" disabled={Boolean(busy)} onClick={regenerate}>
@@ -205,8 +218,11 @@ export default function BillingPaymentPanel({ invoice: invoiceProp, client: clie
           ['Updated', formatWhen(autopay.updatedAt)]
         ]} />
         <div className="billing-actions">
-          <button className="btn-admin" type="button" disabled={Boolean(busy) || !clientId} onClick={sendSetupLink}>
-            {busy === 'setup' ? 'Creating…' : hasMethod ? 'New autopay setup link' : 'Send autopay setup link'}
+          <button className="btn-admin primary" type="button" disabled={Boolean(busy) || !clientId} onClick={() => sendSetupLink('bank')}>
+            {busy === 'setup' ? 'Creating…' : hasMethod ? 'New bank (ACH) setup link' : 'Send bank (ACH) setup link'}
+          </button>
+          <button className="btn-admin" type="button" disabled={Boolean(busy) || !clientId} onClick={() => sendSetupLink('card')}>
+            {busy === 'setup-card' ? 'Creating…' : 'Card setup link instead'}
           </button>
           <button className="btn-admin" type="button" disabled={Boolean(busy) || !clientId || (!autopay.enabled && !hasMethod)} onClick={toggleAutopay}
             title={!autopay.enabled && !hasMethod ? 'The client has to save a payment method first.' : undefined}>
@@ -215,7 +231,7 @@ export default function BillingPaymentPanel({ invoice: invoiceProp, client: clie
         </div>
         {setupLink && (
           <>
-            <CopyField label="Autopay setup link" value={setupLink.url} />
+            <CopyField label={setupLink.method === 'card' ? 'Autopay setup link (card)' : 'Autopay setup link (bank / ACH)'} value={setupLink.url} />
             <p className="admin-note">Send this to the client. It expires {formatWhen(setupLink.expiresAt)} (Stripe’s 24-hour limit); create a new one after that. Autopay turns on by itself once they finish.</p>
           </>
         )}

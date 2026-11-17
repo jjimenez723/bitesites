@@ -55,7 +55,7 @@ const CANCEL = {
   default: {
     eyebrow: 'Payment canceled',
     title: 'Nothing was charged.',
-    message: 'You can pay any time with the link in your invoice email. It stays valid until the invoice is paid.'
+    message: 'You can pay any time with the link in your invoice email. It stays valid until the invoice is paid. Bank (ACH) is the default; card works too.'
   }
 };
 
@@ -64,6 +64,14 @@ export default function PayResult({ outcome }) {
   const table = outcome === 'success' ? SUCCESS : CANCEL;
   const key = params.get('setup') === '1' ? 'setup' : (params.get('status') || params.get('reason') || 'default');
   const copy = table[key] || table.default;
+  // Back from a cancelled checkout: offer the other method behind the same
+  // link. Bank (ACH) is the default; card is the alternative.
+  const token = /^[A-Za-z0-9_-]{16,64}$/.test(params.get('pay') || '') ? params.get('pay') : '';
+  const alternative = outcome === 'cancel' && token
+    ? (params.get('alt') === 'card'
+      ? { href: `/api/pay/${token}?method=card`, label: 'Pay by card instead', back: { href: `/api/pay/${token}`, label: 'Back to bank payment (ACH)' } }
+      : { href: `/api/pay/${token}`, label: 'Pay by bank (ACH) instead', back: { href: `/api/pay/${token}?method=card`, label: 'Back to card payment' } })
+    : null;
 
   useEffect(() => { window.scrollTo(0, 0); }, []);
 
@@ -80,7 +88,14 @@ export default function PayResult({ outcome }) {
         <h1 id="pay-result-title">{copy.title}</h1>
         <p className="thank-you-message">{copy.message}</p>
         <div className="thank-you-divider" />
-        <Link className="thank-you-home-button" to="/">Go to homepage <b aria-hidden="true">→</b></Link>
+        {alternative ? (
+          <div className="pay-result-actions">
+            <a className="thank-you-home-button" href={alternative.href}>{alternative.label} <b aria-hidden="true">→</b></a>
+            <a className="pay-result-secondary" href={alternative.back.href}>{alternative.back.label}</a>
+          </div>
+        ) : (
+          <Link className="thank-you-home-button" to="/">Go to homepage <b aria-hidden="true">→</b></Link>
+        )}
       </section>
       <p className="thank-you-footnote">Payments are processed securely by Stripe. Questions about an invoice? Reply to the invoice email.</p>
     </main>

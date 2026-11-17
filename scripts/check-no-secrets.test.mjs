@@ -31,6 +31,7 @@ test('real environment and credential selections are blocked anywhere in the tre
   assert.equal(isBlockedSecretPath('services/worker/.dev.vars'), true);
   assert.equal(isBlockedSecretPath('config/environments/staging.json'), true);
   assert.equal(isBlockedSecretPath('secrets/firebase-adminsdk-prod.json'), true);
+  assert.equal(isBlockedSecretPath('functions/.secret.local'), true);
 });
 
 test('reviewable examples and ordinary source files remain allowed', () => {

@@ -28,6 +28,8 @@ import { randomBytes } from 'node:crypto';
 export const STRIPE_SECRET_KEY = defineSecret('STRIPE_SECRET_KEY');
 export const STRIPE_WEBHOOK_SECRET = defineSecret('STRIPE_WEBHOOK_SECRET');
 export const STRIPE_SECRETS = [STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET];
+// The name the invoicing side's loader looks for (functions/billing-api.js).
+export const stripeSecrets = STRIPE_SECRETS;
 
 export const SITE_ORIGIN = String(process.env.BILLING_SITE_ORIGIN || 'https://bitesites.org').replace(/\/+$/, '');
 
@@ -37,7 +39,6 @@ export const SITE_ORIGIN = String(process.env.BILLING_SITE_ORIGIN || 'https://bi
 const CHECKOUT_LIFETIME_SECONDS = 24 * 60 * 60 - 120;
 const SESSION_REUSE_MARGIN_SECONDS = 10 * 60;
 const STRIPE_MIN_CHARGE_CENTS = 50;
-const PAYMENT_METHOD_TYPES = Object.freeze(['card', 'us_bank_account']);
 
 const PAY_LINKS = 'billingPayLinks';
 const STRIPE_EVENTS = 'stripeEvents';
@@ -82,6 +83,7 @@ let cachedKey = '';
 /** Tests inject a fake SDK here; production never calls it. */
 export function __setStripeForTests(fake) {
   testStripe = fake || null;
+  pmcCache.clear();
 }
 
 export class BillingError extends Error {
@@ -115,7 +117,7 @@ const text = (value, max = 200) => (typeof value === 'string' ? value.trim().sli
 const invoiceIdOf = invoice => text(invoice?.id || invoice?.invoiceId, 200);
 const clientIdOf = (client, invoice) => text(client?.id || client?.clientId || invoice?.clientId, 200);
 
-function assertPayableInvoice(invoice) {
+function assertPayableInvoice(invoice, { allowDraft = false } = {}) {
   const invoiceId = invoiceIdOf(invoice);
   if (!invoiceId) throw new BillingError('invalid-argument', 'The invoice has no id.');
   const total = invoice?.totalCents;
@@ -124,7 +126,7 @@ function assertPayableInvoice(invoice) {
   }
   if ((invoice.currency || 'usd') !== 'usd') throw new BillingError('invalid-argument', 'Only USD invoices are supported.');
   if (invoice.status === 'void') throw new BillingError('failed-precondition', `Invoice ${invoiceId} is void.`);
-  if (invoice.status === 'draft') throw new BillingError('failed-precondition', `Invoice ${invoiceId} is still a draft.`);
+  if (invoice.status === 'draft' && !allowDraft) throw new BillingError('failed-precondition', `Invoice ${invoiceId} is still a draft.`);
   return invoiceId;
 }
 
@@ -188,30 +190,110 @@ export async function ensureStripeCustomer(client) {
   return customer.id;
 }
 
+// ------------------------------------------------- payment method choice
+//
+// Bank first. A monthly retainer by ACH Direct Debit costs 0.8% capped at $5;
+// by card it costs 2.9% + 30¢. Stripe Checkout (API 2026-10-28) no longer
+// accepts `payment_method_types`, and on a page that offers both it lists card
+// first. So every Checkout here offers exactly one method, chosen through a
+// Payment Method Configuration:
+//
+//   bank — ACH Direct Debit only, Financial Connections instant verification
+//          with micro-deposits as the fallback. The default everywhere.
+//   card — card only. Reached from "Pay by card instead".
+//
+// The two configurations are created on first use in whichever Stripe account
+// and mode the key belongs to, found again by name afterwards, and can be
+// pinned with STRIPE_PMC_BANK / STRIPE_PMC_CARD.
+
+export const PAYMENT_METHODS = Object.freeze(['bank', 'card']);
+export const DEFAULT_PAYMENT_METHOD = 'bank';
+const STRIPE_TYPE = { bank: 'us_bank_account', card: 'card' };
+export const PMC_NAMES = Object.freeze({
+  bank: 'BiteSites invoices — bank (ACH) only',
+  card: 'BiteSites invoices — card only'
+});
+const pmcCache = new Map();
+
+export const normalizeMethod = value => (value === 'card' ? 'card' : DEFAULT_PAYMENT_METHOD);
+
+/** Customer-facing wording, shared by the email, PDF and admin panel. */
+export const PAYMENT_METHOD_COPY = Object.freeze({
+  bank: { label: 'Pay by bank (ACH)', note: 'Recommended. Connect your bank securely; no card fees.' },
+  card: { label: 'Pay by card', note: 'Card payments are accepted too.' }
+});
+
+export async function paymentMethodConfiguration(method) {
+  const kind = normalizeMethod(method);
+  const pinned = text(process.env[kind === 'card' ? 'STRIPE_PMC_CARD' : 'STRIPE_PMC_BANK'], 100);
+  if (pinned) return pinned;
+  if (pmcCache.has(kind)) return pmcCache.get(kind);
+
+  const stripe = getStripe();
+  const existing = await stripe.paymentMethodConfigurations.list({ limit: 100 });
+  let config = existing.data.find(item => item.name === PMC_NAMES[kind] && item.active !== false);
+  if (!config) {
+    // Switch every method the account knows about off, then the one we want on.
+    const template = existing.data.find(item => item.is_default) || existing.data[0] || {};
+    const params = { name: PMC_NAMES[kind] };
+    for (const [key, value] of Object.entries(template)) {
+      if (value && typeof value === 'object' && 'display_preference' in value) {
+        params[key] = { display_preference: { preference: 'off' } };
+      }
+    }
+    params[STRIPE_TYPE[kind]] = { display_preference: { preference: 'on' } };
+    config = await stripe.paymentMethodConfigurations.create(params, { idempotencyKey: `pmc:${kind}:v1` });
+  }
+  pmcCache.set(kind, config.id);
+  return config.id;
+}
+
+const BANK_OPTIONS = Object.freeze({
+  us_bank_account: {
+    // Instant verification through Financial Connections, falling back to
+    // micro-deposits when the client's bank is not supported.
+    verification_method: 'automatic',
+    financial_connections: { permissions: ['payment_method'] }
+  }
+});
+
 // ----------------------------------------------------------------- Pay Now
 
-/** The public, never-expiring URL that goes in the invoice email. */
-export const payNowUrlForToken = token => `${SITE_ORIGIN}/api/pay/${token}`;
+/** The public, never-expiring URLs that go in the invoice email and PDF. */
+export const payNowUrlForToken = (token, method = DEFAULT_PAYMENT_METHOD) =>
+  `${SITE_ORIGIN}/api/pay/${token}${normalizeMethod(method) === 'card' ? '?method=card' : ''}`;
+
+/**
+ * Both Pay Now options for an invoice that already has a link, bank first.
+ * The invoicing side renders these instead of a single "Pay Now" button.
+ */
+export function payNowOptions(invoice) {
+  const url = text(invoice?.payment?.payNowUrl, 500);
+  if (!url || !url.startsWith(`${SITE_ORIGIN}/api/pay/`)) return [];
+  const base = url.split('?')[0];
+  return PAYMENT_METHODS.map(method => ({
+    method,
+    url: method === 'card' ? `${base}?method=card` : base,
+    primary: method === DEFAULT_PAYMENT_METHOD,
+    ...PAYMENT_METHOD_COPY[method]
+  }));
+}
 
 async function findPayLink(invoiceId) {
   const snapshot = await db().collection(PAY_LINKS).where('invoiceId', '==', invoiceId).limit(1).get();
   return snapshot.empty ? null : { token: snapshot.docs[0].id, ...snapshot.docs[0].data() };
 }
 
-async function createCheckoutSession(invoice, clientId, customerId, attempt) {
+async function createCheckoutSession(invoice, clientId, customerId, { method, attempt, token }) {
   const invoiceId = invoiceIdOf(invoice);
-  const metadata = invoiceMetadata(invoice, clientId, 'pay_now');
+  const metadata = { ...invoiceMetadata(invoice, clientId, 'pay_now'), method };
+  const other = method === 'card' ? 'bank' : 'card';
   return getStripe().checkout.sessions.create({
     mode: 'payment',
     customer: customerId,
     client_reference_id: invoiceId,
-    payment_method_types: [...PAYMENT_METHOD_TYPES],
-    payment_method_options: {
-      us_bank_account: {
-        verification_method: 'automatic',
-        financial_connections: { permissions: ['payment_method'] }
-      }
-    },
+    payment_method_configuration: await paymentMethodConfiguration(method),
+    ...(method === 'bank' ? { payment_method_options: BANK_OPTIONS } : {}),
     line_items: [{
       quantity: 1,
       price_data: {
@@ -226,28 +308,34 @@ async function createCheckoutSession(invoice, clientId, customerId, attempt) {
     metadata,
     payment_intent_data: { metadata, description: describeInvoice(invoice) },
     success_url: `${SITE_ORIGIN}/pay/success?session_id={CHECKOUT_SESSION_ID}`,
-    cancel_url: `${SITE_ORIGIN}/pay/cancel`,
+    // The cancel page offers the other method behind the same link.
+    cancel_url: `${SITE_ORIGIN}/pay/cancel?pay=${encodeURIComponent(token)}&method=${method}&alt=${other}`,
     expires_at: nowSeconds() + CHECKOUT_LIFETIME_SECONDS
-  }, { idempotencyKey: `paynow:${invoiceId}:${attempt}` });
+  }, { idempotencyKey: `paynow:${invoiceId}:${method}:${attempt}` });
 }
 
-async function issueSession(invoice, client, link) {
+async function issueSession(invoice, client, link, method = DEFAULT_PAYMENT_METHOD) {
+  const kind = normalizeMethod(method);
   const invoiceId = invoiceIdOf(invoice);
   const clientId = clientIdOf(client, invoice);
   const customerId = await ensureStripeCustomer({ ...client, id: clientId });
-  const attempt = (Number(link?.attempts) || 0) + 1;
-  const session = await createCheckoutSession(invoice, clientId, customerId, attempt);
+  const attempt = (Number(link?.attempts?.[kind]) || 0) + 1;
   const token = link?.token || randomBytes(24).toString('base64url');
+  const session = await createCheckoutSession(invoice, clientId, customerId, { method: kind, attempt, token });
   const url = payNowUrlForToken(token);
 
   const batch = db().batch();
   batch.set(db().doc(`${PAY_LINKS}/${token}`), {
     invoiceId,
     clientId,
-    attempts: attempt,
-    sessionId: session.id,
-    sessionUrl: session.url,
-    sessionExpiresAt: Timestamp.fromMillis((session.expires_at || nowSeconds() + CHECKOUT_LIFETIME_SECONDS) * 1000),
+    attempts: { [kind]: attempt },
+    sessions: {
+      [kind]: {
+        id: session.id,
+        url: session.url,
+        expiresAt: Timestamp.fromMillis((session.expires_at || nowSeconds() + CHECKOUT_LIFETIME_SECONDS) * 1000)
+      }
+    },
     updatedAt: FieldValue.serverTimestamp(),
     ...(link ? {} : { createdAt: FieldValue.serverTimestamp() })
   }, { merge: true });
@@ -256,70 +344,83 @@ async function issueSession(invoice, client, link) {
     updatedAt: FieldValue.serverTimestamp()
   }, { merge: true });
   await batch.commit();
-  return { url, sessionId: session.id, checkoutUrl: session.url };
+  return { url, cardUrl: payNowUrlForToken(token, 'card'), sessionId: session.id, checkoutUrl: session.url };
 }
+
+const sessionsOf = link => Object.entries(link?.sessions || {})
+  .filter(([, session]) => session?.id)
+  .map(([method, session]) => ({ method, ...session }));
 
 /**
- * Pay Now for one invoice. Returns the stable bitesites.org link (which is
- * what payment.payNowUrl stores and what the email should carry) and the
- * Checkout Session behind it right now. Calling it again for the same invoice
- * reuses the same link and the open session.
+ * Pay Now for one invoice. Returns the stable bitesites.org link (bank by
+ * default; `cardUrl` is the card alternative), which is what
+ * payment.payNowUrl stores and what the email and PDF should carry. Calling it
+ * again reuses the same link and the open bank session. Accepts a draft
+ * that is being finalized; refuses void and paid invoices.
  */
 export async function createPayNowLink(invoice, client) {
-  assertPayableInvoice(invoice);
+  assertPayableInvoice(invoice, { allowDraft: true });
   if (invoice.status === 'paid') throw new BillingError('failed-precondition', `Invoice ${invoiceIdOf(invoice)} is already paid.`);
   const link = await findPayLink(invoiceIdOf(invoice));
-  if (link?.sessionId && link.sessionExpiresAt?.toMillis?.() > Date.now() + SESSION_REUSE_MARGIN_SECONDS * 1000) {
-    const session = await getStripe().checkout.sessions.retrieve(link.sessionId).catch(() => null);
+  const bank = link?.sessions?.bank;
+  if (bank?.id && bank.expiresAt?.toMillis?.() > Date.now() + SESSION_REUSE_MARGIN_SECONDS * 1000) {
+    const session = await getStripe().checkout.sessions.retrieve(bank.id).catch(() => null);
     if (session?.status === 'open') {
-      return { url: payNowUrlForToken(link.token), sessionId: session.id, checkoutUrl: session.url };
+      return { url: payNowUrlForToken(link.token), cardUrl: payNowUrlForToken(link.token, 'card'), sessionId: session.id, checkoutUrl: session.url };
     }
   }
-  return issueSession(invoice, client, link);
+  return issueSession(invoice, client, link, 'bank');
 }
 
-/** Expire whatever session the link holds and mint a new one behind the same URL. */
+async function expireSessions(link, keepSessionId = '') {
+  const stripe = getStripe();
+  for (const session of sessionsOf(link)) {
+    if (session.id === keepSessionId) continue;
+    const current = await stripe.checkout.sessions.retrieve(session.id).catch(() => null);
+    if (current?.status === 'open') await stripe.checkout.sessions.expire(current.id).catch(() => null);
+  }
+}
+
+/** Expire whatever sessions the link holds and mint a new bank one behind the same URL. */
 export async function refreshPayNowLinkForInvoice(invoiceId) {
   const invoice = await loadInvoice(invoiceId);
   assertPayableInvoice(invoice);
   if (invoice.status === 'paid') throw new BillingError('failed-precondition', `Invoice ${invoiceId} is already paid.`);
   const client = await loadClient(invoice.clientId);
   const link = await findPayLink(invoiceId);
-  if (link?.sessionId) {
-    const stripe = getStripe();
-    const old = await stripe.checkout.sessions.retrieve(link.sessionId).catch(() => null);
-    if (old?.status === 'open') await stripe.checkout.sessions.expire(old.id).catch(() => null);
-  }
-  return issueSession(invoice, client, link);
+  if (link) await expireSessions(link);
+  return issueSession(invoice, client, link, 'bank');
 }
 
 /**
- * Where /api/pay/{token} should send the visitor. Never reveals anything
- * about the invoice beyond what the Stripe page itself shows.
+ * Where /api/pay/{token}[?method=card] should send the visitor. Never reveals
+ * anything about the invoice beyond what the Stripe page itself shows.
  */
-export async function resolvePayLink(token) {
+export async function resolvePayLink(token, method = DEFAULT_PAYMENT_METHOD) {
+  const kind = normalizeMethod(method);
   const safe = /^[A-Za-z0-9_-]{16,64}$/.test(String(token || '')) ? token : '';
   if (!safe) return `${SITE_ORIGIN}/pay/cancel?reason=invalid`;
   const snapshot = await db().doc(`${PAY_LINKS}/${safe}`).get();
   if (!snapshot.exists) return `${SITE_ORIGIN}/pay/cancel?reason=invalid`;
   const link = { token: safe, ...snapshot.data() };
   const invoice = await loadInvoice(link.invoiceId).catch(() => null);
-  if (!invoice || invoice.status === 'void') return `${SITE_ORIGIN}/pay/cancel?reason=unavailable`;
+  if (!invoice || ['void', 'draft'].includes(invoice.status)) return `${SITE_ORIGIN}/pay/cancel?reason=unavailable`;
   if (invoice.status === 'paid') return `${SITE_ORIGIN}/pay/success?status=paid`;
 
   const stripe = getStripe();
-  if (link.sessionId) {
-    const session = await stripe.checkout.sessions.retrieve(link.sessionId).catch(() => null);
-    const fresh = (session?.expires_at || 0) > nowSeconds() + 60;
-    if (session?.status === 'open' && fresh) return session.url;
-    // Completed but not yet paid: a bank debit is settling. Do not mint a
-    // second session that could collect the same invoice twice.
+  for (const stored of sessionsOf(link)) {
+    const session = await stripe.checkout.sessions.retrieve(stored.id).catch(() => null);
+    // Completed but not yet paid: a bank debit is settling. Never mint a
+    // second session, in either method, that could collect it twice.
     if (session?.status === 'complete' && session.payment_status !== 'paid' && invoice.status !== 'payment_failed') {
       return `${SITE_ORIGIN}/pay/success?status=processing`;
     }
+    if (stored.method === kind && session?.status === 'open' && (session.expires_at || 0) > nowSeconds() + 60) {
+      return session.url;
+    }
   }
   const client = await loadClient(invoice.clientId);
-  const issued = await issueSession(invoice, client, link);
+  const issued = await issueSession(invoice, client, link, kind);
   return issued.checkoutUrl;
 }
 
@@ -423,13 +524,14 @@ async function fallBackToPayNow(invoiceId) {
 /**
  * Charge the client's saved payment method for this invoice, off-session.
  *
- * Returns { status, paymentIntentId, payNowUrl? } where status is:
- *   'paid'           — card charged; invoice marked paid.
- *   'processing'     — bank debit submitted; the webhook settles it in days.
- *   'payment_failed' — declined or needs the client; invoice marked
- *                      payment_failed and a Pay Now link generated.
- *   'skipped'        — autopay is not enrolled for this client; a Pay Now
- *                      link was generated instead. Nothing was charged.
+ * Returns { status, paymentIntentId, payNowUrl?, message? }. `status` uses
+ * PaymentIntent vocabulary so the invoicing side can map it directly:
+ *   'succeeded'  — charged; invoice marked paid.
+ *   'processing' — bank (ACH) debit submitted; it settles in a few business
+ *                  days and the webhook marks the invoice paid or failed.
+ *   'failed'     — declined, needs the client (3-D Secure), or autopay is not
+ *                  set up (reason: 'not_enrolled'). The invoice is marked
+ *                  payment_failed and a Pay Now link generated.
  *
  * The first attempt uses the invoice id as the Stripe idempotency key, so a
  * retried call can never charge twice. A deliberate retry (`retry: true`,
@@ -439,12 +541,14 @@ export async function chargeAutopay(invoice, client, { retry = false } = {}) {
   const invoiceId = assertPayableInvoice(invoice);
   const clientId = clientIdOf(client, invoice);
   if (invoice.status === 'paid') {
-    return { status: 'paid', paymentIntentId: invoice.payment?.stripePaymentIntentId || null };
+    return { status: 'succeeded', paymentIntentId: invoice.payment?.stripePaymentIntentId || null };
   }
   const autopay = client?.autopay || {};
   if (!autopay.enabled || !autopay.defaultPaymentMethodId || !autopay.stripeCustomerId) {
+    const message = 'Autopay is not set up for this client, so nothing was charged.';
+    await markInvoicePaymentFailed(invoiceId, { message });
     const link = await fallBackToPayNow(invoiceId);
-    return { status: 'skipped', paymentIntentId: null, payNowUrl: link?.url || null };
+    return { status: 'failed', reason: 'not_enrolled', paymentIntentId: null, payNowUrl: link?.url || null, message };
   }
 
   // Stripe forgets idempotency keys after 24 hours, so a repeat of the
@@ -456,23 +560,26 @@ export async function chargeAutopay(invoice, client, { retry = false } = {}) {
     const existing = await getStripe().paymentIntents.retrieve(existingIntentId).catch(() => null);
     if (existing?.status === 'succeeded') {
       await settlePaid(invoiceId, { paymentIntentId: existing.id, amountCents: existing.amount_received ?? existing.amount });
-      return { status: 'paid', paymentIntentId: existing.id };
+      return { status: 'succeeded', paymentIntentId: existing.id };
     }
     if (existing?.status === 'processing') return { status: 'processing', paymentIntentId: existing.id };
     if (!retry && existing?.metadata?.source === 'autopay') {
-      return { status: 'payment_failed', paymentIntentId: existing.id, payNowUrl: invoice.payment?.payNowUrl || null };
+      return { status: 'failed', paymentIntentId: existing.id, payNowUrl: invoice.payment?.payNowUrl || null };
     }
   }
 
   const idempotencyKey = retry ? `${invoiceId}:retry-${await nextChargeAttempt(invoiceId)}` : invoiceId;
   let intent;
   try {
+    // PaymentIntents no longer take `payment_method_types` either; the
+    // configuration matching the saved method's type allows it.
+    const saved = await getStripe().paymentMethods.retrieve(autopay.defaultPaymentMethodId);
     intent = await getStripe().paymentIntents.create({
       amount: invoice.totalCents,
       currency: 'usd',
       customer: autopay.stripeCustomerId,
       payment_method: autopay.defaultPaymentMethodId,
-      payment_method_types: [...PAYMENT_METHOD_TYPES],
+      payment_method_configuration: await paymentMethodConfiguration(saved?.type === 'card' ? 'card' : 'bank'),
       off_session: true,
       confirm: true,
       description: describeInvoice(invoice),
@@ -480,21 +587,24 @@ export async function chargeAutopay(invoice, client, { retry = false } = {}) {
     }, { idempotencyKey });
   } catch (error) {
     // Declines arrive as errors carrying the PaymentIntent they failed on. An
-    // invalid request (a detached or unusable payment method) also means the
-    // client has to act. Network and Stripe-side errors are rethrown: the
-    // idempotency key makes the caller's retry safe.
+    // invalid request about the payment method itself (detached, unusable,
+    // no mandate) also means the client has to act. Anything else — our own
+    // bad request, network, Stripe-side — is rethrown rather than blamed on
+    // the client; the idempotency key makes the caller's retry safe.
     const failedIntent = error?.raw?.payment_intent || error?.payment_intent || null;
-    const clientMustAct = ['StripeCardError', 'StripeInvalidRequestError'].includes(error?.type);
+    const clientMustAct = error?.type === 'StripeCardError'
+      || (error?.type === 'StripeInvalidRequestError'
+        && (error.param === 'payment_method' || /payment_method|mandate|resource_missing/.test(String(error.code || ''))));
     if (!failedIntent && !clientMustAct) throw error;
     const paymentIntentId = failedIntent?.id || null;
     await markInvoicePaymentFailed(invoiceId, { paymentIntentId, message: error.message });
     const link = await fallBackToPayNow(invoiceId);
-    return { status: 'payment_failed', paymentIntentId, payNowUrl: link?.url || null, message: text(error.message, 300) };
+    return { status: 'failed', paymentIntentId, payNowUrl: link?.url || null, message: text(error.message, 300) };
   }
 
   if (intent.status === 'succeeded') {
     await settlePaid(invoiceId, { paymentIntentId: intent.id, amountCents: intent.amount_received ?? intent.amount });
-    return { status: 'paid', paymentIntentId: intent.id };
+    return { status: 'succeeded', paymentIntentId: intent.id };
   }
   if (intent.status === 'processing') {
     await recordProcessing(invoiceId, { paymentIntentId: intent.id });
@@ -505,25 +615,24 @@ export async function chargeAutopay(invoice, client, { retry = false } = {}) {
   const message = intent.last_payment_error?.message || `Payment needs the client (${intent.status}).`;
   await markInvoicePaymentFailed(invoiceId, { paymentIntentId: intent.id, message });
   const link = await fallBackToPayNow(invoiceId);
-  return { status: 'payment_failed', paymentIntentId: intent.id, payNowUrl: link?.url || null, message: text(message, 300) };
+  return { status: 'failed', paymentIntentId: intent.id, payNowUrl: link?.url || null, message: text(message, 300) };
 }
 
-/** A Checkout Session in setup mode the admin sends to the client to enroll. */
-export async function createAutopaySetupLinkForClient(clientId) {
+/**
+ * A Checkout Session in setup mode the admin sends to the client to enroll.
+ * Bank (ACH) by default; `method: 'card'` for a client who cannot use a bank.
+ */
+export async function createAutopaySetupLinkForClient(clientId, { method = DEFAULT_PAYMENT_METHOD } = {}) {
+  const kind = normalizeMethod(method);
   const client = await loadClient(clientId);
   const customerId = await ensureStripeCustomer(client);
-  const metadata = { clientId, source: 'autopay_setup' };
+  const metadata = { clientId, source: 'autopay_setup', method: kind };
   const session = await getStripe().checkout.sessions.create({
     mode: 'setup',
     customer: customerId,
     currency: 'usd',
-    payment_method_types: [...PAYMENT_METHOD_TYPES],
-    payment_method_options: {
-      us_bank_account: {
-        verification_method: 'automatic',
-        financial_connections: { permissions: ['payment_method'] }
-      }
-    },
+    payment_method_configuration: await paymentMethodConfiguration(kind),
+    ...(kind === 'bank' ? { payment_method_options: BANK_OPTIONS } : {}),
     metadata,
     setup_intent_data: { metadata, description: `Autopay for ${text(client.name, 120) || 'BiteSites invoices'}` },
     success_url: `${SITE_ORIGIN}/pay/success?setup=1&session_id={CHECKOUT_SESSION_ID}`,
@@ -533,6 +642,7 @@ export async function createAutopaySetupLinkForClient(clientId) {
   return {
     url: session.url,
     sessionId: session.id,
+    method: kind,
     expiresAt: new Date((session.expires_at || nowSeconds() + CHECKOUT_LIFETIME_SECONDS) * 1000).toISOString()
   };
 }
@@ -573,12 +683,9 @@ async function enrollAutopay(clientId, customerId, paymentMethodId) {
 async function expireOpenPayNowSession(invoiceId, keepSessionId = '') {
   try {
     const link = await findPayLink(invoiceId);
-    if (!link?.sessionId || link.sessionId === keepSessionId) return;
-    const stripe = getStripe();
-    const session = await stripe.checkout.sessions.retrieve(link.sessionId);
-    if (session?.status === 'open') await stripe.checkout.sessions.expire(session.id);
+    if (link) await expireSessions(link, keepSessionId);
   } catch (error) {
-    console.warn('[billing] could not expire Pay Now session', { invoiceId, message: error.message });
+    console.warn('[billing] could not expire Pay Now sessions', { invoiceId, message: error.message });
   }
 }
 

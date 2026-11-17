@@ -136,6 +136,8 @@ export function isBlockedSecretPath(file) {
   const base = normalized.split('/').pop();
   if (/^\.env(?:$|\.)/.test(base)
       && !/\.(?:example|sample|template)$/.test(base)) return true;
+  // Firebase emulator secret overrides (functions/.secret.local).
+  if (/\.secret\.local$/.test(base)) return true;
   if (/^\.dev\.vars(?:$|\.)/.test(base)
       && !/\.(?:example|sample|template)$/.test(base)) return true;
   if (/^(?:service[-_.]?account|firebase[-_.]?adminsdk|google[-_.]?credentials).+\.json$/.test(base)) return true;

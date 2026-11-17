@@ -9,7 +9,7 @@ import { app } from '../../lib/firebase';
 const functions = getFunctions(app, 'us-central1');
 const call = name => async data => (await httpsCallable(functions, name)(data)).data;
 
-export const createAutopaySetupLink = clientId => call('createAutopaySetupLink')({ clientId });
+export const createAutopaySetupLink = (clientId, method = 'bank') => call('createAutopaySetupLink')({ clientId, method });
 export const setAutopay = (clientId, enabled) => call('setAutopay')({ clientId, enabled });
 export const refreshPayNowLink = invoiceId => call('refreshPayNowLink')({ invoiceId });
 export const chargeInvoiceNow = invoiceId => call('chargeInvoiceNow')({ invoiceId });
