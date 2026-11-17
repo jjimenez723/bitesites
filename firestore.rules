@@ -832,12 +832,47 @@ service cloud.firestore {
       }
     }
 
-    // ------------------------------------------------------------ billing
-    // Monthly client invoicing (BILLING_INVOICING.md). Admins can read; every
-    // write goes through the billing Cloud Functions, which enforce numbering,
-    // status transitions and amount arithmetic. `billingClients.autopay` is
-    // written only by the server-side Stripe integration.
+    // ---------------------------------------------------------------- billing
+    // Monthly client invoicing (BILLING_INVOICING.md) and its Stripe collection
+    // (STRIPE_BILLING.md). One block per collection on purpose: Firestore ORs
+    // every matching `allow`, so a second, looser match on the same path would
+    // silently override this one.
+    //
+    // Admins can read. Every write goes through the billing Cloud Functions
+    // (Admin SDK), which enforce numbering, amount arithmetic, status
+    // transitions, autopay and every Stripe field. The single browser write
+    // allowed is the one an admin may need when a callable is unavailable:
+    // recording a manual payment (Zelle, check, other) on an issued invoice.
+    // Only Stripe — through the webhook and the charge path — can say a Stripe
+    // payment happened or failed.
 
+    function manualPaymentMethods() {
+      return ['zelle', 'check', 'other'];
+    }
+
+    function manualPaymentKeys() {
+      return ['method', 'paidAt', 'note', 'recordedBy'];
+    }
+
+    function newPayment() {
+      return request.resource.data.get('payment', {});
+    }
+
+    function oldPayment() {
+      return resource.data.get('payment', {});
+    }
+
+    function isManualMarkPaid() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'payment', 'updatedAt'])
+        && resource.data.get('status', '') in ['finalized', 'sent', 'payment_failed']
+        && request.resource.data.get('status', '') == 'paid'
+        && newPayment().diff(oldPayment()).affectedKeys().hasOnly(manualPaymentKeys())
+        && newPayment().get('method', '') in manualPaymentMethods();
+    }
+
+    // billingClients/{id}.autopay (enrollment, Stripe customer, saved payment
+    // method) is written only by billing-stripe.js; everything else by the
+    // billingSaveClient callable. No browser writes.
     match /billingClients/{clientId} {
       allow read: if isAdmin();
       allow write: if false;
@@ -845,7 +880,22 @@ service cloud.firestore {
 
     match /invoices/{invoiceId} {
       allow read: if isAdmin();
-      allow write: if false;
+      allow create, delete: if false;
+      allow update: if isAdmin() && isManualMarkPaid();
+    }
+
+    // Server-only: the stable Pay Now link tokens, the Stripe webhook
+    // idempotency ledger, and the deliberate-retry counter for charges.
+    match /billingPayLinks/{token} {
+      allow read, write: if false;
+    }
+
+    match /stripeEvents/{eventId} {
+      allow read, write: if false;
+    }
+
+    match /billingChargeAttempts/{invoiceId} {
+      allow read, write: if false;
     }
 
     // Anything not matched above is denied.

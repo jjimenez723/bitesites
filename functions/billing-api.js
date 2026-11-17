@@ -12,19 +12,21 @@ import { getStorage } from 'firebase-admin/storage';
 import { BillingError, createBillingService, serialize } from './billing-core.js';
 import { buildMessage, getEmailTemplate, sendResend } from './email.js';
 import { BILLING_TIME_ZONE } from './billing-math.js';
+import { stripeSecrets } from './billing-stripe.js';
+import { callableAppCheckEnforced } from './deployment-environment.js';
 
 const RESEND_API_KEY = defineSecret('RESEND_API_KEY');
 const WP_LEADS_SECRET = defineSecret('WP_LEADS_SECRET');
 
-const callOptions = { enforceAppCheck: true, maxInstances: 5, timeoutSeconds: 120, memory: '512MiB' };
+// App Check is enforced except on the staging project (callableAppCheckEnforced).
+const callOptions = { enforceAppCheck: callableAppCheckEnforced(), maxInstances: 5, timeoutSeconds: 120, memory: '512MiB' };
 
-// Optional hook for the Stripe module: if ./billing-stripe.js exports
-// `stripeSecrets` (an array of defineSecret params), the functions that may
-// create a pay link or charge autopay bind them. Absent module → no secrets.
-// Import problems are reported by loadStripeModule at call time, not here.
-const stripeSecrets = await import('./billing-stripe.js')
-  .then(mod => (Array.isArray(mod.stripeSecrets) ? mod.stripeSecrets : []))
-  .catch(() => []);
+// Every function that may reach billing-stripe.js (Pay Now link at finalize,
+// autopay charge at send, the monthly schedule that does both) binds the Stripe
+// secrets; without them isStripeConfigured() correctly reports false. A static
+// import, so a broken Stripe module fails the deploy instead of silently
+// dropping the secrets (import at the top of this file).
+
 const fromAddress = () => process.env.RESEND_FROM_EMAIL || 'BiteSites <jensy@bitesites.org>';
 const appUrl = () => (process.env.APP_URL || 'https://bitesites.org').replace(/\/$/, '');
 

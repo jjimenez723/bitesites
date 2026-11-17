@@ -155,3 +155,15 @@ export function screeningBlockReason(providerId, options = {}) {
     : 'Paid phone screening is disabled';
   return `${headline} (${admission.reason}; environment=${admission.environment}; provider=${admission.provider}).`;
 }
+
+/**
+ * Whether a callable demands an App Check token. Enforced everywhere except a
+ * project explicitly deployed as `staging`, whose frontend has no App Check
+ * site key (VITE_APPCHECK_ENABLED=false; see STAGING_ENVIRONMENT.md), so an
+ * enforcing callable could never be reached from the staging admin. Read when
+ * the functions are loaded for deploy, from the project's dotenv. Fail-closed:
+ * an unset or unknown value resolves to production and stays enforced.
+ */
+export function callableAppCheckEnforced(env = process.env) {
+  return text(env?.BITESITES_DEPLOYMENT_ENVIRONMENT) !== 'staging';
+}

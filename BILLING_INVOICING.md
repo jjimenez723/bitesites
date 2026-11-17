@@ -1,5 +1,7 @@
 # Billing: monthly client invoicing and Resend email
 
+> **🚧 IN PROGRESS** — 2026-11-16 — billing integration (#18 + #19), staging deploy and staging E2E — `feat/billing-integration`: `firestore.rules`, `functions/billing-*.js`, `src/admin/Billing.jsx`, `scripts/staging.mjs`, `PRODUCTION_BILLING_CUTOVER.md`
+
 Branch `feat/resend-invoicing`. Pilot client: Clifton Ave Animal Hospital (CAAH).
 Stripe autopay / Pay Now is built separately on `feat/stripe-autopay` against the shared
 contract below.

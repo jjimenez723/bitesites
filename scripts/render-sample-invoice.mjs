@@ -28,7 +28,7 @@ const base = {
 };
 
 const variants = {
-  'CAAH_INVOICE_011_sample.pdf': { ...base, status: 'finalized', autopay: false, payment: { payNowUrl: 'https://checkout.stripe.com/c/pay/sample-session' } },
+  'CAAH_INVOICE_011_sample.pdf': { ...base, status: 'finalized', autopay: false, payment: { payNowUrl: 'https://bitesites.org/api/pay/sample_token_0123456789' } },
   'CAAH_INVOICE_011_sample_autopay.pdf': { ...base, status: 'finalized', autopay: true, payment: {} },
   'CAAH_INVOICE_011_sample_draft.pdf': { ...base, status: 'draft', autopay: false, payment: {} }
 };

@@ -73,7 +73,13 @@ export function buildStagingParams(config) {
   return {
     '# Public Firebase deployment parameters for the non-dialing staging environment.': '',
     'PUBLIC_APP_URL': config.publicAppUrl,
-    ...REQUIRED_PARAM_VALUES
+    ...REQUIRED_PARAM_VALUES,
+    // Every defineString needs a value for a non-interactive deploy.
+    'PAID_PHONE_SCREENING': 'disabled',
+    '# Billing: Pay Now links and admin links point at the staging origin, and a live Stripe key is refused.': '',
+    'BILLING_SITE_ORIGIN': config.publicAppUrl,
+    'APP_URL': config.publicAppUrl,
+    'STRIPE_LIVE_MODE_AUTHORIZED': 'false'
   };
 }
 
@@ -100,7 +106,30 @@ export function assertStagingParams(config, params) {
   for (const [name, value] of Object.entries(REQUIRED_PARAM_VALUES)) {
     if (params[name] !== value) throw new Error(`Staging parameter ${name} must be ${value}.`);
   }
+  // Billing must never mint production Pay Now links or accept live Stripe
+  // money from staging.
+  if ((params.BILLING_SITE_ORIGIN || '') !== config.publicAppUrl) {
+    throw new Error('Staging BILLING_SITE_ORIGIN must be the staging origin, so Pay Now links never point at production.');
+  }
+  if (String(params.STRIPE_LIVE_MODE_AUTHORIZED || '').trim().toLowerCase() === 'true') {
+    throw new Error('Staging must not set STRIPE_LIVE_MODE_AUTHORIZED=true.');
+  }
 }
+
+// Which Firebase login runs the deploy. The CLI's default login may not have
+// access to the staging project; pass --firebase-account=EMAIL (or set
+// BITESITES_STAGING_FIREBASE_ACCOUNT). The project is still fixed by the
+// reviewed staging config, so the account cannot redirect the deploy.
+export function firebaseAccountArgs(argv = process.argv, env = process.env) {
+  const prefix = '--firebase-account=';
+  const account = clean(argv.find(value => value.startsWith(prefix))?.slice(prefix.length) || env.BITESITES_STAGING_FIREBASE_ACCOUNT);
+  if (!account) return [];
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(account)) throw new Error('--firebase-account must be an email address.');
+  return ['--account', account];
+}
+
+// Rules, indexes, Storage rules (invoice PDFs), Functions and Hosting.
+export const STAGING_DEPLOY_TARGETS = 'firestore:rules,firestore:indexes,storage,functions,hosting';
 
 export function assertStagingFrontendConfig(config, params) {
   const required = [
@@ -176,8 +205,8 @@ function dryRun(config) {
   preflight(config);
   requireFirebaseCli();
   command('firebase', [
-    'deploy', '--only', 'firestore:rules,firestore:indexes,functions,hosting',
-    '--dry-run', '--project', config.firebaseProjectId
+    'deploy', '--only', STAGING_DEPLOY_TARGETS,
+    '--dry-run', '--project', config.firebaseProjectId, ...firebaseAccountArgs()
   ]);
 }
 
@@ -192,8 +221,8 @@ function deploy(config) {
   command('npm', ['run', 'check', '--prefix', 'functions']);
   command('npm', ['run', 'check', '--prefix', 'services/realtime-sideband']);
   command('firebase', [
-    'deploy', '--only', 'firestore:rules,firestore:indexes,functions,hosting',
-    '--project', config.firebaseProjectId
+    'deploy', '--only', STAGING_DEPLOY_TARGETS,
+    '--project', config.firebaseProjectId, ...firebaseAccountArgs()
   ]);
 }
 

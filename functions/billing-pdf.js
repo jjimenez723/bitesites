@@ -5,8 +5,9 @@
 // from that document's text boxes so a reprint lines up with the original.
 //
 // The only additions are the payment call to action, which the foundation did
-// not have: a "Pay Now" button when autopay is off and a pay link exists, or an
-// autopay notice when it is on. Zelle and check details are always printed.
+// not have: bank-first Pay Now buttons when autopay is off and a pay link exists
+// ("Pay by bank (ACH)" primary, "Pay by card" secondary — billing-pay-options.js),
+// or an autopay notice when it is on. Zelle and check details are always printed.
 
 import PDFDocument from 'pdfkit';
 import { fileURLToPath } from 'node:url';
@@ -14,6 +15,7 @@ import { dirname, join } from 'node:path';
 import {
   BILLING_ISSUER, DEFAULT_TERMS, formatLongDate, formatMoney, formatUsDate, isoDay
 } from './billing-math.js';
+import { payNowOptions } from './billing-pay-options.js';
 
 const ASSETS = join(dirname(fileURLToPath(import.meta.url)), 'billing-assets');
 const FONTS = {
@@ -51,12 +53,15 @@ export function paymentNotice(invoice) {
     return { kind: 'paid', text: `Paid${paidOn ? ` on ${formatLongDate(paidOn)}` : ''} — thank you.` };
   }
   if (invoice?.status === 'void') return { kind: 'void', text: 'This invoice has been voided. No payment is due.' };
-  if (invoice?.autopay) {
+  // A failed autopay charge falls back to Pay Now (billing-stripe.js mints the
+  // link), so a re-sent invoice asks for payment instead of promising a charge.
+  const autopayFailed = invoice?.status === 'payment_failed' && Boolean(invoice?.payment?.payNowUrl);
+  if (invoice?.autopay && !autopayFailed) {
     const chargeDate = invoice.autopayChargeDate || invoice.issueDate;
     return { kind: 'autopay', text: `Autopay enabled — your card on file will be charged on ${formatLongDate(chargeDate)}.` };
   }
-  const url = invoice?.payment?.payNowUrl;
-  if (url && /^https:\/\//.test(url)) return { kind: 'pay_now', url, text: 'Pay Now' };
+  const options = payNowOptions(invoice);
+  if (options.length) return { kind: 'pay_now', url: options[0].url, options, text: options[0].label };
   return { kind: 'manual', text: '' };
 }
 
@@ -128,19 +133,34 @@ function drawTable(doc, invoice) {
   return top;
 }
 
+// Bank first: a filled "Pay by bank (ACH)" button and, beside it, an outlined
+// "Pay by card" button, each a clickable link with its note underneath. Drawn
+// as a full-width row between the table and the "Payable to" block so it never
+// collides with the right-aligned Terms line. Returns the y below the row.
+const PAY_ROW_HEIGHT = 30;
+function drawPayNowRow(doc, options, top) {
+  const widths = [200, 150];
+  let x = LEFT;
+  let bottom = top + PAY_ROW_HEIGHT;
+  options.slice(0, 2).forEach((option, index) => {
+    const width = widths[index];
+    if (option.primary) {
+      doc.roundedRect(x, top, width, PAY_ROW_HEIGHT, 6).fill('#111111');
+      doc.font('bold').fontSize(12).fillColor('#ffffff');
+    } else {
+      doc.roundedRect(x, top, width, PAY_ROW_HEIGHT, 6).lineWidth(0.9).strokeColor('#111111').stroke();
+      doc.font('bold').fontSize(11).fillColor(INK);
+    }
+    doc.text(option.label, x, top + (option.primary ? 9 : 9.5), { width, align: 'center', lineBreak: false });
+    doc.link(x, top, width, PAY_ROW_HEIGHT, option.url);
+    doc.font('regular').fontSize(8).fillColor(MUTED).text(option.note, x, top + PAY_ROW_HEIGHT + 5, { width });
+    bottom = Math.max(bottom, doc.y);
+    x += width + 12;
+  });
+  return bottom;
+}
+
 function drawPaymentCallToAction(doc, notice, top) {
-  if (notice.kind === 'pay_now') {
-    const width = 170;
-    const height = 38;
-    doc.roundedRect(LEFT, top, width, height, 6).fill('#111111');
-    doc.font('bold').fontSize(13).fillColor('#ffffff')
-      .text('Pay Now', LEFT, top + 11.5, { width, align: 'center', lineBreak: false });
-    doc.link(LEFT, top, width, height, notice.url);
-    doc.font('regular').fontSize(8.5).fillColor(MUTED)
-      .text('Pay securely online by card or bank transfer.', LEFT, top + height + 7, { width: 190 })
-      .text('Zelle and checks are welcome too.', LEFT, doc.y + 1, { width: 190 });
-    return;
-  }
   if (notice.kind === 'autopay' || notice.kind === 'paid' || notice.kind === 'void') {
     const width = 210;
     doc.font('bold').fontSize(10);
@@ -200,13 +220,23 @@ export async function renderInvoicePdf(invoice, client, { issuer = BILLING_ISSUE
 
   const tableBottom = drawTable(doc, invoice);
 
-  let top = tableBottom + 40.5;
-  if (top + 130 > PAGE.height - 36) {
-    doc.addPage({ size: 'LETTER', margin: 0 });
-    top = 72;
-  }
   const notice = paymentNotice(invoice);
-  drawPaymentCallToAction(doc, notice, top + 4);
+  let top = tableBottom + 40.5;
+  if (notice.kind === 'pay_now') {
+    // Row (~70pt with notes) + gap + the Payable-to block (~125pt).
+    let rowTop = tableBottom + 24;
+    if (rowTop + 70 + 18 + 125 > PAGE.height - 30) {
+      doc.addPage({ size: 'LETTER', margin: 0 });
+      rowTop = 72;
+    }
+    top = drawPayNowRow(doc, notice.options, rowTop) + 22;
+  } else {
+    if (top + 130 > PAGE.height - 36) {
+      doc.addPage({ size: 'LETTER', margin: 0 });
+      top = 72;
+    }
+    drawPaymentCallToAction(doc, notice, top + 4);
+  }
 
   rightText(doc, 'Payable to:', top, { font: 'bold', size: 17 });
   labelled(doc, 'Zelle: ', issuer.zelle, 0, top + 39.2, { align: 'right' });

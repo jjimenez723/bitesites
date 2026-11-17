@@ -43,7 +43,7 @@ const fakeStripe = ({ chargeStatus = 'succeeded' } = {}) => {
   return {
     calls,
     isStripeConfigured: () => true,
-    createPayNowLink: async (invoice, client) => { calls.links.push({ invoice, client }); return { url: `https://checkout.stripe.com/c/pay/cs_test_${invoice.id}`, sessionId: `cs_test_${invoice.id}` }; },
+    createPayNowLink: async (invoice, client) => { calls.links.push({ invoice, client }); return { url: `https://bitesites.org/api/pay/tok_${invoice.id}`, sessionId: `cs_test_${invoice.id}` }; },
     chargeAutopay: async (invoice, client) => { calls.charges.push({ invoice, client }); return { status: chargeStatus, paymentIntentId: 'pi_test_1' }; }
   };
 };
@@ -163,11 +163,32 @@ test('with Stripe and autopay off: finalize creates the Pay Now link and the ema
   const { invoice } = await service.createDraft('caah', '2026-11');
   await service.send(invoice.id, { uid: 'admin-1' }); // a draft is finalized, then sent
   const stored = (await db.doc(`invoices/${invoice.id}`).get()).data();
-  assert.equal(stored.payment.payNowUrl, 'https://checkout.stripe.com/c/pay/cs_test_caah_2026-11');
+  assert.equal(stored.payment.payNowUrl, 'https://bitesites.org/api/pay/tok_caah_2026-11');
   assert.equal(stored.payment.stripeCheckoutSessionId, 'cs_test_caah_2026-11');
   assert.equal(stripe.calls.links[0].invoice.id, 'caah_2026-11');
   assert.equal(stripe.calls.charges.length, 0);
-  assert.match(sent[0].message.html, /cs_test_caah_2026-11"[^>]*>Pay Now</);
+  assert.match(sent[0].message.html, /href="https:\/\/bitesites\.org\/api\/pay\/tok_caah_2026-11"[^>]*>Pay by bank \(ACH\)</);
+  assert.match(sent[0].message.html, /href="https:\/\/bitesites\.org\/api\/pay\/tok_caah_2026-11\?method=card"[^>]*>Pay by card</);
+});
+
+test('a re-sent invoice after a failed autopay charge carries the Pay Now fallback, not the autopay promise', async () => {
+  await seedCaah({ autopay: { enabled: true, stripeCustomerId: 'cus_test', defaultPaymentMethodId: 'pm_test' } });
+  const stripe = fakeStripe({ chargeStatus: 'failed' });
+  // The real chargeAutopay marks the invoice failed and mints a Pay Now link.
+  stripe.chargeAutopay = async invoice => {
+    await db.doc(`invoices/${invoice.id}`).set({ payment: { payNowUrl: `https://bitesites.org/api/pay/tok_${invoice.id}` } }, { merge: true });
+    return { status: 'failed', paymentIntentId: 'pi_failed_1' };
+  };
+  const { service, sent, files } = harness({ stripe });
+  const { invoice } = await service.createDraft('caah', '2026-11');
+  await service.send(invoice.id);
+  assert.match(sent[0].message.html, /Autopay enabled/);
+  assert.equal((await db.doc(`invoices/${invoice.id}`).get()).get('status'), 'payment_failed');
+  await service.send(invoice.id, { resend: true });
+  assert.match(sent[1].message.html, />Pay by bank \(ACH\)</);
+  assert.doesNotMatch(sent[1].message.html, /Autopay enabled/);
+  const pdfPath = (await db.doc(`invoices/${invoice.id}`).get()).get('pdfPath');
+  assert.ok(files.get(pdfPath).includes(Buffer.from('https://bitesites.org/api/pay/tok_caah_2026-11')), 'the stored PDF is re-rendered with the Pay Now links');
 });
 
 test('with autopay on: no pay link, the email says when the card is charged, and the charge follows the send', async () => {

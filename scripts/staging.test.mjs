@@ -7,7 +7,9 @@ import {
   parseParams,
   serializeParams,
   assertStagingParams,
-  assertStagingFrontendConfig
+  assertStagingFrontendConfig,
+  firebaseAccountArgs,
+  STAGING_DEPLOY_TARGETS
 } from './staging.mjs';
 
 const valid = () => ({
@@ -33,6 +35,19 @@ test('staging parameter file hard-disables external dialing', () => {
   assertStagingParams(config, reloaded);
   assert.equal(reloaded.BITESITES_DEPLOYMENT_ENVIRONMENT, 'staging');
   assert.equal(reloaded.OUTBOUND_EXTERNAL_DIALING, 'disabled');
+  assert.equal(reloaded.PAID_PHONE_SCREENING, 'disabled');
+  assert.equal(reloaded.BILLING_SITE_ORIGIN, config.publicAppUrl);
+  assert.equal(reloaded.STRIPE_LIVE_MODE_AUTHORIZED, 'false');
+  assert.throws(() => assertStagingParams(config, { ...reloaded, BILLING_SITE_ORIGIN: 'https://bitesites.org' }), /BILLING_SITE_ORIGIN/);
+  assert.throws(() => assertStagingParams(config, { ...reloaded, STRIPE_LIVE_MODE_AUTHORIZED: 'true' }), /STRIPE_LIVE_MODE_AUTHORIZED/);
+});
+
+test('the staging deploy account is optional, explicit, and an email', () => {
+  assert.deepEqual(firebaseAccountArgs([], {}), []);
+  assert.deepEqual(firebaseAccountArgs(['--firebase-account=ops@example.com'], {}), ['--account', 'ops@example.com']);
+  assert.deepEqual(firebaseAccountArgs([], { BITESITES_STAGING_FIREBASE_ACCOUNT: 'ops@example.com' }), ['--account', 'ops@example.com']);
+  assert.throws(() => firebaseAccountArgs(['--firebase-account=--project'], {}), /email/);
+  assert.match(STAGING_DEPLOY_TARGETS, /\bstorage\b/);
 });
 
 test('staging frontend must point at the reviewed staging Firebase project', () => {

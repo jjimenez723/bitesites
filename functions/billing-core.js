@@ -5,7 +5,9 @@
 //     └──────────── void ◀──┴─────────────────────┘
 //
 // Every transition is server-side. The browser can read `billingClients` and
-// `invoices` (admins only) but never write them; see firestore.rules.
+// `invoices` (admins only); the one browser write firestore.rules allows is an
+// admin recording a manual Zelle/check/other payment on an issued invoice. The
+// UI uses the billingMarkPaid callable for that too.
 //
 // Stripe is optional and owned by another module. At finalize/send this file
 // does a guarded dynamic import of ./billing-stripe.js, which (when present)
@@ -352,7 +354,16 @@ export function createBillingService({
     if (!client) fail('not-found', 'That billing client does not exist.');
     const recipients = client.billingEmails || [];
     if (!recipients.length) fail('failed-precondition', 'Add a billing email for this client before sending.');
-    const pdf = await readPdf(invoice, client);
+    // After a failed autopay charge the stored PDF still promises a charge; the
+    // re-sent invoice carries the Pay Now fallback instead, so re-render it.
+    let pdf;
+    if (invoice.status === 'payment_failed') {
+      const stored = await storePdf(invoice, client);
+      pdf = stored.pdf;
+      await invoices().doc(invoiceId).update({ pdfPath: stored.path, updatedAt: stamp() });
+    } else {
+      pdf = await readPdf(invoice, client);
+    }
     const message = buildInvoiceEmail({ invoice, client, pdf, from });
     const sendCount = (Number(invoice.email?.sendCount) || 0) + 1;
     let result;

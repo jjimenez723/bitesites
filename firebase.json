@@ -36,6 +36,8 @@
       { "source": "/api/byte-tools", "function": { "functionId": "byteWebTools", "region": "us-central1" } },
       { "source": "/api/bit-session", "function": { "functionId": "bitChatSession", "region": "us-central1" } },
       { "source": "/api/bit-chat", "function": { "functionId": "bitChatTurn", "region": "us-central1" } },
+      { "source": "/api/stripe-webhook", "function": { "functionId": "stripeWebhook", "region": "us-central1" } },
+      { "source": "/api/pay/**", "function": { "functionId": "billingPayNow", "region": "us-central1" } },
       { "source": "**", "destination": "/index.html" }
     ],
     "headers": [

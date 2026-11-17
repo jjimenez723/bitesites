@@ -2,7 +2,9 @@
 //
 // This screen is a view over server state. Every change — numbering, amounts,
 // status transitions, sending — goes through the billing Cloud Functions, which
-// re-derive and validate everything; the browser cannot write these records.
+// re-derive and validate everything. firestore.rules lets the browser write
+// nothing here except a manual (Zelle/check/other) mark-paid, and this screen
+// uses the billingMarkPaid callable even for that.
 
 import React, { Component, useCallback, useEffect, useMemo, useState } from 'react';
 import { Panel, Pill } from './Panel';
@@ -11,11 +13,9 @@ import {
   saveBillingClient, sendInvoice, updateInvoiceDraft, voidInvoice
 } from './billing-api';
 
-// The Stripe side supplies src/admin/billing/BillingPaymentPanel.jsx. Until it
-// exists this glob is empty and nothing is rendered in its place.
-const paymentPanelModules = import.meta.glob('./billing/BillingPaymentPanel.jsx', { eager: true });
-const paymentPanelModule = Object.values(paymentPanelModules)[0];
-const BillingPaymentPanel = paymentPanelModule?.default || paymentPanelModule?.BillingPaymentPanel || null;
+// Stripe collection (Pay Now links, autopay, charges) for the open invoice.
+// Wrapped in PaymentPanelBoundary so a Stripe UI fault never hides the invoice.
+import BillingPaymentPanel from './billing/BillingPaymentPanel.jsx';
 
 const STATUSES = ['draft', 'finalized', 'sent', 'payment_failed', 'paid', 'void'];
 const STATUS_LABEL = {
@@ -254,17 +254,16 @@ function InvoiceDetail({ invoice, client, onChanged, onNotice }) {
           <div className="detail-row"><dt>Payment</dt><dd>
             {invoice.status === 'paid'
               ? `Paid ${dateLabel(invoice.payment?.paidAt)} · ${invoice.payment?.method || ''}`
-              : invoice.autopay ? `Autopay charge${invoice.payment?.autopayError ? ` not completed: ${invoice.payment.autopayError}` : ' after sending'}`
-                : invoice.payment?.payNowUrl ? 'Pay Now link created' : 'Zelle / check (no online pay link)'}
+              : invoice.payment?.processingAt ? 'Bank (ACH) payment processing — settles in a few business days'
+                : invoice.autopay && invoice.status !== 'payment_failed' ? `Autopay charge${invoice.payment?.autopayError ? ` not completed: ${invoice.payment.autopayError}` : ' after sending'}`
+                  : invoice.payment?.payNowUrl ? 'Pay Now link created (bank first, card as backup)' : 'Zelle / check (no online pay link)'}
           </dd></div>
         </dl>
       </section>
 
-      {BillingPaymentPanel && (
-        <PaymentPanelBoundary>
-          <BillingPaymentPanel invoice={invoice} client={client} onChange={onChanged} />
-        </PaymentPanelBoundary>
-      )}
+      <PaymentPanelBoundary>
+        <BillingPaymentPanel invoice={invoice} client={client} onChange={onChanged} />
+      </PaymentPanelBoundary>
 
       {preview && (
         <section className="billing-preview">
@@ -275,7 +274,7 @@ function InvoiceDetail({ invoice, client, onChanged, onNotice }) {
 
       {OPEN_STATUSES.includes(invoice.status) && (
         <section className="finance-form-section">
-          <div className="finance-form-section-head"><div><strong>Record a Zelle or check payment</strong><small>Card payments are recorded automatically by Stripe.</small></div></div>
+          <div className="finance-form-section-head"><div><strong>Record a Zelle or check payment</strong><small>Online bank (ACH) and card payments are recorded automatically by Stripe.</small></div></div>
           <div className="finance-form-grid">
             <label><span>Method</span>
               <select value={payment.method} onChange={event => setPayment(current => ({ ...current, method: event.target.value }))}>

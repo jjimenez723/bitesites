@@ -1,8 +1,9 @@
 // The invoice email: branded HTML + plain text, PDF attached, sent through Resend.
 //
 // The payment area mirrors the PDF exactly (see paymentNotice in billing-pdf.js):
-// a Pay Now button when autopay is off and a pay link exists, an autopay notice
-// when it is on, and Zelle/check details either way.
+// bank-first Pay Now buttons when autopay is off and a pay link exists — "Pay by
+// bank (ACH)" primary, "Pay by card" secondary (billing-pay-options.js) — an
+// autopay notice when it is on, and Zelle/check details either way.
 
 import { BILLING_ISSUER, formatLongDate, formatMoney } from './billing-math.js';
 import { invoiceFilename, paymentNotice } from './billing-pdf.js';
@@ -46,8 +47,11 @@ export function buildInvoiceEmail({ invoice, client, pdf, from, to = client?.bil
       <td align="right" style="padding:12px 0;border-bottom:1px solid #e8e8e8;color:#222222;font-size:14px;line-height:20px;white-space:nowrap;">${escapeHtml(lineAmount(invoice, line))}</td>
     </tr>`).join('');
 
+  const payNowButton = option => (option.primary
+    ? `<table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:28px 0 0;"><tr><td style="border-radius:8px;background:#111111;"><a href="${escapeHtml(option.url)}" style="display:inline-block;padding:15px 34px;border:1px solid #111111;border-radius:8px;color:#ffffff;font-family:${font};font-size:16px;line-height:20px;font-weight:700;text-decoration:none;">${escapeHtml(option.label)}</a></td></tr></table><p style="margin:8px 0 0;color:#6b6b6b;font-size:13px;line-height:20px;">${escapeHtml(option.note)}</p>`
+    : `<table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:16px 0 0;"><tr><td style="border-radius:8px;background:#ffffff;"><a href="${escapeHtml(option.url)}" style="display:inline-block;padding:10px 24px;border:1px solid #111111;border-radius:8px;color:#111111;font-family:${font};font-size:14px;line-height:18px;font-weight:600;text-decoration:none;">${escapeHtml(option.label)}</a></td></tr></table>`);
   const payNow = notice.kind === 'pay_now'
-    ? `<table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:28px 0 0;"><tr><td style="border-radius:8px;background:#111111;"><a href="${escapeHtml(notice.url)}" style="display:inline-block;padding:15px 34px;border:1px solid #111111;border-radius:8px;color:#ffffff;font-family:${font};font-size:16px;line-height:20px;font-weight:700;text-decoration:none;">Pay Now</a></td></tr></table><p style="margin:12px 0 0;color:#6b6b6b;font-size:13px;line-height:20px;">Pay securely online by card or bank transfer. Zelle and checks are welcome too.</p>`
+    ? `${notice.options.map(payNowButton).join('')}<p style="margin:12px 0 0;color:#6b6b6b;font-size:13px;line-height:20px;">Zelle and checks are welcome too.</p>`
     : '';
   const banner = ['autopay', 'paid', 'void'].includes(notice.kind)
     ? `<p style="margin:28px 0 0;padding:14px 16px;border:1px solid #e1e1e1;border-radius:10px;background:#fafafa;color:#222222;font-size:14px;line-height:21px;font-weight:600;">${escapeHtml(notice.text)}</p>`
@@ -105,7 +109,7 @@ export function buildInvoiceEmail({ invoice, client, pdf, from, to = client?.bil
     ...textLines,
     `Total: ${formatMoney(invoice.totalCents)}`,
     '',
-    notice.kind === 'pay_now' ? `Pay Now: ${notice.url}` : notice.text,
+    ...(notice.kind === 'pay_now' ? notice.options.map(option => `${option.label}: ${option.url}`) : [notice.text]),
     due && notice.kind !== 'autopay' && notice.kind !== 'paid' && notice.kind !== 'void' ? `Due by ${due}.` : '',
     '',
     'Payable to:',
