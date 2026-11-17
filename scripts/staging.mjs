@@ -74,8 +74,12 @@ export function buildStagingParams(config) {
     '# Public Firebase deployment parameters for the non-dialing staging environment.': '',
     'PUBLIC_APP_URL': config.publicAppUrl,
     ...REQUIRED_PARAM_VALUES,
-    // Every defineString needs a value for a non-interactive deploy.
+    // Every defineString needs a value for a non-interactive deploy, even one
+    // with a default. Empty Search Console URL = the daily sync does nothing;
+    // empty OpenAI project = SIP dispatch reports itself unconfigured.
     'PAID_PHONE_SCREENING': 'disabled',
+    'SEARCH_CONSOLE_SITE_URL': '',
+    'OPENAI_PROJECT_ID': '',
     '# Billing: Pay Now links and admin links point at the staging origin, and a live Stripe key is refused.': '',
     'BILLING_SITE_ORIGIN': config.publicAppUrl,
     'APP_URL': config.publicAppUrl,

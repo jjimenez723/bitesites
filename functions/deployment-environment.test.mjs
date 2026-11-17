@@ -5,7 +5,8 @@ import {
   resolveOutboundDeploymentPolicy,
   externalDialingAdmission,
   externalDialingBlockReason,
-  callableAppCheckEnforced
+  callableAppCheckEnforced,
+  warmInstances
 } from './deployment-environment.js';
 
 test('staging remains non-dialing even if a flag is accidentally enabled', () => {
@@ -42,4 +43,10 @@ test('callable App Check is relaxed only for an explicit staging deployment', ()
   assert.equal(callableAppCheckEnforced({ BITESITES_DEPLOYMENT_ENVIRONMENT: 'production' }), true);
   assert.equal(callableAppCheckEnforced({ BITESITES_DEPLOYMENT_ENVIRONMENT: 'stagin' }), true, 'a typo stays enforced');
   assert.equal(callableAppCheckEnforced({ BITESITES_DEPLOYMENT_ENVIRONMENT: ' Staging ' }), false);
+});
+
+test('warm instances are production-only; staging keeps none', () => {
+  assert.equal(warmInstances(1, {}), 1);
+  assert.equal(warmInstances(1, { BITESITES_DEPLOYMENT_ENVIRONMENT: 'production' }), 1);
+  assert.equal(warmInstances(1, { BITESITES_DEPLOYMENT_ENVIRONMENT: 'staging' }), 0);
 });

@@ -151,10 +151,11 @@ export default function BillingPaymentPanel({ invoice: invoiceProp, client: clie
 
   return (
     <section className="billing-panel" aria-label="Stripe payment">
-      <header className="billing-panel-head">
+      {/* A div, not <header>: the marketing stylesheet fixes every <header> to the top of the page. */}
+      <div className="billing-panel-head">
         <h3>Payment</h3>
         {!stripeDashboardIsLive && <span className="billing-mode">Stripe test mode</span>}
-      </header>
+      </div>
 
       {error && <p className="admin-error">{error}</p>}
       {notice && <p className="billing-notice" role="status">{notice}</p>}
@@ -168,7 +169,7 @@ export default function BillingPaymentPanel({ invoice: invoiceProp, client: clie
           ['Amount', formatCents(invoice.totalCents)],
           ['Collection', invoice.autopay ? 'Autopay' : 'Pay Now link'],
           ['Paid', payment.paidAt ? `${formatWhen(payment.paidAt)}${payment.method ? ` · ${payment.method}` : ''}` : ''],
-          ['Processing since', !payment.paidAt && payment.processingAt ? formatWhen(payment.processingAt) : ''],
+          ['Processing since', !payment.paidAt && payment.processingAt && invoice.status !== 'payment_failed' ? formatWhen(payment.processingAt) : ''],
           ['Last error', invoice.status === 'payment_failed' ? payment.lastError : ''],
           ['Refunded', payment.refundedCents ? `${formatCents(payment.refundedCents)}${payment.fullyRefunded ? ' (full)' : ''}` : ''],
           ['Second payment', payment.duplicatePaymentIntentIds?.length

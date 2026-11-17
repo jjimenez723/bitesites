@@ -36,6 +36,8 @@ test('staging parameter file hard-disables external dialing', () => {
   assert.equal(reloaded.BITESITES_DEPLOYMENT_ENVIRONMENT, 'staging');
   assert.equal(reloaded.OUTBOUND_EXTERNAL_DIALING, 'disabled');
   assert.equal(reloaded.PAID_PHONE_SCREENING, 'disabled');
+  assert.equal(reloaded.SEARCH_CONSOLE_SITE_URL, '', 'staging never syncs the production Search Console property');
+  assert.ok('OPENAI_PROJECT_ID' in reloaded);
   assert.equal(reloaded.BILLING_SITE_ORIGIN, config.publicAppUrl);
   assert.equal(reloaded.STRIPE_LIVE_MODE_AUTHORIZED, 'false');
   assert.throws(() => assertStagingParams(config, { ...reloaded, BILLING_SITE_ORIGIN: 'https://bitesites.org' }), /BILLING_SITE_ORIGIN/);

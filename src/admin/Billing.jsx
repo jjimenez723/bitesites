@@ -120,7 +120,9 @@ function InvoiceDetail({ invoice, client, onChanged, onNotice }) {
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [preview, setPreview] = useState(null);
-  const [payment, setPayment] = useState({ method: 'zelle', paidAt: new Date().toISOString().slice(0, 10), note: '' });
+  // Today in New York (the billing time zone), not UTC: after 7–8 PM Eastern
+  // toISOString() already says tomorrow.
+  const [payment, setPayment] = useState({ method: 'zelle', paidAt: new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' }), note: '' });
 
   useEffect(() => {
     setLines(linesFromInvoice(invoice));
@@ -254,6 +256,7 @@ function InvoiceDetail({ invoice, client, onChanged, onNotice }) {
           <div className="detail-row"><dt>Payment</dt><dd>
             {invoice.status === 'paid'
               ? `Paid ${dateLabel(invoice.payment?.paidAt)} · ${invoice.payment?.method || ''}`
+              : invoice.status === 'payment_failed' ? `Payment failed${invoice.payment?.lastError ? `: ${invoice.payment.lastError}` : ''}${invoice.payment?.payNowUrl ? ' — Pay Now link ready (bank first)' : ''}`
               : invoice.payment?.processingAt ? 'Bank (ACH) payment processing — settles in a few business days'
                 : invoice.autopay && invoice.status !== 'payment_failed' ? `Autopay charge${invoice.payment?.autopayError ? ` not completed: ${invoice.payment.autopayError}` : ' after sending'}`
                   : invoice.payment?.payNowUrl ? 'Pay Now link created (bank first, card as backup)' : 'Zelle / check (no online pay link)'}

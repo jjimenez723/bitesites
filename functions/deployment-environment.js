@@ -167,3 +167,13 @@ export function screeningBlockReason(providerId, options = {}) {
 export function callableAppCheckEnforced(env = process.env) {
   return text(env?.BITESITES_DEPLOYMENT_ENVIRONMENT) !== 'staging';
 }
+
+/**
+ * Warm (always-on, billed) instances for latency-sensitive functions. Production
+ * keeps the requested count; an explicit `staging` deploy keeps none, so the
+ * non-dialing staging project never carries an always-on bill for Bit/Byte.
+ * Read at deploy-time load from the project's dotenv; unset → production.
+ */
+export function warmInstances(count, env = process.env) {
+  return text(env?.BITESITES_DEPLOYMENT_ENVIRONMENT) === 'staging' ? 0 : count;
+}
