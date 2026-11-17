@@ -16,6 +16,7 @@ import {
 import Overview from './Overview';
 import Performance from './Performance';
 import Finance from './Finance';
+import Billing from './Billing';
 import Leads from './Leads';
 import Crm from './Crm';
 import Conversations from './Conversations';
@@ -47,6 +48,7 @@ const NAV = [
   { to: '/admin', end: true, label: 'Overview', icon: 'M3 13h4v8H3zM10 3h4v18h-4zM17 9h4v12h-4z' },
   { to: '/admin/performance', label: 'Performance', icon: 'M3 18l5-6 4 3 8-10M16 5h4v4' },
   { to: '/admin/finance', label: 'Finance', icon: 'M4 18V8m6 10V4m6 14v-6m4 6H2M17 5.5c0-1-1-1.5-2-1.5s-2 .5-2 1.5 1 1.5 2 1.5 2 .5 2 1.5S16 9 15 9s-2-.5-2-1.5' },
+  { to: '/admin/billing', label: 'Billing', icon: 'M6 2h9l5 5v15H6zM15 2v5h5M9 12h8M9 16h8M9 8h3' },
   { to: '/admin/leads', label: 'Leads', icon: 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z' },
   { to: '/admin/crm', label: 'Fine Line CRM', icon: 'M3 4h18v4H3zM3 10h12v4H3zM3 16h8v4H3z' },
   { to: '/admin/conversations', label: 'Conversations', icon: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z' },
@@ -229,6 +231,7 @@ function AuthenticatedAdminApp() {
             {isAdminUser && <Route index element={<Overview />} />}
             {isAdminUser && <Route path="performance" element={<Performance />} />}
             {isAdminUser && <Route path="finance" element={<Finance canWrite={canWriteFinance} />} />}
+            {isAdminUser && <Route path="billing" element={<Billing />} />}
             {isAdminUser && <Route path="leads" element={<Leads />} />}
             {isAdminUser && <Route path="crm" element={<Crm />} />}
             {isAdminUser && <Route path="conversations" element={<Conversations />} />}

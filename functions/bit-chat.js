@@ -45,6 +45,7 @@ import {
 import { CRISIS_CARD, CRISIS_MESSAGES, isCrisisMessage } from './crisis-support.js';
 import { BIT_HISTORY_VARIABLE, runAgentTurn } from './bit-agent-turn.js';
 import { WEB_AGENT_IDS } from './web-agent-ids.js';
+import { warmInstances } from './deployment-environment.js';
 
 const ELEVENLABS_API_KEY = defineSecret('ELEVENLABS_API_KEY');
 const GOOGLE_CALENDAR_CREDENTIALS = defineSecret('GOOGLE_CALENDAR_CREDENTIALS');
@@ -138,7 +139,7 @@ async function concurrentSessions(db, nowMs) {
 }
 
 export const bitChatSession = onRequest(
-  { secrets: [ELEVENLABS_API_KEY], maxInstances: 10, minInstances: 1 },
+  { secrets: [ELEVENLABS_API_KEY], maxInstances: 10, minInstances: warmInstances(1) },
   async (req, res) => {
     if (req.method !== 'POST') {
       res.set('Allow', 'POST').status(405).json({ error: 'method-not-allowed' });
@@ -350,7 +351,7 @@ const tokenMatches = (expected, provided) => {
 };
 
 export const bitChatTurn = onRequest(
-  { secrets: [ELEVENLABS_API_KEY, GOOGLE_CALENDAR_CREDENTIALS], maxInstances: 20, minInstances: 1, timeoutSeconds: 120 },
+  { secrets: [ELEVENLABS_API_KEY, GOOGLE_CALENDAR_CREDENTIALS], maxInstances: 20, minInstances: warmInstances(1), timeoutSeconds: 120 },
   async (req, res) => {
     if (req.method !== 'POST') {
       res.set('Allow', 'POST').status(405).json({ error: 'method-not-allowed' });

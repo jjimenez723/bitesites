@@ -4,7 +4,9 @@ import test from 'node:test';
 import {
   resolveOutboundDeploymentPolicy,
   externalDialingAdmission,
-  externalDialingBlockReason
+  externalDialingBlockReason,
+  callableAppCheckEnforced,
+  warmInstances
 } from './deployment-environment.js';
 
 test('staging remains non-dialing even if a flag is accidentally enabled', () => {
@@ -34,4 +36,17 @@ test('mock provider remains available to emulators and tests', () => {
   assert.equal(externalDialingAdmission('mock', {
     environment: 'staging', externalDialing: 'enabled'
   }).allowed, true);
+});
+
+test('callable App Check is relaxed only for an explicit staging deployment', () => {
+  assert.equal(callableAppCheckEnforced({}), true, 'unset resolves to production');
+  assert.equal(callableAppCheckEnforced({ BITESITES_DEPLOYMENT_ENVIRONMENT: 'production' }), true);
+  assert.equal(callableAppCheckEnforced({ BITESITES_DEPLOYMENT_ENVIRONMENT: 'stagin' }), true, 'a typo stays enforced');
+  assert.equal(callableAppCheckEnforced({ BITESITES_DEPLOYMENT_ENVIRONMENT: ' Staging ' }), false);
+});
+
+test('warm instances are production-only; staging keeps none', () => {
+  assert.equal(warmInstances(1, {}), 1);
+  assert.equal(warmInstances(1, { BITESITES_DEPLOYMENT_ENVIRONMENT: 'production' }), 1);
+  assert.equal(warmInstances(1, { BITESITES_DEPLOYMENT_ENVIRONMENT: 'staging' }), 0);
 });

@@ -155,3 +155,25 @@ export function screeningBlockReason(providerId, options = {}) {
     : 'Paid phone screening is disabled';
   return `${headline} (${admission.reason}; environment=${admission.environment}; provider=${admission.provider}).`;
 }
+
+/**
+ * Whether a callable demands an App Check token. Enforced everywhere except a
+ * project explicitly deployed as `staging`, whose frontend has no App Check
+ * site key (VITE_APPCHECK_ENABLED=false; see STAGING_ENVIRONMENT.md), so an
+ * enforcing callable could never be reached from the staging admin. Read when
+ * the functions are loaded for deploy, from the project's dotenv. Fail-closed:
+ * an unset or unknown value resolves to production and stays enforced.
+ */
+export function callableAppCheckEnforced(env = process.env) {
+  return text(env?.BITESITES_DEPLOYMENT_ENVIRONMENT) !== 'staging';
+}
+
+/**
+ * Warm (always-on, billed) instances for latency-sensitive functions. Production
+ * keeps the requested count; an explicit `staging` deploy keeps none, so the
+ * non-dialing staging project never carries an always-on bill for Bit/Byte.
+ * Read at deploy-time load from the project's dotenv; unset → production.
+ */
+export function warmInstances(count, env = process.env) {
+  return text(env?.BITESITES_DEPLOYMENT_ENVIRONMENT) === 'staging' ? 0 : count;
+}

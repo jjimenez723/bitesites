@@ -107,6 +107,8 @@ await testEnv.withSecurityRulesDisabled(async context => {
   await setDoc(doc(db, 'financeAccounts', 'seeded_account'), {
     name: 'Seeded account', monthlyRetainer: 400
   });
+  await setDoc(doc(db, 'billingClients', 'caah'), { name: 'Clifton Ave Animal Hospital', invoiceNumberNext: 11, autopay: { enabled: false } });
+  await setDoc(doc(db, 'invoices', 'caah_2026-11'), { clientId: 'caah', number: '011', status: 'draft', totalCents: 180000 });
 });
 
 const anon = testEnv.unauthenticatedContext().firestore();
@@ -1036,6 +1038,28 @@ await it('only admins read the exemption audit trail', async () => {
 
 await it('nobody writes the exemption audit trail from a browser', () =>
   assertFails(setDoc(doc(adminByDoc, 'repTrainingExemptionEvents', 'exemption2'), { uid: 'untrained_rep', exempt: true })));
+
+describe('billing — admins read, only Cloud Functions write');
+await it('an admin can read billing clients and invoices', async () => {
+  await assertSucceeds(getDoc(doc(adminByDoc, 'billingClients', 'caah')));
+  await assertSucceeds(getDoc(doc(adminByClaim, 'invoices', 'caah_2026-11')));
+});
+
+await it('clients, reps and visitors cannot read invoices or billing clients', async () => {
+  for (const db of [anon, visitor, clientOk, outboundRep, outboundManager]) {
+    await assertFails(getDoc(doc(db, 'invoices', 'caah_2026-11')));
+    await assertFails(getDoc(doc(db, 'billingClients', 'caah')));
+  }
+});
+
+await it('not even the finance owner can mark an invoice paid from the browser', () =>
+  assertFails(setDoc(doc(financeOwner, 'invoices', 'caah_2026-11'), { status: 'paid' }, { merge: true })));
+
+await it('nobody can switch autopay on or rewind invoice numbers from the browser', async () => {
+  await assertFails(setDoc(doc(adminByDoc, 'billingClients', 'caah'), { autopay: { enabled: true } }, { merge: true }));
+  await assertFails(setDoc(doc(financeOwner, 'billingClients', 'caah'), { invoiceNumberNext: 1 }, { merge: true }));
+  await assertFails(setDoc(doc(adminByDoc, 'invoices', 'new_invoice'), { clientId: 'caah', number: '011' }));
+});
 
 describe('catch-all — undeclared collections are closed');
 await it('nobody can write to an arbitrary collection', () =>

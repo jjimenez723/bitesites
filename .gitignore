@@ -33,3 +33,9 @@ serviceAccountKey*.json
 
 # Resume cursor for scripts/backfill-phone-intelligence.mjs — machine-local run state.
 .cache/
+
+# Locally rendered invoice/email samples (scripts/render-sample-invoice.mjs).
+/samples/
+
+# Firebase emulator secret overrides (functions/.secret.local) — local only.
+*.secret.local

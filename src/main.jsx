@@ -8,6 +8,7 @@ import Privacy from './pages/Privacy';
 import Feedback from './pages/Feedback';
 import EmailPreferences from './pages/EmailPreferences';
 import ThankYou from './pages/ThankYou';
+import PayResult from './pages/PayResult';
 import Book from './pages/Book';
 import Questionnaire from './pages/Questionnaire';
 import Faq from './pages/Faq';
@@ -1750,6 +1751,8 @@ if (typeof document !== 'undefined') createRoot(document.getElementById('root'))
       <Route path="/feedback" element={<Feedback />} />
       <Route path="/email-preferences" element={<EmailPreferences />} />
       <Route path="/thank-you" element={<ThankYou />} />
+      <Route path="/pay/success" element={<PayResult outcome="success" />} />
+      <Route path="/pay/cancel" element={<PayResult outcome="cancel" />} />
       <Route path="/coming-soon" element={<ComingSoon />} />
       <Route path="/join" element={<Join />} />
       <Route path="/book" element={<Book />} />
