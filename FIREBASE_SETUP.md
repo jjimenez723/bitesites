@@ -771,6 +771,42 @@ npm run deploy:functions
 npm run deploy:hosting
 ```
 
+## Stripe billing — built, not deployed
+
+Autopay and Pay Now for monthly client invoices. Design, contract, test status and the
+remaining blockers are in [`STRIPE_BILLING.md`](STRIPE_BILLING.md); this section is only
+the setup.
+
+Test mode first. Both values come from the Stripe dashboard **in test mode**
+(Developers → API keys, and Developers → Webhooks after the endpoint exists):
+
+```bash
+firebase functions:secrets:set STRIPE_SECRET_KEY       # sk_test_… or rk_test_…
+firebase functions:secrets:set STRIPE_WEBHOOK_SECRET   # whsec_… from the endpoint below
+```
+
+Webhook endpoint (register it after the functions are deployed):
+
+```text
+https://bitesites.org/api/stripe-webhook
+```
+
+Events to send: `checkout.session.completed`, `checkout.session.async_payment_succeeded`,
+`checkout.session.async_payment_failed`, `payment_intent.succeeded`,
+`payment_intent.payment_failed`, `setup_intent.succeeded`, `charge.refunded`,
+`payment_method.detached`.
+
+For local webhook testing without deploying, `stripe listen --forward-to
+http://127.0.0.1:5001/bitesites-org/us-central1/stripeWebhook` prints a temporary `whsec_…`
+to use as `STRIPE_WEBHOOK_SECRET` in the emulator environment.
+
+A live key does nothing on its own: `isStripeConfigured()` stays false and the webhook
+ignores live events until `STRIPE_LIVE_MODE_AUTHORIZED=true` is set in
+`functions/.env.bitesites-org`. That flag is the owner's go-live decision.
+
+Rewrites added to `firebase.json`: `/api/stripe-webhook` → `stripeWebhook`,
+`/api/pay/**` → `billingPayNow`. Public result pages: `/pay/success`, `/pay/cancel`.
+
 ## Commands
 
 ```bash
@@ -783,6 +819,8 @@ npm run test:analytics # durable daily funnel aggregation and deduplication
 npm run test:import    # the GHL call-log import, live API → emulator
 npm run test:role      # setUserRole — role document and auth claim stay in step
 npm run test:email     # template rendering, escaping, and Postmark payloads
+npm run test:billing   # Stripe autopay/Pay Now/webhook → Firestore, fake Stripe SDK
+npm run test:billing-rules # who may write autopay and invoice payment fields
 
 # Outbound calling and lead discovery. No test places a call, contacts a
 # provider, reads a credential, or touches a real Firebase project.

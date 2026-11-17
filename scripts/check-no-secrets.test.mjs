@@ -102,6 +102,23 @@ test('Twilio SIDs are detected, and their synthetic stand-ins are not', () => {
   assert.deepEqual(secretMatches(['SK', '0'.repeat(32)].join('')), []);
 });
 
+test('Stripe secret keys, restricted keys and webhook secrets are findings in either mode', () => {
+  assert.deepEqual(secretMatches(['sk', 'live', alnum(40, 3)].join('_')), ['Stripe live secret']);
+  assert.deepEqual(secretMatches(['sk', 'test', alnum(40, 5)].join('_')), ['Stripe test secret']);
+  assert.deepEqual(secretMatches(['rk', 'test', alnum(40, 7)].join('_')), ['Stripe restricted key']);
+  assert.deepEqual(secretMatches(['rk', 'live', alnum(40, 9)].join('_')), ['Stripe restricted key']);
+  assert.deepEqual(secretMatches(['whsec', alnum(32, 11)].join('_')), ['Stripe webhook secret']);
+  assert.deepEqual(secretMatches(`STRIPE_WEBHOOK_SECRET=${hex(40, 3)}`), ['assigned server secret']);
+
+  // functions/billing-stripe.test.mjs uses these synthetic stand-ins, and the
+  // setup docs name the prefixes. Neither is a credential.
+  assert.deepEqual(secretMatches(['sk', 'test', 'x'.repeat(24)].join('_')), []);
+  assert.deepEqual(secretMatches(['whsec', 'y'.repeat(24)].join('_')), []);
+  assert.deepEqual(secretMatches('paste the sk_test_ key, then the whsec_ signing secret'), []);
+  // A publishable key ships to browsers by design.
+  assert.deepEqual(secretMatches(['pk', 'test', alnum(40, 13)].join('_')), []);
+});
+
 test('a leaked dotenv line is a finding, whichever secret it carries', () => {
   for (const name of ['TWILIO_AUTH_TOKEN', 'OUTBOUND_WEBHOOK_SECRET', 'GHL_API_TOKEN',
     'GHL_CONTACTS_READ_TOKEN', 'OPENAI_WEBHOOK_SECRET', 'DISCOVERY_WORKER_SECRET']) {
