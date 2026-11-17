@@ -28,6 +28,8 @@ const SECRET_ENV_NAMES = Object.freeze([
   'OUTBOUND_WEBHOOK_SECRET',
   'POSTMARK_SERVER_TOKEN',
   'POSTMARK_WEBHOOK_SECRET',
+  'STRIPE_SECRET_KEY',
+  'STRIPE_WEBHOOK_SECRET',
   'TWILIO_ACCOUNT_SID',
   'TWILIO_AUTH_TOKEN',
   'TWILIO_TWIML_APP_SID',
@@ -90,6 +92,15 @@ const SECRET_PATTERNS = Object.freeze([
   ['AWS access key', /\bAKIA[0-9A-Z]{16}\b/],
   ['Stripe live secret', /\bsk_live_[A-Za-z0-9]{20,}\b/],
 
+  // Stripe test keys move only test money, but they still read and write the
+  // account's test data, and a repo that tolerates one teaches people to
+  // paste the live one next to it. Restricted keys (rk_) and webhook signing
+  // secrets (whsec_) are reported too. Entropy-filtered so the obviously
+  // synthetic stand-ins in tests and docs (`sk_test_xxxx…`) stay allowed.
+  ['Stripe test secret', /\bsk_test_[A-Za-z0-9]{20,}\b/, { highEntropy: true }],
+  ['Stripe restricted key', /\brk_(?:live|test)_[A-Za-z0-9]{20,}\b/, { highEntropy: true }],
+  ['Stripe webhook secret', /\bwhsec_[A-Za-z0-9]{20,}\b/, { highEntropy: true }],
+
   // Google API key — LEAD_SOURCE_API_KEY (Places) and anything else keyed the
   // same way. `src/` is exempt because the Firebase web SDK config and the
   // reCAPTCHA Enterprise site key are public by design and ship in the browser
@@ -125,6 +136,8 @@ export function isBlockedSecretPath(file) {
   const base = normalized.split('/').pop();
   if (/^\.env(?:$|\.)/.test(base)
       && !/\.(?:example|sample|template)$/.test(base)) return true;
+  // Firebase emulator secret overrides (functions/.secret.local).
+  if (/\.secret\.local$/.test(base)) return true;
   if (/^\.dev\.vars(?:$|\.)/.test(base)
       && !/\.(?:example|sample|template)$/.test(base)) return true;
   if (/^(?:service[-_.]?account|firebase[-_.]?adminsdk|google[-_.]?credentials).+\.json$/.test(base)) return true;

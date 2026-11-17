@@ -832,6 +832,101 @@ service cloud.firestore {
       }
     }
 
+    // ---------------------------------------------------------------- billing
+    // Client invoicing (STRIPE_BILLING.md). The invoicing side owns most of
+    // these documents; Stripe owns two parts of them, and those are written
+    // only by Cloud Functions holding the Admin SDK:
+    //
+    //   * billingClients/{id}.autopay — whether a client is charged
+    //     automatically, and with which saved payment method. An admin turns
+    //     it on or off through the setAutopay callable, which refuses "on"
+    //     without a saved method. A browser write could switch autopay on with
+    //     nothing to charge, or point it at another customer's card.
+    //
+    //   * invoices/{id}.payment's Stripe fields and the transition to
+    //     'payment_failed'. An admin may still record a manual payment (Zelle,
+    //     check, other) and mark that invoice paid; only Stripe can say a
+    //     Stripe payment happened.
+
+    function stripePaymentKeys() {
+      return ['payNowUrl', 'stripeCheckoutSessionId', 'stripePaymentIntentId',
+              'amountPaidCents', 'lastError', 'processingAt', 'refundedCents',
+              'refundedAt', 'fullyRefunded', 'duplicatePaymentIntentIds'];
+    }
+
+    function manualPaymentMethods() {
+      return ['zelle', 'check', 'other'];
+    }
+
+    function billingAutopayAtDefault() {
+      return !('autopay' in request.resource.data)
+        || request.resource.data.autopay == { 'enabled': false };
+    }
+
+    function billingAutopayUnchanged() {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(['autopay']);
+    }
+
+    function newPayment() {
+      return request.resource.data.get('payment', {});
+    }
+
+    function oldPayment() {
+      return resource.data.get('payment', {});
+    }
+
+    function invoiceStripeFieldsUnchanged() {
+      return !newPayment().diff(oldPayment()).affectedKeys().hasAny(stripePaymentKeys());
+    }
+
+    function invoiceMethodChangeIsManual() {
+      return !newPayment().diff(oldPayment()).affectedKeys().hasAny(['method'])
+        || newPayment().get('method', '') in manualPaymentMethods();
+    }
+
+    function invoiceStatusChangeAllowed() {
+      let before = resource.data.get('status', '');
+      let after = request.resource.data.get('status', '');
+      return before == after
+        || (after != 'payment_failed'
+            && (after != 'paid' || newPayment().get('method', '') in manualPaymentMethods())
+            && (before != 'paid' || oldPayment().get('method', '') != 'stripe' || after == 'void'));
+    }
+
+    match /billingClients/{clientId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() && billingAutopayAtDefault();
+      allow update: if isAdmin() && billingAutopayUnchanged();
+      allow delete: if isAdmin();
+    }
+
+    match /invoices/{invoiceId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin()
+        && !(request.resource.data.get('status', '') in ['paid', 'payment_failed'])
+        && newPayment().keys().size() == 0;
+      allow update: if isAdmin()
+        && invoiceStripeFieldsUnchanged()
+        && invoiceMethodChangeIsManual()
+        && invoiceStatusChangeAllowed();
+      // Drafts only: an issued invoice is a record, and a paid one is money.
+      allow delete: if isAdmin() && resource.data.get('status', '') == 'draft';
+    }
+
+    // Server-only: the stable Pay Now link tokens, the Stripe webhook
+    // idempotency ledger, and the deliberate-retry counter for charges.
+    match /billingPayLinks/{token} {
+      allow read, write: if false;
+    }
+
+    match /stripeEvents/{eventId} {
+      allow read, write: if false;
+    }
+
+    match /billingChargeAttempts/{invoiceId} {
+      allow read, write: if false;
+    }
+
     // Anything not matched above is denied.
     match /{document=**} {
       allow read, write: if false;

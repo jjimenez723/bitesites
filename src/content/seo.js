@@ -71,6 +71,8 @@ export function metadataForPath(pathname) {
     '/book': ['Book a Consultation', 'Schedule a consultation with the BiteSites team to review your website, lead response, follow-up, and revenue system.'],
     '/feedback': ['Share Your Feedback', 'Share feedback with the BiteSites team.'],
     '/thank-you': ['Thank You', 'Your next steps with BiteSites.'],
+    '/pay/success': ['Payment', 'Your BiteSites invoice payment.'],
+    '/pay/cancel': ['Payment', 'Your BiteSites invoice payment.'],
     '/questionnaire': ['Project Questionnaire', 'Share project details with the BiteSites team.'],
     '/email-preferences': ['Email Preferences', 'Manage your BiteSites email preferences.'],
     '/coming-soon': ['Coming Soon', 'This BiteSites page is on the way.'],
