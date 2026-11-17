@@ -34,7 +34,7 @@ The redirect rules are isolated zone-level `http_request_dynamic_redirect` rules
 | `bitsites.org` | `753bc2f8038d4c98a2ab2adff7f1a4a6` | `00d9d3b1e0dd4282893cea814ab3f74a` |
 
 Do not remove or modify the existing MX, TXT, DKIM, DMARC, SPF, Firebase
-verification, ACME challenge, n8n, Postmark, or email-routing records while changing
+verification, ACME challenge, n8n, Postmark, Resend, or email-routing records while changing
 this setup.
 
 ## Verify

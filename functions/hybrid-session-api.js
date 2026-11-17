@@ -30,7 +30,7 @@ import {
 import { assertDocumentAccountAccess, assertOutboundAccess, resolveAccountAccess } from './account-access.js';
 import { hasRepTrainingAccess } from './rep-training.js';
 import { resolveCampaignOperatingLimits } from './outbound-compliance.js';
-import { buildLeadOutreachTemplate, buildMessage, sendPostmark } from './email.js';
+import { buildLeadOutreachTemplate, buildMessage, resendIds, sendResend } from './email.js';
 
 /**
  * A persona may only speak to the account its campaign serves.
@@ -59,7 +59,7 @@ const TWILIO_AUTH_TOKEN = defineSecret('TWILIO_AUTH_TOKEN');
 const TWILIO_TWIML_APP_SID = defineSecret('TWILIO_TWIML_APP_SID');
 const TWILIO_API_KEY_SID = defineSecret('TWILIO_API_KEY_SID');
 const TWILIO_API_KEY_SECRET = defineSecret('TWILIO_API_KEY_SECRET');
-const POSTMARK_SERVER_TOKEN = defineSecret('POSTMARK_SERVER_TOKEN');
+const RESEND_API_KEY = defineSecret('RESEND_API_KEY');
 
 const HYBRID_SECRETS = [
   TWILIO_ACCOUNT_SID,
@@ -806,7 +806,7 @@ export const getHybridFollowUpContext = onCall(callOptions, async request => {
 
 /** Send an explicitly composed follow-up to the lead's stored email address. */
 export const sendHybridFollowUpEmail = onCall(
-  { ...callOptions, secrets: [POSTMARK_SERVER_TOKEN], timeoutSeconds: 30 },
+  { ...callOptions, secrets: [RESEND_API_KEY], timeoutSeconds: 30 },
   async request => {
     const { db, uid, role, access } = await requireDialer(request);
     const sessionId = requireId(request.data?.sessionId, 'session id');
@@ -837,11 +837,11 @@ export const sendHybridFollowUpEmail = onCall(
       }, { merge: true });
     });
 
-    const from = process.env.POSTMARK_FROM_EMAIL || 'BiteSites <jensy@bitesites.org>';
-    const stream = process.env.POSTMARK_MESSAGE_STREAM || 'outbound';
+    const from = process.env.RESEND_FROM_EMAIL || 'BiteSites <jensy@bitesites.org>';
+    const stream = 'transactional';
     let result;
     try {
-      result = await sendPostmark(POSTMARK_SERVER_TOKEN.value(), buildMessage({
+      result = await sendResend(RESEND_API_KEY.value(), buildMessage({
         from,
         to: email,
         template: buildLeadOutreachTemplate(),
@@ -879,7 +879,7 @@ export const sendHybridFollowUpEmail = onCall(
       db.collection('emailDeliveries').add({
         templateId: 'lead-follow-up', kind: 'lead-follow-up', recipientCount: 1,
         recipientKey: emailKey(email), leadId: pending.leadId,
-        sentBy: uid, status: 'sent', postmark: [result.MessageID].filter(Boolean),
+        sentBy: uid, status: 'sent', provider: 'resend', providerIds: resendIds(result),
         createdAt: FieldValue.serverTimestamp()
       }).catch(error => console.error('[hybrid-follow-up] delivery log failed', clean(error?.message, 200)))
     ]);

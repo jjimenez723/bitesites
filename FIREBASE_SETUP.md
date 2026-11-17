@@ -699,35 +699,37 @@ there is no browser token or downloadable service-account key. Setup is:
 Search Console returns its top rows rather than guaranteeing an exhaustive export; the UI
 treats these as content opportunities, not a financial ledger.
 
-## Protected pricing and Postmark email
+## Protected pricing and Resend email
 
 Pricing values now live in the `getServicePricing` callable instead of the public Vite
 bundle. Firebase verifies the caller's ID token; any signed-in BiteSites account can see
 prices, while admin data still requires the separate `admin` role.
 
-Account creation, confirmation links, admin sign-up notices, password resets and admin
-dashboard sends are delivered by Postmark. Lead receipts, team lead alerts, account-access
-notices and delayed Bit/Byte feedback requests use the same delivery layer. Set the server
-token and a separate webhook secret:
+Account creation, confirmation links, admin sign-up notices, password resets, admin
+dashboard sends and client invoices are delivered by [Resend](https://resend.com) through
+its REST API (`functions/email.js`). Lead receipts, team lead alerts, account-access
+notices and delayed Bit/Byte feedback requests use the same delivery layer. Set the API key
+and the webhook signing secret:
 
 ```bash
-firebase functions:secrets:set POSTMARK_SERVER_TOKEN
-firebase functions:secrets:set POSTMARK_WEBHOOK_SECRET
+firebase functions:secrets:set RESEND_API_KEY
+firebase functions:secrets:set RESEND_WEBHOOK_SECRET
 ```
 
-The Postmark server must have `jensy@bitesites.org` (or the whole domain) as a verified
-sender. Non-secret runtime settings use these optional Functions environment variables:
+`bitesites.org` must be a verified sending domain in Resend (the SPF/DKIM DNS records Resend
+lists for the domain, added in Cloudflare) before any mail from `jensy@bitesites.org` is
+accepted. Non-secret runtime settings use these optional Functions environment variables:
 
 ```dotenv
-POSTMARK_FROM_EMAIL="BiteSites <jensy@bitesites.org>"
+RESEND_FROM_EMAIL="BiteSites <jensy@bitesites.org>"
 ADMIN_NOTIFICATION_EMAIL="jensy@bitesites.org"
 APP_URL="https://bitesites.org"
-POSTMARK_MESSAGE_STREAM="outbound"
-POSTMARK_BROADCAST_STREAM="broadcast"
 ```
 
-Put overrides in `functions/.env.bitesites-org` for deployment or export them in the
-deployment environment. Never put `POSTMARK_SERVER_TOKEN` in a `VITE_` variable.
+Resend has no message streams. Every send carries a `stream` tag (`transactional` or
+`broadcast`) and a `category` tag instead, so the two can still be filtered in the Resend
+dashboard. Put overrides in `functions/.env.bitesites-org` for deployment or export them in
+the deployment environment. Never put `RESEND_API_KEY` in a `VITE_` variable.
 
 The first account email or visit to **Admin → Email** seeds ten editable Firestore
 templates: account confirmation, password reset, new-account admin notice, inquiry receipt,
@@ -748,19 +750,24 @@ Broadcasts always receive a visible preferences link plus `List-Unsubscribe` and
 `List-Unsubscribe-Post` headers. The preference page controls announcements and conversation
 feedback separately; account security and requested service messages remain transactional.
 
-In Postmark, configure Delivery, Bounce, Spam Complaint and Subscription Change webhooks to:
+In Resend (**Webhooks → Add endpoint**), point an endpoint at:
 
 ```text
-https://postmark:<POSTMARK_WEBHOOK_SECRET>@bitesites.org/api/postmark-events
+https://bitesites.org/api/resend-events
 ```
 
-The webhook stores delivery events and suppresses announcements after an unsubscribe or
-complaint. Inactive bounces and complaints also block automated transactional sends to the
-address. This uses Postmark's supported Basic HTTP authentication. Choose a URL-safe webhook
-secret and do not reuse `POSTMARK_SERVER_TOKEN` in the webhook URL.
+and subscribe it to at least `email.sent`, `email.delivered`, `email.delivery_delayed`,
+`email.bounced`, `email.complained` and `email.failed`. Copy that endpoint's signing secret
+(it starts with `whsec_`) into `RESEND_WEBHOOK_SECRET`. `recordResendEvent` verifies the Svix
+signature (`svix-id`, `svix-timestamp`, `svix-signature`, five-minute tolerance) against the
+raw request body and rejects anything unsigned. Each event is stored in `emailDeliveryEvents`,
+updates `emailMessageStatus/{resendId}` and, for invoices, `invoices/*.email.lastEvent`.
+Complaints suppress announcements and block automated transactional sends to the address;
+permanent bounces block transactional sends. Unsubscribes are handled by BiteSites' own
+preference links, not by Resend audiences.
 
 `pollVoiceCalls` writes a heartbeat to `systemHealth/voice-poll`; `monitorOperations` checks it
-every 15 minutes and alerts after 20 minutes without a healthy run. Repeated Postmark failures
+every 15 minutes and alerts after 20 minutes without a healthy run. Repeated email delivery failures
 and GoHighLevel lead-sync failures also create deduplicated `operationalAlerts` records.
 
 Deploy Functions before deploying the gated frontend, otherwise signed-in users will see
@@ -782,7 +789,8 @@ npm run test:lifecycle # CRM/calendar stage, appointment and economics updates
 npm run test:analytics # durable daily funnel aggregation and deduplication
 npm run test:import    # the GHL call-log import, live API → emulator
 npm run test:role      # setUserRole — role document and auth claim stay in step
-npm run test:email     # template rendering, escaping, and Postmark payloads
+npm run test:email     # template rendering, escaping, Resend payloads and webhook signatures
+npm run test:billing   # invoice math, numbering, lead pull fallback, PDF and invoice email
 
 # Outbound calling and lead discovery. No test places a call, contacts a
 # provider, reads a credential, or touches a real Firebase project.
@@ -800,7 +808,7 @@ npm run role -- <email> <admin|client|none>   # grant or revoke portal access
 npm run deploy         # build + deploy hosting and Firestore rules/indexes
 npm run deploy:rules   # rules and indexes only
 npm run deploy:hosting # site only
-npm run deploy:functions # pricing, Postmark, lead sync, voice functions, and roles
+npm run deploy:functions # pricing, Resend email, billing, lead sync, voice functions, and roles
 npm run emulators      # local Firestore/Auth emulators
 ```
 
