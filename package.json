@@ -37,6 +37,7 @@
     "test:role": "firebase emulators:exec --only firestore,auth --project demo-bitesites \"node functions/set-role.test.mjs\"",
     "test:email": "node --test functions/email.test.mjs",
     "test:billing": "node --test functions/billing-math.test.mjs functions/billing-leads.test.mjs functions/billing-documents.test.mjs && firebase emulators:exec --only firestore --project demo-bitesites \"node --test functions/billing-core.test.mjs\"",
+    "test:billing-browser": "node scripts/test-billing-browser.mjs",
     "billing:sample": "node scripts/render-sample-invoice.mjs",
     "seed:billing": "node scripts/seed-billing.mjs",
     "test:email-intent": "node --test functions/lead-email-intent.test.mjs",
