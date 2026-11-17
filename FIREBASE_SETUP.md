@@ -785,7 +785,7 @@ Admin → Billing, the `billingClients` and `invoices` collections, the
 lead-count plugin are documented in [BILLING_INVOICING.md](BILLING_INVOICING.md),
 including the secrets (`RESEND_API_KEY`, `WP_LEADS_SECRET`) and the pre-deploy checklist.
 
-## Stripe billing — built, not deployed
+## Stripe billing — deployed to staging, not production
 
 Autopay and Pay Now for monthly client invoices. Design, contract, test status and the
 remaining blockers are in [`STRIPE_BILLING.md`](STRIPE_BILLING.md); this section is only
@@ -796,11 +796,13 @@ Test mode first. Both values come from the Stripe dashboard **in test mode**
 the project explicitly:
 
 ```bash
-# Staging (test keys). STRIPE_SECRET_KEY is already set here (2026-11-16).
+# Staging (test keys). Both are set here (2026-11-16); the staging endpoint is
+# https://bitesites-outbound-staging.web.app/api/stripe-webhook.
 firebase functions:secrets:set STRIPE_SECRET_KEY     --project bitesites-outbound-staging   # sk_test_…
 firebase functions:secrets:set STRIPE_WEBHOOK_SECRET --project bitesites-outbound-staging   # whsec_… from the staging endpoint
 
 # Production — only after the owner authorizes go-live. Nothing is set yet.
+# Ordered steps with rollback: PRODUCTION_BILLING_CUTOVER.md.
 firebase functions:secrets:set STRIPE_SECRET_KEY     --project bitesites-org   # sk_live_… / rk_live_…
 firebase functions:secrets:set STRIPE_WEBHOOK_SECRET --project bitesites-org   # whsec_… from https://bitesites.org/api/stripe-webhook
 ```

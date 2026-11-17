@@ -1,10 +1,10 @@
 # Stripe billing — autopay and Pay Now for client invoices
 
-Pairs with `feat/resend-invoicing`, which builds the invoice model, PDF, Resend
-email and the admin invoicing UI. This branch is only the Stripe side, coded
-against the shared contract below. **Nothing is deployed and nothing has run
-in live mode.** Every flow below was run end to end in Stripe **test mode**
-against the local Functions emulator (see *Verified*).
+Merged with `feat/resend-invoicing` on `feat/billing-integration`, which adds
+the invoice model, PDF, Resend email and the admin invoicing UI. **Deployed to
+staging (`bitesites-outbound-staging`) and proven end to end there in Stripe
+test mode on 2026-11-16** (see *Verified*). Nothing is deployed to production
+and nothing has run in live mode.
 
 ## Bank first
 
@@ -213,7 +213,7 @@ about $800 a year against card.
 
 ### Unit and emulator tests
 
-- `npm run test:billing`: 31 tests against the Firestore emulator, using an
+- `npm run test:billing-stripe` (was `test:billing` on the Stripe branch): 31 tests against the Firestore emulator, using an
   in-memory Stripe SDK. Webhooks are signed with Stripe's real signing scheme.
   The tests cover:
   - the bank-only and card-only configurations, and that neither Checkout
@@ -226,7 +226,7 @@ about $800 a year against card.
   - every earlier case: 24-hour re-mint, refresh, idempotency keys, `setAutopay`
     guards, every webhook transition, refunds, detach, duplicates, and live-event
     ignoring.
-- `npm run test:billing-rules` (28), the existing `npm run test:rules` (171),
+- `npm run test:billing-rules` (31, rewritten for the combined strict rules), the existing `npm run test:rules` (175 after the merge),
   `npm run test:secrets`, `npm run build`, and
   `npm --prefix functions run check`.
 
@@ -251,21 +251,33 @@ Two problems surfaced in the first test-mode run and are fixed:
 The admin panel and the `/pay/*` pages, including the cancel page's "Pay by
 card instead", were rendered locally and checked visually.
 
-**Not verified in test mode:**
-- Financial Connections instant verification. The test institution's login
-  never finished loading in the automated browser, so the manual
-  micro-deposit path was used. The Checkout session is configured for
-  instant-first; a person should click through it once.
-- Anything on a deployed instance. Nothing is deployed.
+### Deployed staging, Stripe test mode (2026-11-16)
+
+| Flow (staging, Stripe test mode, real webhooks) | Result |
+|---|---|
+| Admin → Billing: add client "CAAH (staging test)", 4 retainer lines, $75/lead, manual approval, next #11 | Saved; `#011` next |
+| Create November 2026 draft → lead count 12 (fake) → Save → Finalize → Send | `#011` $2,700; PDF stored in Storage with bank + card links on the staging origin; email to `jensy@bitesites.org` only |
+| Resend delivery | Resend log: sent → delivered; `/api/resend-events` (Svix-verified) set `email.lastEvent = delivered` |
+| Pay Now by bank → **Financial Connections instant login** (test institution "Test (OAuth)", account "Success") → Pay | `checkout.session.completed` → processing → `payment_intent.succeeded` + `async_payment_succeeded` → **paid** (~17 s); link afterwards → `/pay/success?status=paid` |
+| Bank autopay setup link (from the Payment panel) → instant login → Success account | `checkout.session.completed` + `setup_intent.succeeded` → autopay **on** |
+| September draft `#012` → Send (autopay) | charge `processing` → `payment_intent.succeeded` → **paid** |
+| New setup link → "Insufficient Funds" account → August `#013` → Send | `payment_intent.payment_failed` → **payment_failed**, `lastError` set, Pay Now fallback link minted; Resend re-renders the PDF with bank/card links and no autopay promise; bank and card links redirect to Checkout |
+| `billingMonthlyInvoices` run twice via Cloud Scheduler | Run 1: created exactly one draft (`#014`, October, awaiting lead count) + review notice; run 2: `existing`, nothing created, numbering unchanged |
+
+Known gaps: the "Test (Non-OAuth)" institution's login spinner never finished in
+Chrome (twice); the OAuth test institution worked end to end, so instant
+verification is proven but that one test bank is not. The invoice email logo
+points at `https://bitesites.org/email/…`, which only exists after a production
+Hosting deploy, so staging mail shows a broken logo.
 
 ## Secrets
 
 - **Staging** (`bitesites-outbound-staging`): `STRIPE_SECRET_KEY` (the test key)
   is set, version 1. It was set with the `jensyjimenez723@gmail.com` Firebase
   account, because `jensy@bitesites.org` has no access to that project.
-  `STRIPE_WEBHOOK_SECRET` is **not** set. The `stripe listen` secret only works
-  for local forwarding; the staging value comes from a webhook endpoint
-  registered after a staging deploy.
+  `STRIPE_WEBHOOK_SECRET` is set (version 1) from the test-mode endpoint
+  `we_1UcbpoHXOFfEKFVFQjyKqVwV` → `https://bitesites-outbound-staging.web.app/api/stripe-webhook`
+  with the eight events in FIREBASE_SETUP.md.
 - **Production** (`bitesites-org`): nothing is set. To set it later, once
   authorized:
 
@@ -281,20 +293,11 @@ card instead", were rendered locally and checked visually.
 
 ## Remaining (in order)
 
-1. **Merge with `feat/resend-invoicing`.**
-   - Mount `BillingPaymentPanel` (`invoice`, `client`, `onChange`).
-   - Make the email and PDF bank-first using `payNowOptions`, in place of the
-     single "Pay Now" button.
-   - Reconcile `firestore.rules` for `billingClients` / `invoices`.
-   - The invoicing side's `AUTOPAY_RESULT` already maps `succeeded`,
-     `processing` and `failed`.
-2. **Deploy authorization** for functions, rules and hosting. That's the
-   owner's decision, staging included; none has been given.
-3. **After a staging deploy:** register
-   `https://bitesites-outbound-staging.web.app/api/stripe-webhook` in the
-   sandbox with the events in FIREBASE_SETUP.md, and set its signing secret as
-   `STRIPE_WEBHOOK_SECRET --project bitesites-outbound-staging`. Then click
-   through the instant-verification bank flow once.
+1. ~~Merge with `feat/resend-invoicing`~~ — done on `feat/billing-integration`.
+2. ~~Staging deploy, staging webhook, instant-verification click-through~~ — done
+   2026-11-16 (above).
+3. **Production** — every step, in order, with rollback:
+   [PRODUCTION_BILLING_CUTOVER.md](PRODUCTION_BILLING_CUTOVER.md).
 4. **Live ACH** (owner decision, not touched):
    - In the live dashboard, confirm the account is activated and that ACH
      Direct Debit is available under Settings → Payment methods. Stripe's

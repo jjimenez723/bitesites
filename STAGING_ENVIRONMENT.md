@@ -87,11 +87,46 @@ confirmation and never falls back to production:
 npm run deploy:staging -- --confirm-staging-deploy=YOUR_STAGING_PROJECT_ID
 ```
 
-The staging helper deploys Firebase rules, indexes, Functions, and Hosting. It
-does not deploy Cloud Run or provision secrets. A future stage sideband must
+The staging helper deploys Firestore rules and indexes, Storage rules, Functions
+and Hosting. It does not deploy Cloud Run or provision secrets. If the Firebase
+CLI's default login has no access to the staging project, name the one that does:
+`npm run deploy:staging -- --confirm-staging-deploy=bitesites-outbound-staging --firebase-account=EMAIL`
+(or `BITESITES_STAGING_FIREBASE_ACCOUNT`). The project is still fixed by the
+reviewed config, so the account cannot redirect a deploy. A future stage sideband must
 use a separately named Cloud Run service, stage-only secrets, and the staging
 Hosting control URLs. Its outbound media path will still be blocked by the
 runtime gate above.
+
+## Billing on staging (2026-11-16)
+
+The billing integration (`feat/billing-integration`: Resend email, monthly
+invoicing, Stripe Pay Now and autopay) is deployed here and was proven end to
+end in Stripe **test mode** — see the integration PR for the full table.
+
+- `configure:staging` writes `BILLING_SITE_ORIGIN` and `APP_URL` (the staging
+  origin, so Pay Now links never point at production), `STRIPE_LIVE_MODE_AUTHORIZED=false`,
+  and values for every `defineString` (`PAID_PHONE_SCREENING`, an empty
+  `SEARCH_CONSOLE_SITE_URL` so the daily sync does nothing, an empty
+  `OPENAI_PROJECT_ID`). Preflight refuses a production `BILLING_SITE_ORIGIN` or
+  live Stripe.
+- A default Storage bucket (`bitesites-outbound-staging.firebasestorage.app`,
+  `US-CENTRAL1`) was created for invoice PDFs; the Firebase Storage API had
+  never been enabled.
+- Real staging secrets: `STRIPE_SECRET_KEY` (test), `STRIPE_WEBHOOK_SECRET`
+  (test endpoint `we_1UcbpoHXOFfEKFVFQjyKqVwV` → `/api/stripe-webhook`),
+  `RESEND_API_KEY` (send-only), `RESEND_WEBHOOK_SECRET` (Resend webhook →
+  `/api/resend-events`), `WP_LEADS_SECRET`. Inert placeholders were added for
+  `GHL_CONTACTS_READ_TOKEN` and `ELEVENLABS_API_KEY` so the deploy can run.
+- **Staging sends real email through Resend.** The only billing client is
+  "CAAH (staging test)" with `jensy@bitesites.org`; account-created notices go
+  to the admin address too. Do not add a real client address here.
+- Billing callables enforce App Check everywhere except a `staging` deploy
+  (`callableAppCheckEnforced`), because the staging frontend has no App Check
+  key. Bit/Byte keep no warm instances on staging (`warmInstances`), so the
+  deploy no longer needs `--force` for a minimum bill.
+- `recordPostmarkEvent` was deleted from staging (Postmark is gone from the code).
+- Test admin `billing-e2e@staging.invalid`; its password is only in
+  `~/.config/bitesites/staging-billing-admin.local` on the deploying Mac.
 
 ## Deployed state
 

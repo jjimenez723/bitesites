@@ -1,10 +1,9 @@
 # Billing: monthly client invoicing and Resend email
 
-> **🚧 IN PROGRESS** — 2026-11-16 — billing integration (#18 + #19), staging deploy and staging E2E — `feat/billing-integration`: `firestore.rules`, `functions/billing-*.js`, `src/admin/Billing.jsx`, `scripts/staging.mjs`, `PRODUCTION_BILLING_CUTOVER.md`
-
-Branch `feat/resend-invoicing`. Pilot client: Clifton Ave Animal Hospital (CAAH).
-Stripe autopay / Pay Now is built separately on `feat/stripe-autopay` against the shared
-contract below.
+Branch `feat/billing-integration` (merges `feat/resend-invoicing` and
+`feat/stripe-autopay`). Pilot client: Clifton Ave Animal Hospital (CAAH). Stripe
+collection is in [STRIPE_BILLING.md](STRIPE_BILLING.md); the production steps are in
+[PRODUCTION_BILLING_CUTOVER.md](PRODUCTION_BILLING_CUTOVER.md).
 
 ## Status — what is true today
 
@@ -13,19 +12,41 @@ contract below.
 - All email goes through Resend (`functions/email.js` → `sendResend`); Postmark is gone
   from the code. Delivery webhooks arrive at `/api/resend-events` (`recordResendEvent`),
   verified with Svix signatures.
-- `billingClients` / `invoices` data model, admin-read / server-write Firestore rules,
-  two composite indexes, a deny-all `storage.rules`.
+- `billingClients` / `invoices` data model and one strict rule block per collection:
+  admins read, Cloud Functions write; the only browser write is an admin recording a
+  manual Zelle/check/other payment on an issued invoice (`npm run test:billing-rules`).
+  Two composite indexes, a deny-all `storage.rules`.
 - Monthly cycle (`billingMonthlyInvoices`, 06:00 America/New_York on the 1st), per-client
   sequential numbering, lead count pulled from WordPress with manual override,
   server-side PDF matching the CAAH #011 foundation, invoice email with the PDF attached,
   Admin → Billing screen.
 - WordPress plugin source in `integrations/wordpress/bitesites-lead-count/`.
 
-**Not done — needs the owner (see "Before deploy"):** nothing is deployed, no secret is
-set, the Resend domain is not verified, the WordPress plugin is not installed on
-cliftonaveanimalhospital.com, the Resend webhook is not configured, the real CAAH
-billing client (with its real billing email) has not been created in production. No
-real email has been sent; sending was tested with mocks only.
+**Deployed to staging and proven end to end (2026-11-16)** — `bitesites-outbound-staging`,
+Stripe test mode, real Resend sending to `jensy@bitesites.org` only, real Stripe and
+Resend webhooks. `bitesites.org` is verified in Resend. Results:
+
+| Flow (staging, Stripe test mode, real webhooks) | Result |
+|---|---|
+| Admin → Billing: add client "CAAH (staging test)", 4 retainer lines, $75/lead, manual approval, next #11 | Saved; `#011` next |
+| Create November 2026 draft → lead count 12 (fake) → Save → Finalize → Send | `#011` $2,700; PDF stored in Storage with bank + card links on the staging origin; email to `jensy@bitesites.org` only |
+| Resend delivery | Resend log: sent → delivered; `/api/resend-events` (Svix-verified) set `email.lastEvent = delivered` |
+| Pay Now by bank → **Financial Connections instant login** (test institution "Test (OAuth)", account "Success") → Pay | `checkout.session.completed` → processing → `payment_intent.succeeded` + `async_payment_succeeded` → **paid** (~17 s); link afterwards → `/pay/success?status=paid` |
+| Bank autopay setup link (from the Payment panel) → instant login → Success account | `checkout.session.completed` + `setup_intent.succeeded` → autopay **on** |
+| September draft `#012` → Send (autopay) | charge `processing` → `payment_intent.succeeded` → **paid** |
+| New setup link → "Insufficient Funds" account → August `#013` → Send | `payment_intent.payment_failed` → **payment_failed**, `lastError` set, Pay Now fallback link minted; Resend re-renders the PDF with bank/card links and no autopay promise; bank and card links redirect to Checkout |
+| `billingMonthlyInvoices` run twice via Cloud Scheduler | Run 1: created exactly one draft (`#014`, October, awaiting lead count) + review notice; run 2: `existing`, nothing created, numbering unchanged |
+
+Known gaps: the "Test (Non-OAuth)" institution's login spinner never finished in
+Chrome (twice); the OAuth test institution worked end to end, so instant
+verification is proven but that one test bank is not. The invoice email logo
+points at `https://bitesites.org/email/…`, which only exists after a production
+Hosting deploy, so staging mail shows a broken logo.
+
+**Not done — production (see PRODUCTION_BILLING_CUTOVER.md):** nothing is deployed to
+`bitesites-org` and no production secret is set; the WordPress plugin is not installed
+on cliftonaveanimalhospital.com; the real CAAH billing client (with its real billing
+email) does not exist; Postmark is still configured in production.
 
 ## Data model (shared contract)
 
@@ -65,25 +86,28 @@ status: pulled|failed|awaiting_entry|manual_override, at, error? }`), `terms`, `
 
 ### Stripe hand-off
 
-At finalize/send, `functions/billing-core.js` does a guarded dynamic import of
-`functions/billing-stripe.js`. If the file is absent (or `isStripeConfigured()` is false)
-invoices still work: no Pay Now button, Zelle/check only. If the file exists but fails to
-import (for example a missing `stripe` package), the error is surfaced rather than
-silently dropping card payments.
+At finalize/send, `functions/billing-core.js` loads `functions/billing-stripe.js`. If
+`isStripeConfigured()` is false (no key bound, or a live key without
+`STRIPE_LIVE_MODE_AUTHORIZED`) invoices still work: no Pay Now button, Zelle/check only.
+An import failure is surfaced rather than silently dropping online payments.
 
 - Autopay off → `createPayNowLink(invoice, client)` before the PDF is rendered;
-  `{ url, sessionId }` → `payment.payNowUrl`, `payment.stripeCheckoutSessionId`.
+  `{ url, sessionId }` → `payment.payNowUrl` (the stable `{BILLING_SITE_ORIGIN}/api/pay/{token}`
+  link), `payment.stripeCheckoutSessionId`. The PDF and email render it bank first
+  via `payNowOptions` (`functions/billing-pay-options.js`): **Pay by bank (ACH)**
+  primary, **Pay by card** (`?method=card`) secondary.
 - Autopay on → no link; the PDF and email say "Autopay enabled — your card on file will
   be charged on {date}." ({date} is the issue date, or the finalize date if later; stored
   as `autopayChargeDate`.) After the first send, `chargeAutopay(invoice, client)`;
-  `succeeded` → `paid` (method `stripe`), `processing` → stays `sent`, anything else →
-  `payment_failed`.
-- Optional: `billing-stripe.js` may export `stripeSecrets` (an array of `defineSecret`
-  params); `functions/billing-api.js` binds them to finalize, send and the monthly job.
-- UI: `src/admin/billing/BillingPaymentPanel.jsx` (default or named export) is mounted
-  in the invoice panel as `<BillingPaymentPanel invoice client onChange />` behind an error
-  boundary; it renders nothing until the file exists. Payment status changes made by
-  Stripe webhooks are the Stripe side's to write.
+  `succeeded` → `paid` (method `stripe`), `processing` → stays `sent` until the webhook
+  settles it, anything else → `payment_failed` with a Pay Now fallback link. Re-sending a
+  `payment_failed` invoice re-renders the PDF, so it carries the Pay Now options instead
+  of the autopay promise.
+- `functions/billing-api.js` imports `stripeSecrets` statically and binds them to
+  finalize, send and the monthly job.
+- UI: `src/admin/billing/BillingPaymentPanel.jsx` is mounted on every invoice as
+  `<BillingPaymentPanel invoice client onChange />` behind an error boundary. Payment
+  status changes made by Stripe webhooks are the Stripe side's to write.
 
 ## Monthly cycle
 
@@ -109,9 +133,10 @@ by name/email/phone within the month). It returns counts only, behind
 `functions/billing-pdf.js` (pdfkit) reproduces the foundation: Letter, Montserrat
 (bundled under `functions/billing-assets/fonts/`, SIL OFL), the repo's BiteSites logo,
 issuer block, `INVOICE #011`, BILLED TO / ADDRESS / DATE, the three-column table and the
-right-aligned "Payable to" block with Zelle, checks and terms. Added: a Pay Now button
-(clickable link) when autopay is off and a link exists, or the autopay notice; a "Due
-by" line; DRAFT/VOID watermarks. Totals print with a thousands separator (`$2,700`).
+right-aligned "Payable to" block with Zelle, checks and terms. Added: a row of two
+clickable buttons between the table and "Payable to" — **Pay by bank (ACH)** (filled)
+and **Pay by card** (outlined) — when autopay is off and a link exists, or the autopay
+notice; a "Due by" line; DRAFT/VOID watermarks. Totals print with a thousands separator (`$2,700`).
 
 `functions/billing-email.js` builds the Resend message from `jensy@bitesites.org`
 (reply-to the same), branded HTML + text, the PDF attached, the same payment call to
@@ -125,13 +150,18 @@ hosting deploy. Each send uses `Idempotency-Key: invoice-{id}-send-{n}` and is l
 Invoices (status/client filters) and Clients tabs. The invoice panel edits draft lines,
 lead count (pull or manual), dates; previews the PDF; Finalize, Approve & send, Resend,
 Mark paid (Zelle/check/other), Void. All actions are callables in
-`functions/billing-api.js` (admin role, App Check).
+`functions/billing-api.js` (admin role; App Check enforced everywhere except a
+`staging` deploy, whose frontend has no App Check key). The Payment panel below the
+invoice (Stripe) shows the bank and card Pay Now links, autopay setup links, autopay
+on/off and "Charge now".
 
 ## Commands
 
 ```bash
 npm run test:email            # Resend payloads, batch, errors, Svix webhook verification
 npm run test:billing          # math, lead pull fallback, PDF/email, emulator state machine
+npm run test:billing-stripe   # Stripe autopay/Pay Now/webhook → Firestore, fake Stripe SDK
+npm run test:billing-rules    # billing rules: admins read; only manual mark-paid from a browser
 npm run test:billing-browser  # Admin → Billing in Chromium with faked callables
 npm run test:rules            # includes billing rules
 php integrations/wordpress/bitesites-lead-count/tests/lead-count.test.php
@@ -140,6 +170,10 @@ firebase emulators:exec --only firestore --project demo-bitesites "npm run seed:
 ```
 
 ## Before deploy (owner)
+
+The ordered, production-specific version of this list (with rollback for each step) is
+[PRODUCTION_BILLING_CUTOVER.md](PRODUCTION_BILLING_CUTOVER.md). Steps 1–3 and the
+Storage bucket were done for **staging** on 2026-11-16; none were done for production.
 
 1. **Resend:** add and verify `bitesites.org` as a sending domain (SPF/DKIM records in
    Cloudflare DNS; keep the existing MX/DMARC records).
