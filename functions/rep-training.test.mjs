@@ -8,7 +8,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  allRepTrainingScenarios, evaluatePracticeConversation, evaluationFromConversation, hasRepTrainingAccess, hasRepTrainingExemption, practiceAgentConfig, repTrainingInstructions, startPracticeConversation,
+  allRepTrainingScenarios, evaluatePracticeConversation, isRepTrainingTester, testerSkipEvaluation, evaluationFromConversation, hasRepTrainingAccess, hasRepTrainingExemption, practiceAgentConfig, repTrainingInstructions, startPracticeConversation,
   normalizeRepTrainingEvaluation, publicTrainingScenario, repTrainingScenarios
 } from './rep-training.js';
 import { PRACTICE_AGENT_IDS } from './rep-practice-agents.js';
@@ -225,4 +225,17 @@ test('the field guide quotes only published prices and covers every practice obj
   }
   assert.match(guide.objections.find(item => /off your list/i.test(item.they)).action, /Do not call/);
   assert.equal(publicRepCourse('the-fine-line-group'), null);
+});
+
+test('only an admin-listed tester account can skip, and a skip is marked as one', () => {
+  assert.equal(isRepTrainingTester({ accountIds: ['bitesites'] }, 'bitesites'), true);
+  assert.equal(isRepTrainingTester({ accountIds: ['bitesites'] }, 'stone_bellisimo'), false);
+  assert.equal(isRepTrainingTester({ get: key => (key === 'accountIds' ? ['bitesites'] : undefined) }, 'bitesites'), true);
+  assert.equal(isRepTrainingTester({ get: () => undefined }, 'bitesites'), false);
+  assert.equal(isRepTrainingTester(null, 'bitesites'), false);
+  const skip = testerSkipEvaluation();
+  assert.equal(skip.passed, true);
+  assert.equal(skip.testerSkipped, true);
+  assert.equal(skip.score, 0);
+  assert.match(skip.summary, /not scored/);
 });

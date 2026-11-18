@@ -37,6 +37,9 @@ export default function RepTraining({ accounts = [], loading = false, error = ''
   // Set when the rep presses End call, even mid-connect, so a call that is
   // still connecting cannot come back to life after the rep hung up.
   const endRequestedRef = useRef(false);
+  // While a call is being scored or skipped, a late hang-up event from the
+  // call must not flip the screen back to the wrap-up.
+  const finishingRef = useRef(false);
   const transcriptRef = useRef([]);
   const selected = accounts.find(account => account.accountId === accountId) || incomplete[0] || accounts[0] || null;
 
@@ -87,7 +90,7 @@ export default function RepTraining({ accounts = [], loading = false, error = ''
       const controller = await startPracticeCall({
         accountId: selected.accountId,
         onState: next => {
-          if (endRequestedRef.current && next !== 'idle') return;
+          if (finishingRef.current || (endRequestedRef.current && next !== 'idle')) return;
           setState(next);
           // The prospect can hang up too; drop the "practice is live" note.
           if (next === 'idle') setMessage('');
@@ -124,9 +127,12 @@ export default function RepTraining({ accounts = [], loading = false, error = ''
     await controller?.stop().catch(() => {});
   };
 
-  const finish = async () => {
+  // testerSkip: an admin-approved tester passes the call without scoring.
+  const finish = async ({ testerSkip = false } = {}) => {
     if (!attemptId || busy) return;
-    setLogged({ ...wrapUp });
+    endRequestedRef.current = true;
+    finishingRef.current = true;
+    setLogged(testerSkip ? null : { ...wrapUp });
     setBusy(true);
     setState('scoring');
     setProblem('');
@@ -135,9 +141,9 @@ export default function RepTraining({ accounts = [], loading = false, error = ''
     controllerRef.current = null;
     await controller?.stop().catch(() => {});
     setState('scoring');
-    setMessage('The AI coach is reviewing your practice conversation…');
+    setMessage(testerSkip ? 'Recording the tester skip…' : 'The AI coach is reviewing your practice conversation…');
     try {
-      const evaluation = await outbound.completeRepTrainingAttempt(currentAttempt);
+      const evaluation = await outbound.completeRepTrainingAttempt(currentAttempt, { testerSkip });
       setResult(evaluation);
       setAttemptId('');
       setState('idle');
@@ -145,7 +151,9 @@ export default function RepTraining({ accounts = [], loading = false, error = ''
         ? evaluation.assignedCampaign
           ? `Training passed. You now have access to ${evaluation.assignedCampaign.name}.`
           : 'Training passed. A manager needs to choose a default campaign or free up campaign capacity before access can be assigned.'
-        : evaluation.passed
+        : evaluation.testerSkipped
+          ? 'Call skipped as a tester. Start the next one when you’re ready.'
+          : evaluation.passed
           ? 'Nice work. Keep going with your next practice call.'
           : 'Not quite yet. Read the coach’s notes and try this call again.');
       await onRefresh();
@@ -154,10 +162,14 @@ export default function RepTraining({ accounts = [], loading = false, error = ''
       setProblem(failure?.message || 'The coach could not score this session. You can try submitting again.');
       setState('idle');
     } finally {
+      finishingRef.current = false;
       setBusy(false);
     }
   };
 
+  const testerSkipButton = selected?.trainingTester && attemptId && state !== 'scoring'
+    ? <button className="btn-admin rep-training-skip" type="button" disabled={busy} onClick={() => finish({ testerSkip: true })}>Pass this call (tester)</button>
+    : null;
   const callEnded = Boolean(attemptId) && !['live', 'connecting', 'scoring'].includes(state);
   const canScore = scorable(transcript);
   const inPractice = Boolean(selected?.ready && !selected.trainingExempt && !selected.passed && !(selected.courseRequired && !selected.quizPassed));
@@ -255,6 +267,7 @@ export default function RepTraining({ accounts = [], loading = false, error = ''
                 : !callEnded && <button className="btn-admin primary" type="button" disabled={busy || state === 'scoring'} onClick={start}>
                   {state === 'scoring' ? 'Getting feedback…' : result ? (result.passed ? 'Start next call' : 'Try this call again') : 'Start role-play'}
                 </button>}
+              {state === 'live' && testerSkipButton}
               {state === 'live' && <span className="rep-training-live"><i aria-hidden="true" />Call in progress</span>}
             </div>
   
@@ -301,20 +314,24 @@ export default function RepTraining({ accounts = [], loading = false, error = ''
               </label>
               {canScore
                 ? <div className="rep-training-actions">
-                  <button className="btn-admin primary" type="button" disabled={busy || !wrapUp.outcome} onClick={finish}>Save and get feedback</button>
+                  <button className="btn-admin primary" type="button" disabled={busy || !wrapUp.outcome} onClick={() => finish()}>Save and get feedback</button>
                   <button className="btn-admin" type="button" disabled={busy} onClick={start}>Discard and start over</button>
+                  {testerSkipButton}
                   {!wrapUp.outcome && <span className="rep-training-hint">Pick how the call ended first.</span>}
                 </div>
                 : <div className="rep-training-short" role="status">
                   <p>This call was too short for the coach to score. It needs at least four back-and-forths. Start a new call and keep the conversation going a little longer.</p>
-                  <button className="btn-admin primary" type="button" disabled={busy} onClick={start}>Start a new call</button>
+                  <div className="rep-training-actions">
+                    <button className="btn-admin primary" type="button" disabled={busy} onClick={start}>Start a new call</button>
+                    {testerSkipButton}
+                  </div>
                 </div>}
             </section>}
 
             {message && <p className="rep-training-message" role="status">{message}</p>}
             {problem && <p className="admin-error" role="alert">{problem}</p>}
             {result && <div className={`rep-training-feedback ${result.passed ? 'is-passed' : 'is-retry'}`}>
-              <div><strong>{result.passed ? 'Practice call passed' : 'Try this call again'}</strong><span>Score {result.score}/100</span></div>
+              <div><strong>{result.testerSkipped ? 'Skipped as a tester' : result.passed ? 'Practice call passed' : 'Try this call again'}</strong><span>{result.testerSkipped ? 'Not scored' : `Score ${result.score}/100`}</span></div>
               <p>{result.summary}</p>
               {!!result.strengths?.length && <div><strong>What went well</strong><ul>{result.strengths.map((item, index) => <li key={index}>{item}</li>)}</ul></div>}
               {!!result.improvements?.length && <div><strong>Next time</strong><ul>{result.improvements.map((item, index) => <li key={index}>{item}</li>)}</ul></div>}

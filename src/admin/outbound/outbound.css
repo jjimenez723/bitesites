@@ -1319,3 +1319,4 @@
 @media (max-width: 560px) {
   .bs-admin .rep-training-actions .btn-admin { flex: 1 1 100%; justify-content: center; min-height: var(--hit); }
 }
+.bs-admin .rep-training-actions .btn-admin.rep-training-skip { border-style: dashed; color: var(--warning); }
