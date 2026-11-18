@@ -198,7 +198,10 @@ export default function OutboundCalls({ role = 'admin', currentUid = '' }) {
   const campaignStatus = activeCampaign?.status || 'not selected';
   const campaignCounts = activeCampaign?.counts || {};
 
-  if (role === 'outbound_rep' && (repTraining.loading || repTraining.error)) {
+  // Only the first check blocks the page. Later refreshes (after a quiz or a
+  // scored practice call) keep the page mounted, or the coach's feedback
+  // would be thrown away the moment it arrived.
+  if (role === 'outbound_rep' && !repTraining.accounts.length && (repTraining.loading || repTraining.error)) {
     return <>
       <header className="admin-topbar"><h1>Outbound Sales</h1></header>
       <div className="admin-body">

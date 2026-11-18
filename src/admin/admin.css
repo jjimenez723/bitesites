@@ -131,6 +131,16 @@
 .bs-admin a { color: inherit; text-decoration: none; }
 .bs-admin button, .bs-admin input, .bs-admin select, .bs-admin textarea { font: inherit; color: inherit; }
 .bs-admin ::selection { background: rgba(124, 58, 237, .4); }
+/* styles.css turns every <header> into the marketing site's fixed nav bar.
+   Inside the console a header is ordinary content (the field guide's title
+   block was pinned over the training card on phones). :where() keeps this at
+   element weight, so any console class that styles a header still wins. */
+:where(.bs-admin) header:where(:not(.admin-topbar)) {
+  position: static; inset: auto; z-index: auto;
+  background: none; -webkit-backdrop-filter: none; backdrop-filter: none;
+  border-bottom: 0; transform: none; transition: none; will-change: auto;
+  overflow: visible; grid-column: auto;
+}
 
 .admin-boot {
   min-height: 100vh;
@@ -1441,6 +1451,11 @@
   /* Below this the mark alone identifies the console and the nav strip needs
      every pixel it can get. */
   .admin-brand > div { display: none; }
+  /* Logo and account share the first row; the tabs get a full-width row of
+     their own, so a rep's single "Outbound Calls" tab is never clipped
+     between the logo and Sign out. */
+  .admin-sidebar { flex-wrap: wrap; row-gap: var(--sp-2); }
+  .admin-nav { order: 3; flex: 1 0 100%; }
 }
 
 @media (prefers-reduced-motion: reduce) {

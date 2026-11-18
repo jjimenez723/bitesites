@@ -137,7 +137,9 @@
   .bs-admin .admin-shell { padding: 0; gap: 0; }
   .bs-admin .admin-sidebar { top: 0; height: auto; border-radius: 0 0 20px 20px; }
   .bs-admin .admin-main { padding: 0 10px; }
-  .bs-admin .admin-topbar { top: 8px; }
+  .bs-admin .admin-main { padding-top: 10px; }
+  /* Pinned glass over scrolling text was hard to read on a phone. */
+  .bs-admin .admin-topbar { position: static; }
   .bs-admin .admin-body { padding-left: 0; padding-right: 0; }
 }
 

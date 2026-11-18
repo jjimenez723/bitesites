@@ -260,14 +260,15 @@ function AdminShell({ session }) {
   );
 }
 
-// Dev server only: open /admin?glass-preview to see the console shell without
+// Dev server only: open /admin?glass-preview (or ?glass-preview=rep) to see the console shell without
 // signing in. Pages that read Firestore show their error or empty states.
 // import.meta.env.DEV is false in production builds, so this never ships.
 function devGlassPreview() {
   if (!import.meta.env.DEV) return false;
   try {
-    if (new URLSearchParams(window.location.search).has('glass-preview')) sessionStorage.setItem('bs-glass-preview', '1');
-    return sessionStorage.getItem('bs-glass-preview') === '1';
+    const value = new URLSearchParams(window.location.search).get('glass-preview');
+    if (value !== null) sessionStorage.setItem('bs-glass-preview', value === 'rep' ? 'rep' : '1');
+    return sessionStorage.getItem('bs-glass-preview') || false;
   } catch { return false; }
 }
 
@@ -275,8 +276,10 @@ export default function AdminApp() {
   if (import.meta.env.DEV && window.location.pathname === '/admin/outbound-preview') {
     return <OutboundExperiencePreview />;
   }
-  if (import.meta.env.DEV && devGlassPreview()) {
-    return <AdminShell session={{ user: { uid: 'preview', email: 'preview@localhost' }, role: 'admin', profile: { displayName: 'Preview' } }} />;
+  const preview = import.meta.env.DEV && devGlassPreview();
+  if (preview) {
+    // ?glass-preview=rep shows the console as a sales rep sees it.
+    return <AdminShell session={{ user: { uid: 'preview', email: 'preview@localhost' }, role: preview === 'rep' ? 'outbound_rep' : 'admin', profile: { displayName: 'Jon Arroyo' } }} />;
   }
   return <AuthenticatedAdminApp />;
 }

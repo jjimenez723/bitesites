@@ -1285,3 +1285,37 @@
 .bs-admin.rep-guide-print .rep-guide-script,
 .bs-admin.rep-guide-print .rep-guide-objections { gap: 3px; }
 .bs-admin.rep-guide-print .rep-guide .rep-guide-remember { margin-top: 6px; padding: 6px; font-size: 10px; }
+
+/* Practice call: end the call, then wrap it up like a real one. */
+.bs-admin .rep-training-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.bs-admin .rep-training-live { display: inline-flex; align-items: center; gap: 8px; color: var(--ink-2); font-size: 12.5px; font-weight: 600; }
+.bs-admin .rep-training-live i { width: 8px; height: 8px; border-radius: 50%; background: var(--good); box-shadow: 0 0 0 4px rgba(12, 163, 12, .18); }
+/* Outranks .btn-admin.danger and the glass button tint. */
+.bs-admin .rep-training-actions .btn-admin.rep-training-end { min-height: var(--hit); padding-inline: 22px; background: var(--critical); border-color: transparent; color: #fff; }
+.bs-admin .rep-training-actions .btn-admin.rep-training-end:hover { background: #b83232; }
+.bs-admin .rep-training-wrapup { display: grid; gap: 14px; padding: 16px; border: 1px solid var(--line-strong); border-radius: var(--r-lg); background: rgba(255, 255, 255, .04); }
+.bs-admin .rep-training-wrapup > div:first-child { display: grid; gap: 3px; }
+.bs-admin .rep-training-wrapup > div:first-child span { color: var(--ink-3); font-size: 12px; }
+.bs-admin .rep-training-wrapup fieldset { border: 0; padding: 0; margin: 0; }
+.bs-admin .rep-training-wrapup legend { margin-bottom: 8px; color: var(--ink-2); font-size: 12.5px; font-weight: 600; }
+.bs-admin .rep-training-outcomes { display: flex; flex-wrap: wrap; gap: 6px; }
+.bs-admin .rep-training-outcome { min-height: 38px; padding: 7px 13px; border: 1px solid var(--line-strong); border-radius: 999px; background: transparent; color: var(--ink-2); font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.bs-admin .rep-training-outcome:hover { color: var(--ink); background: rgba(255, 255, 255, .06); }
+.bs-admin .rep-training-outcome[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: #0a0a0e; }
+.bs-admin .rep-training-outcome.is-dnc[aria-pressed="true"] { background: var(--critical); border-color: var(--critical); color: #fff; }
+.bs-admin .rep-training-outcome:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.bs-admin .rep-training-info-preview { display: grid; gap: 6px; padding: 14px; border-radius: var(--r-md); background: #fff; color: #1d1d1f; }
+.bs-admin .rep-training-info-preview p { color: #424245; font-size: 13px; }
+.bs-admin .rep-training-info-preview small { color: #6e6e73; font-size: 11.5px; }
+.bs-admin .rep-training-info-link { color: #0071e3; font-size: 13px; font-weight: 600; text-decoration: underline; overflow-wrap: anywhere; }
+.bs-admin .rep-training-dnc { color: var(--critical-ink); font-size: 12.5px; }
+.bs-admin .rep-training-notes { display: grid; gap: 6px; color: var(--ink-2); font-size: 12.5px; font-weight: 600; }
+.bs-admin .rep-training-notes textarea { width: 100%; padding: 10px 12px; border: 1px solid var(--line-strong); border-radius: var(--r-sm); background: rgba(255, 255, 255, .05); color: var(--ink); font-size: 14px; resize: vertical; }
+.bs-admin .rep-training-notes textarea:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.bs-admin .rep-training-hint { color: var(--ink-3); font-size: 12px; }
+.bs-admin .rep-training-short { display: grid; gap: 10px; justify-items: start; }
+.bs-admin .rep-training-short p { color: var(--ink-2); font-size: 13px; }
+.bs-admin .rep-training-logged { margin-top: 10px; color: var(--ink-2); font-size: 12.5px; }
+@media (max-width: 560px) {
+  .bs-admin .rep-training-actions .btn-admin { flex: 1 1 100%; justify-content: center; min-height: var(--hit); }
+}

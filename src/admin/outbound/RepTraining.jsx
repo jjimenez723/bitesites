@@ -6,6 +6,20 @@ import RepFieldGuide from './RepFieldGuide';
 
 const transcriptLengthLabel = turns => `${turns.length} transcript turns`;
 
+// The same choices the field guide and the live dialer use. Practice keeps
+// them in this browser only: the coach scores the conversation ElevenLabs
+// recorded, and nothing here touches a real lead.
+const PRACTICE_OUTCOMES = ['Interested', 'Booked a meeting', 'Call back later', 'Not interested', 'Voicemail', 'Wrong number', 'Do not call'];
+
+// Mirrors the server's minimum (functions/rep-training.js): four turns each
+// way and about 400 characters, or the coach refuses to score the call.
+const scorable = turns => {
+  const you = turns.filter(turn => turn.role === 'you').length;
+  const them = turns.filter(turn => turn.role === 'agent').length;
+  const characters = turns.reduce((total, turn) => total + turn.text.length, 0);
+  return you >= 4 && them >= 4 && characters >= 400;
+};
+
 export default function RepTraining({ accounts = [], loading = false, error = '', onRefresh = () => {} }) {
   const incomplete = useMemo(() => accounts.filter(account => !account.passed && !account.trainingExempt), [accounts]);
   const [accountId, setAccountId] = useState('');
@@ -17,7 +31,12 @@ export default function RepTraining({ accounts = [], loading = false, error = ''
   const [message, setMessage] = useState('');
   const [problem, setProblem] = useState('');
   const [busy, setBusy] = useState(false);
+  const [wrapUp, setWrapUp] = useState({ outcome: '', notes: '', infoSent: false });
+  const [logged, setLogged] = useState(null);
   const controllerRef = useRef(null);
+  // Set when the rep presses End call, even mid-connect, so a call that is
+  // still connecting cannot come back to life after the rep hung up.
+  const endRequestedRef = useRef(false);
   const transcriptRef = useRef([]);
   const selected = accounts.find(account => account.accountId === accountId) || incomplete[0] || accounts[0] || null;
 
@@ -56,13 +75,23 @@ export default function RepTraining({ accounts = [], loading = false, error = ''
     setResult(null);
     setScenario(null);
     setAttemptId('');
+    setWrapUp({ outcome: '', notes: '', infoSent: false });
+    setLogged(null);
+    endRequestedRef.current = false;
+    await controllerRef.current?.stop().catch(() => {});
+    controllerRef.current = null;
     transcriptRef.current = [];
     setTranscript([]);
     setBusy(true);
     try {
       const controller = await startPracticeCall({
         accountId: selected.accountId,
-        onState: setState,
+        onState: next => {
+          if (endRequestedRef.current && next !== 'idle') return;
+          setState(next);
+          // The prospect can hang up too; drop the "practice is live" note.
+          if (next === 'idle') setMessage('');
+        },
         onTranscript: updateTranscript,
         onError: setProblem,
         onSession: session => {
@@ -70,8 +99,13 @@ export default function RepTraining({ accounts = [], loading = false, error = ''
           setScenario(session.scenario || null);
         }
       });
-      controllerRef.current = controller;
-      setMessage('Practice is live. This is a fictional prospect; no campaign leads or phone calls are involved.');
+      if (endRequestedRef.current) {
+        await controller.stop().catch(() => {});
+        setState('idle');
+      } else {
+        controllerRef.current = controller;
+        setMessage('Practice is live. This is a fictional prospect; no campaign leads or phone calls are involved.');
+      }
     } catch (failure) {
       setState('idle');
       setProblem(failure?.message || 'Could not start the practice session.');
@@ -80,21 +114,33 @@ export default function RepTraining({ accounts = [], loading = false, error = ''
     }
   };
 
+  // Hang up without scoring yet: the rep wraps up the call first.
+  const endCall = async () => {
+    endRequestedRef.current = true;
+    const controller = controllerRef.current;
+    controllerRef.current = null;
+    setState('idle');
+    setMessage('');
+    await controller?.stop().catch(() => {});
+  };
+
   const finish = async () => {
     if (!attemptId || busy) return;
+    setLogged({ ...wrapUp });
     setBusy(true);
     setState('scoring');
     setProblem('');
-    setMessage('The AI coach is reviewing your practice conversation…');
     const currentAttempt = attemptId;
     const controller = controllerRef.current;
     controllerRef.current = null;
     await controller?.stop().catch(() => {});
     setState('scoring');
+    setMessage('The AI coach is reviewing your practice conversation…');
     try {
       const evaluation = await outbound.completeRepTrainingAttempt(currentAttempt);
       setResult(evaluation);
       setAttemptId('');
+      setState('idle');
       setMessage(evaluation.coursePassed
         ? evaluation.assignedCampaign
           ? `Training passed. You now have access to ${evaluation.assignedCampaign.name}.`
@@ -112,10 +158,12 @@ export default function RepTraining({ accounts = [], loading = false, error = ''
     }
   };
 
+  const callEnded = Boolean(attemptId) && !['live', 'connecting', 'scoring'].includes(state);
+  const canScore = scorable(transcript);
   const inPractice = Boolean(selected?.ready && !selected.trainingExempt && !selected.passed && !(selected.courseRequired && !selected.quizPassed));
 
-  if (loading) return <div className="admin-card rep-training-card"><p>Loading your training assignments…</p></div>;
-  if (error) return <div className="admin-card rep-training-card">
+  if (loading && !accounts.length) return <div className="admin-card rep-training-card"><p>Loading your training assignments…</p></div>;
+  if (error && !accounts.length) return <div className="admin-card rep-training-card">
     <h2>Sales practice</h2><p className="admin-error" role="alert">{error}</p>
     <button className="btn-admin" type="button" onClick={onRefresh}>Try again</button>
   </div>;
@@ -202,14 +250,12 @@ export default function RepTraining({ accounts = [], loading = false, error = ''
             </div>
   
             <div className="rep-training-actions">
-              <button className="btn-admin primary" type="button" disabled={busy || state === 'live'} onClick={start}>
-                {state === 'connecting' ? 'Connecting…' : state === 'live' ? 'Practice in progress' : 'Start role-play'}
-              </button>
-              <button className="btn-admin" type="button"
-                disabled={busy || !attemptId || transcript.length < 8}
-                onClick={finish}>
-                {state === 'scoring' ? 'Getting feedback…' : 'Finish and get feedback'}
-              </button>
+              {state === 'live' || state === 'connecting'
+                ? <button className="btn-admin danger rep-training-end" type="button" onClick={endCall}>End call</button>
+                : !callEnded && <button className="btn-admin primary" type="button" disabled={busy || state === 'scoring'} onClick={start}>
+                  {state === 'scoring' ? 'Getting feedback…' : result ? (result.passed ? 'Start next call' : 'Try this call again') : 'Start role-play'}
+                </button>}
+              {state === 'live' && <span className="rep-training-live"><i aria-hidden="true" />Call in progress</span>}
             </div>
   
             {transcript.length > 0 && <div className="rep-training-transcript" aria-label="Practice transcript" aria-live="polite">
@@ -222,6 +268,49 @@ export default function RepTraining({ accounts = [], loading = false, error = ''
               ))}
             </div>}
   
+            {callEnded && <section className="rep-training-wrapup" aria-label="Wrap up the call">
+              <div>
+                <strong>Wrap up the call</strong>
+                <span>Practice only: nothing here contacts anyone or changes a real lead.</span>
+              </div>
+              <fieldset>
+                <legend>How did it end?</legend>
+                <div className="rep-training-outcomes">
+                  {PRACTICE_OUTCOMES.map(outcome => <button key={outcome} type="button"
+                    className={`rep-training-outcome ${outcome === 'Do not call' ? 'is-dnc' : ''}`}
+                    aria-pressed={wrapUp.outcome === outcome}
+                    onClick={() => setWrapUp(current => ({ ...current, outcome }))}>{outcome}</button>)}
+                </div>
+              </fieldset>
+              {(wrapUp.outcome === 'Interested' || wrapUp.outcome === 'Booked a meeting') && <div className="rep-training-info">
+                {wrapUp.infoSent
+                  ? <div className="rep-training-info-preview" role="status">
+                    <span className="outbound-eyebrow">Practice email · not sent</span>
+                    <strong>Your free demo from BiteSites</strong>
+                    <p>Hi{scenario?.name ? ` ${scenario.name}` : ''}, thanks for the time today. Here’s the link we talked about:</p>
+                    <span className="rep-training-info-link">bitesites.org/demo/{(scenario?.business || 'your-business').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}</span>
+                    <small>On a real call this goes out from the dialer’s email step. In practice nothing is sent.</small>
+                  </div>
+                  : <button className="btn-admin" type="button" onClick={() => setWrapUp(current => ({ ...current, infoSent: true }))}>Send info link (practice)</button>}
+              </div>}
+              {wrapUp.outcome === 'Do not call' && <p className="rep-training-dnc">On a real call this adds the number to the do-not-call list, and no one calls it again.</p>}
+              <label className="rep-training-notes">
+                <span>Notes</span>
+                <textarea rows={3} maxLength={1000} value={wrapUp.notes} placeholder="What did they say? What’s the next step?"
+                  onChange={event => setWrapUp(current => ({ ...current, notes: event.target.value }))} />
+              </label>
+              {canScore
+                ? <div className="rep-training-actions">
+                  <button className="btn-admin primary" type="button" disabled={busy || !wrapUp.outcome} onClick={finish}>Save and get feedback</button>
+                  <button className="btn-admin" type="button" disabled={busy} onClick={start}>Discard and start over</button>
+                  {!wrapUp.outcome && <span className="rep-training-hint">Pick how the call ended first.</span>}
+                </div>
+                : <div className="rep-training-short" role="status">
+                  <p>This call was too short for the coach to score. It needs at least four back-and-forths. Start a new call and keep the conversation going a little longer.</p>
+                  <button className="btn-admin primary" type="button" disabled={busy} onClick={start}>Start a new call</button>
+                </div>}
+            </section>}
+
             {message && <p className="rep-training-message" role="status">{message}</p>}
             {problem && <p className="admin-error" role="alert">{problem}</p>}
             {result && <div className={`rep-training-feedback ${result.passed ? 'is-passed' : 'is-retry'}`}>
@@ -229,6 +318,7 @@ export default function RepTraining({ accounts = [], loading = false, error = ''
               <p>{result.summary}</p>
               {!!result.strengths?.length && <div><strong>What went well</strong><ul>{result.strengths.map((item, index) => <li key={index}>{item}</li>)}</ul></div>}
               {!!result.improvements?.length && <div><strong>Next time</strong><ul>{result.improvements.map((item, index) => <li key={index}>{item}</li>)}</ul></div>}
+              {logged?.outcome && <p className="rep-training-logged">You logged: <strong>{logged.outcome}</strong>{logged.infoSent ? ' · info link (practice)' : ''}{logged.notes ? ` · “${logged.notes}”` : ''}</p>}
             </div>}
           </section>
         )}
