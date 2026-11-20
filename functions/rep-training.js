@@ -60,6 +60,17 @@ export function testerSkipEvaluation() {
   };
 }
 
+/**
+ * The campaign a rep can dial for a seller: the seller's default if the rep is
+ * on it, otherwise any other open campaign they were added to. Being on any
+ * open campaign counts; it does not have to be the default.
+ */
+export function pickAssignedCampaign(campaigns, accountId, defaultCampaignId = '') {
+  const open = (Array.isArray(campaigns) ? campaigns : []).filter(campaign =>
+    campaign && campaign.accountId === accountId && !['cancelled', 'completed'].includes(campaign.status));
+  return open.find(campaign => campaign.id === defaultCampaignId) || open[0] || null;
+}
+
 /** A rep may access a seller account after passing training or explicit exemption. */
 export function hasRepTrainingAccess(roleRecord, accountId) {
   const passed = typeof roleRecord?.get === 'function'

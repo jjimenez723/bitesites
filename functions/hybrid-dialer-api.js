@@ -38,7 +38,7 @@ import { aiMediaAttachDeadline, failClosedAIMediaAttachment, isAIMediaAttachPend
 import { externalDialingAdmission } from './deployment-environment.js';
 import {
   evaluatePracticeConversation, hasRepTrainingAccess, hasRepTrainingExemption,
-  isRepTrainingTester, testerSkipEvaluation, nextRepTrainingScenario, publicTrainingScenario, repTrainingScenarios,
+  isRepTrainingTester, pickAssignedCampaign, testerSkipEvaluation, nextRepTrainingScenario, publicTrainingScenario, repTrainingScenarios,
   startPracticeConversation
 } from './rep-training.js';
 import { gradeRepQuiz, hasRepCourse, publicRepCourse } from './rep-course.js';
@@ -902,10 +902,18 @@ export const getRepTrainingStatus = onCall(callOptions, async request => {
   const { db, uid, role, access } = await requireDialer(request);
   if (role !== 'outbound_rep') throw new HttpsError('permission-denied', 'Sales training is available to sales reps.');
   const accountIds = normalizeAccountScope(access.accountIds);
-  const [roleSnapshot, testerSnapshot] = await Promise.all([
+  const [roleSnapshot, testerSnapshot, myCampaignsSnapshot] = await Promise.all([
     db.doc(`roles/${uid}`).get(),
-    db.doc(`repTrainingTesters/${uid}`).get()
+    db.doc(`repTrainingTesters/${uid}`).get(),
+    // Every campaign this rep was added to, by default or by hand.
+    db.collection('outboundCampaigns').where('allowedRepUids', 'array-contains', uid).limit(100).get()
   ]);
+  const myCampaigns = myCampaignsSnapshot.docs.map(entry => ({
+    id: entry.id,
+    name: clean(entry.get('name'), 120) || 'Campaign',
+    status: clean(entry.get('status'), 40),
+    accountId: readAccountId(entry.get('accountId'), { fallback: LEGACY_ACCOUNT_ID })
+  }));
   const passedAccountIds = roleSnapshot.get('trainingPassedAccountIds');
   const accounts = await Promise.all(accountIds.map(async accountId => {
     const [defaultSnapshot, progressSnapshot] = await Promise.all([
@@ -928,15 +936,15 @@ export const getRepTrainingStatus = onCall(callOptions, async request => {
       && passedAccountIds.includes(accountId)
       && requiredScenarioIds.every(id => completedScenarioIds.includes(id));
     const trainingExempt = hasRepTrainingExemption(roleSnapshot, accountId);
+    const assigned = pickAssignedCampaign(myCampaigns, accountId, defaultCampaign?.id || '');
     return {
       trainingTester: isRepTrainingTester(testerSnapshot, accountId),
       accountId,
       accountName: getAccount(accountId)?.label || accountId,
       ready: requiredScenarioIds.length > 0,
       defaultCampaign,
-      campaignAssigned: Boolean(defaultCampaign
-        && Array.isArray(campaignSnapshot.get('allowedRepUids'))
-        && campaignSnapshot.get('allowedRepUids').includes(uid)),
+      campaignAssigned: Boolean(assigned),
+      assignedCampaign: assigned ? { id: assigned.id, name: assigned.name } : null,
       completedScenarioIds,
       requiredScenarioCount,
       passed,

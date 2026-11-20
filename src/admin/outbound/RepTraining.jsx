@@ -232,17 +232,17 @@ export default function RepTraining({ accounts = [], loading = false, error = ''
           <div className="rep-training-ready" role="status">
             <strong>An admin waived training for this account.</strong>
             <span>{selected.campaignAssigned
-              ? `Your assigned campaign${selected.defaultCampaign?.name ? `, ${selected.defaultCampaign.name},` : ''} is available in the Dialer tab.`
+              ? `Your assigned campaign${(selected.assignedCampaign || selected.defaultCampaign)?.name ? `, ${(selected.assignedCampaign || selected.defaultCampaign).name},` : ''} is available in the Dialer tab.`
               : selected.defaultCampaign
                 ? `A manager still needs to add you to ${selected.defaultCampaign.name || 'the default campaign'} before campaign access is available.`
-                : 'A manager still needs to choose a default campaign before campaign access is available.'}</span>
+                : 'A manager still needs to add you to a campaign before you can call.'}</span>
           </div>
         ) : selected?.passed ? (
           <div className="rep-training-ready" role="status">
             <strong>You passed the required training.</strong>
             <span>{selected.campaignAssigned
-              ? `Your assigned campaign${selected.defaultCampaign?.name ? `, ${selected.defaultCampaign.name},` : ''} is available in the Dialer tab.`
-              : 'A manager must choose a default campaign or free up campaign capacity before campaign access can be assigned.'}</span>
+              ? `Your assigned campaign${(selected.assignedCampaign || selected.defaultCampaign)?.name ? `, ${(selected.assignedCampaign || selected.defaultCampaign).name},` : ''} is available in the Dialer tab.`
+              : 'A manager still needs to add you to a campaign. You’ll be able to call as soon as they do; tap Refresh then.'}</span>
           </div>
         ) : !selected?.ready ? (
           <div className="rep-training-setup" role="status">
