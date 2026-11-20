@@ -15,6 +15,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useUsers, useRoles, setRole, setRepTrainingExemption, toDate } from './data';
 import { Pill } from './Panel';
 import { outbound } from './outbound/data';
+import RepCampaignManager from './outbound/RepCampaignManager';
 import { ACCOUNTS, ACCOUNT_IDS } from '../../functions/accounts.js';
 
 const when = value => {
@@ -243,6 +244,9 @@ export default function Users() {
           </div>
         )}
 
+        {/* Reps who passed but have nothing to dial; the full list is Outbound Calls → Reps. */}
+        <RepCampaignManager variant="waiting" />
+
         {pending.length > 0 && (
           <div className="admin-card">
             <div className="card-head">
@@ -274,7 +278,8 @@ export default function Users() {
         </p>
         <p className="admin-note">
           Training exemptions are admin-only and limited to the selected sales rep and seller account.
-          They do not record a course pass or assign the rep to a campaign.
+          They do not record a course pass or assign the rep to a campaign. To see every rep's
+          campaigns, or choose the campaign new reps get automatically, open Outbound Calls → Reps.
         </p>
       </div>
     </>

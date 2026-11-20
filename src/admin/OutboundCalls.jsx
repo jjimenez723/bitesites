@@ -21,6 +21,7 @@ import TeamCallCoach from './outbound/TeamCallCoach';
 import ConsentRegistry from './outbound/ConsentRegistry';
 import EligibilityAudit from './outbound/EligibilityAudit';
 import RepTraining from './outbound/RepTraining';
+import RepCampaignManager from './outbound/RepCampaignManager';
 import './outbound/outbound.css';
 import './outbound/hybrid.css';
 import './outbound/agents.css';
@@ -28,6 +29,7 @@ import './outbound/agents.css';
 const TABS = [
   ['training', 'AI Training'],
   ['campaigns', 'Campaigns'],
+  ['reps', 'Reps'],
   ['discovery', 'Lead Discovery'],
   ['prospects', 'Prospects'],
   ['review', 'Import Review'],
@@ -48,7 +50,7 @@ const TABS = [
 // for permissions and deep links; this only supplies visual hierarchy.
 const TAB_GROUPS = [
   { key: 'onboard', label: 'Onboarding', tabs: ['training'] },
-  { key: 'operate', label: 'Operate', tabs: ['campaigns', 'queue', 'dialer', 'calendar', 'history'] },
+  { key: 'operate', label: 'Operate', tabs: ['campaigns', 'reps', 'queue', 'dialer', 'calendar', 'history'] },
   { key: 'build', label: 'Build', tabs: ['prospects', 'agents'] },
   { key: 'monitor', label: 'Monitor', tabs: ['coaching', 'later', 'settings'] },
   { key: 'admin', label: 'Admin', tabs: ['discovery', 'review', 'consent', 'eligibility'] }
@@ -315,6 +317,7 @@ export default function OutboundCalls({ role = 'admin', currentUid = '' }) {
             error={repTraining.error}
             onRefresh={loadRepTraining}
           />}
+          {tab === 'reps' && role === 'admin' && <RepCampaignManager />}
           {tab === 'campaigns' && (
             <CampaignList
               campaigns={campaigns.rows}
