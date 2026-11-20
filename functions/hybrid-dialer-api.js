@@ -1343,7 +1343,10 @@ export const twilioHybridProspectTwiML = onRequest({ secrets: [HYBRID_TWILIO_AUT
 });
 
 /** TwiML App Voice URL for browser Voice SDK joins. */
-export const twilioHybridBrowserTwiML = onRequest({ secrets: [HYBRID_TWILIO_AUTH_TOKEN], maxInstances: 30 }, async (req, res) => {
+// Kept warm (minInstances: 1): this and twilioHybridConferenceEvent run the
+// moment a prospect answers. A cold start measured 3-5 s on 2026-11-20, which
+// was dead air before the rep was connected.
+export const twilioHybridBrowserTwiML = onRequest({ secrets: [HYBRID_TWILIO_AUTH_TOKEN], maxInstances: 30, minInstances: 1 }, async (req, res) => {
   if (!twilioSignatureValid(req, secretValue(HYBRID_TWILIO_AUTH_TOKEN))) {
     res.status(401).type('text/plain').send('unauthorized'); return;
   }
@@ -1392,7 +1395,7 @@ export const twilioHybridBrowserTwiML = onRequest({ secrets: [HYBRID_TWILIO_AUTH
   );
 });
 
-export const twilioHybridConferenceEvent = onRequest({ secrets: [HYBRID_TWILIO_AUTH_TOKEN], maxInstances: 30 }, async (req, res) => {
+export const twilioHybridConferenceEvent = onRequest({ secrets: [HYBRID_TWILIO_AUTH_TOKEN], maxInstances: 30, minInstances: 1 }, async (req, res) => {
   if (!twilioSignatureValid(req, secretValue(HYBRID_TWILIO_AUTH_TOKEN))) { res.status(401).json({ error: 'unauthorized' }); return; }
   const db = getFirestore();
   const sessionId = clean(req.query?.sessionId, 200);

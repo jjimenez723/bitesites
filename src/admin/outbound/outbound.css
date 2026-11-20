@@ -1335,3 +1335,17 @@
 .bs-admin .rep-course .is-reading { color: var(--ink); background: rgba(99, 164, 255, .24); box-shadow: 0 0 0 6px rgba(99, 164, 255, .24), inset 3px 0 0 var(--focus); border-radius: 6px; transition: background var(--dur) var(--ease), box-shadow var(--dur) var(--ease); }
 .bs-admin .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 @media (prefers-reduced-motion: reduce) { .bs-admin .rep-course .is-reading { transition: none; } }
+
+/* Long campaign names ("Local Business Website Growth - August 2026") must
+   fit a phone: the running badge wraps, and the dialer's campaign picker
+   shrinks to its box and cuts the name with an ellipsis. */
+.bs-admin .admin-topbar .pill.running { white-space: normal; max-width: 100%; line-height: 1.35; }
+.bs-admin .admin-topbar .admin-filters { min-width: 0; max-width: 100%; }
+.bs-admin .quickdial-bar-main { min-width: 0; }
+.bs-admin .quickdial-bar-main .admin-select,
+.bs-admin .quickdial-card .admin-select { min-width: 0; max-width: 100%; text-overflow: ellipsis; }
+.bs-admin .outbound-workspace-copy h2 { overflow-wrap: anywhere; }
+@media (max-width: 560px) {
+  .bs-admin .quickdial-bar-main .admin-select,
+  .bs-admin .quickdial-card .admin-select { width: 100%; }
+}
