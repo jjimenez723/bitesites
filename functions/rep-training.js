@@ -225,8 +225,13 @@ export function normalizeRepTrainingEvaluation(value, scenario = {}) {
   };
 }
 
-export function validateRepTrainingTranscript(transcript) {
-  if (!Array.isArray(transcript) || transcript.length < 8 || transcript.length > 80) {
+export function validateRepTrainingTranscript(transcript, scenario = {}) {
+  // A do-not-call scenario is won by apologizing, confirming the removal and
+  // hanging up, so a correct call is naturally short. It gets a lower bar.
+  const minEntries = scenario?.doNotCall ? 4 : 8;
+  const minTurns = scenario?.doNotCall ? 2 : 4;
+  const minCharacters = scenario?.doNotCall ? 100 : 400;
+  if (!Array.isArray(transcript) || transcript.length < minEntries || transcript.length > 80) {
     throw new Error('Complete a full practice conversation before submitting it for review.');
   }
   let characters = 0;
@@ -242,7 +247,7 @@ export function validateRepTrainingTranscript(transcript) {
     else prospectTurns += 1;
     lines.push(`${role.toUpperCase()}: ${text}`);
   }
-  if (characters < 400 || repTurns < 4 || prospectTurns < 4) {
+  if (characters < minCharacters || repTurns < minTurns || prospectTurns < minTurns) {
     throw new Error('The practice conversation was too short to score. Continue the role-play, then submit it.');
   }
   return lines.join('\n').slice(0, 20000);
@@ -317,7 +322,7 @@ export async function evaluatePracticeConversation({
         validateRepTrainingTranscript((conversation.transcript || []).map(turn => ({
           role: turn?.role === 'user' ? 'you' : turn?.role === 'agent' ? 'agent' : '',
           text: turn?.message
-        })));
+        })), scenario);
         return evaluationFromConversation(conversation, scenario);
       }
     }

@@ -8,7 +8,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  allRepTrainingScenarios, evaluatePracticeConversation, evaluationFromConversation, hasRepTrainingAccess, hasRepTrainingExemption, practiceAgentConfig, repTrainingInstructions, startPracticeConversation,
+  allRepTrainingScenarios, evaluatePracticeConversation, validateRepTrainingTranscript, evaluationFromConversation, hasRepTrainingAccess, hasRepTrainingExemption, practiceAgentConfig, repTrainingInstructions, startPracticeConversation,
   normalizeRepTrainingEvaluation, publicTrainingScenario, repTrainingScenarios
 } from './rep-training.js';
 import { PRACTICE_AGENT_IDS } from './rep-practice-agents.js';
@@ -225,4 +225,24 @@ test('the field guide quotes only published prices and covers every practice obj
   }
   assert.match(guide.objections.find(item => /off your list/i.test(item.they)).action, /Do not call/);
   assert.equal(publicRepCourse('the-fine-line-group'), null);
+});
+
+const turns = (count, text) => Array.from({ length: count }, (_, index) => ({ role: index % 2 ? 'agent' : 'you', text }));
+
+test('a short do-not-call conversation is long enough to score', () => {
+  const dncScenario = allRepTrainingScenarios().map(entry => entry.scenario).find(entry => entry.doNotCall);
+  const short = [
+    { role: 'you', text: 'Hi, this is Sam from BiteSites, do you have a quick minute?' },
+    { role: 'agent', text: 'No. Take us off your list and do not call again.' },
+    { role: 'you', text: 'Absolutely, I am sorry about that. I am removing you now.' },
+    { role: 'agent', text: 'Good. Thank you.' }
+  ];
+  assert.doesNotThrow(() => validateRepTrainingTranscript(short, dncScenario));
+  assert.throws(() => validateRepTrainingTranscript(short, yesScenario), /Complete a full practice conversation/);
+  assert.throws(() => validateRepTrainingTranscript(short.slice(0, 2), dncScenario), /Complete a full practice conversation/);
+});
+
+test('every other scenario still needs a full conversation', () => {
+  assert.throws(() => validateRepTrainingTranscript(turns(6, 'A sentence long enough to count here.'), yesScenario), /Complete a full practice conversation/);
+  assert.doesNotThrow(() => validateRepTrainingTranscript(turns(10, 'A sentence that is comfortably long enough to count toward the minimum here.'), yesScenario));
 });
