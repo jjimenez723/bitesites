@@ -159,7 +159,7 @@ exempt rep. His training pass remains unset; the other rep is unchanged. The
 full rules suite reproduces the same four prior fixture failures on baseline
 and patched rules, while the new end-to-end access and browser checks pass.
 
-**Rep onboarding — built 2026-11-05, not deployed.** Welcome link, lessons, pricing, quiz, a printable one-page field guide and yes/no practice calls are on `feat/rep-onboarding`. That branch also moves practice calls and scoring to ElevenLabs and scores the transcript ElevenLabs recorded. Until it deploys, the training row below still describes production: OpenAI sessions, with the browser submitting the transcript. Status and limits are in `OUTBOUND_OWNER_CHECKLIST.md`.
+**Rep onboarding — built 2026-11-05, deployed 2026-11-09.** Welcome link, lessons, pricing, quiz, a printable one-page field guide and yes/no practice calls are on `feat/rep-onboarding`. That branch also moves practice calls and scoring to ElevenLabs and scores the transcript ElevenLabs recorded. The training row below describes the pre-release version (OpenAI sessions, browser-submitted transcript) and is superseded. Status and limits are in `OUTBOUND_OWNER_CHECKLIST.md`.
 
 **Rep sign-in correction — deployed 2026-10-28:** `getRepTrainingStatus` was
 returning 500 because its progress-ID helper used `createHash` without importing
