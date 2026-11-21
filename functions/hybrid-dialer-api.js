@@ -1020,22 +1020,6 @@ export const createRepTrainingSession = onCall(
     }
     if (!scenario) throw new HttpsError('failed-precondition', 'No required training scenarios are configured for this seller account.');
 
-    const progressRef = db.doc(`repTrainingProgress/${repTrainingProgressId(uid, accountId)}`);
-    const trainingDayKey = new Date().toISOString().slice(0, 10);
-    await db.runTransaction(async transaction => {
-      const currentProgress = await transaction.get(progressRef);
-      const dailyCount = currentProgress.get('trainingDayKey') === trainingDayKey
-        ? Math.max(0, Number(currentProgress.get('trainingAttemptCount')) || 0) : 0;
-      if (dailyCount >= 12) {
-        throw new HttpsError('resource-exhausted', 'You have reached today’s practice limit. Try again tomorrow.');
-      }
-      transaction.set(progressRef, {
-        trainingDayKey,
-        trainingAttemptCount: dailyCount + 1,
-        updatedAt: FieldValue.serverTimestamp()
-      }, { merge: true });
-    });
-
     let practice;
     try {
       practice = await startPracticeConversation({ apiKey, scenario });
