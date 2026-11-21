@@ -60,7 +60,15 @@ export default function Questionnaire() {
     loadQuestionnaire(token).then(data => {
       if (!active) return;
       if (data.status === 'completed') { setState('complete'); return; }
-      setForm(current => ({ ...current, ...data.prefill }));
+      // Prefill also carries the lead's first name for display; copy only
+      // the fields that are actual answers, or the submit is rejected.
+      const prefill = data.prefill || {};
+      setForm(current => ({
+        ...current,
+        ...Object.fromEntries(['businessName', 'website', 'location']
+          .filter(key => typeof prefill[key] === 'string' && prefill[key])
+          .map(key => [key, prefill[key]]))
+      }));
       setState('ready');
     }).catch(reason => {
       if (!active) return;
@@ -87,8 +95,10 @@ export default function Questionnaire() {
   const submit = async () => {
     setBusy(true); setError('');
     try {
+      // Send only the answer fields, never anything else that is in state.
+      const answers = Object.fromEntries(Object.keys(empty).map(key => [key, form[key]]));
       await submitQuestionnaire(token, {
-        ...form,
+        ...answers,
         website: ensureHttps(form.website),
         links: form.links.filter(link => link.url.trim()).map(link => ({ ...link, url: ensureHttps(link.url) }))
       });

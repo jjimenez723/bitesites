@@ -1,18 +1,11 @@
 import React, { useEffect, useState } from 'react';
 
-// A persistent "Get a free audit" pill. It appears once the visitor scrolls past
-// the first screen and steps aside while the audit form itself is on screen.
+// A persistent "Get a free audit" pill. It shows from the first screen, beside
+// the Chat with Bit launcher, and steps aside only while the audit form itself
+// is on screen.
 // Footers get bottom padding (refresh.css) so the pill never covers their links.
 export default function StickyAuditCta({ href = '/#start' }) {
-  const [scrolled, setScrolled] = useState(false);
   const [formVisible, setFormVisible] = useState(false);
-
-  useEffect(() => {
-    const onScroll = () => setScrolled(window.scrollY > window.innerHeight * 0.6);
-    onScroll();
-    window.addEventListener('scroll', onScroll, { passive: true });
-    return () => window.removeEventListener('scroll', onScroll);
-  }, []);
 
   // Step aside while the audit form itself is on screen.
   useEffect(() => {
@@ -27,7 +20,7 @@ export default function StickyAuditCta({ href = '/#start' }) {
     return () => observer.disconnect();
   }, []);
 
-  const shown = scrolled && !formVisible;
+  const shown = !formVisible;
   return <a className={`sticky-audit-cta ${shown ? 'is-shown' : ''}`} href={href} aria-hidden={!shown} tabIndex={shown ? undefined : -1}>
     <span className="sticky-audit-dot" aria-hidden="true" />Get a free audit
   </a>;

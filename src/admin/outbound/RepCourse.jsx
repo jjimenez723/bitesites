@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { outbound } from './data';
+import LessonAudio from './LessonAudio';
+import { lessonLines } from './lesson-audio';
 
 /** Welcome, lessons, then a short quiz. The server grades it and unlocks practice. */
 export default function RepCourse({ accountId, accountName, onPassed }) {
@@ -9,6 +11,14 @@ export default function RepCourse({ accountId, accountName, onPassed }) {
   const [answers, setAnswers] = useState({});
   const [result, setResult] = useState(null);
   const [busy, setBusy] = useState(false);
+  // The line being read aloud, so the lesson can highlight it.
+  const [reading, setReading] = useState('');
+  // Keep the line being read on screen, so a phone follows along by itself.
+  useEffect(() => {
+    if (!reading) return;
+    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    document.querySelector('.rep-course .is-reading')?.scrollIntoView({ block: 'nearest', behavior: reduce ? 'auto' : 'smooth' });
+  }, [reading]);
 
   useEffect(() => {
     let active = true;
@@ -56,20 +66,27 @@ export default function RepCourse({ accountId, accountName, onPassed }) {
     <button className="btn-admin primary" type="button" onClick={() => setStep(0)}>Start lesson 1</button>
   </section>;
 
+  const read = id => (reading === id ? 'is-reading' : undefined);
+
   if (!onQuiz) return <section className="rep-course" aria-label={lesson.title}>
-    <span className="outbound-eyebrow">Lesson {step + 1} of {lessons.length}</span>
-    <h3>{lesson.title}</h3>
-    <p className="rep-course-summary">{lesson.summary}</p>
+    <div className="rep-course-head">
+      <div className={read('title')}>
+        <span className="outbound-eyebrow">Lesson {step + 1} of {lessons.length}</span>
+        <h3>{lesson.title}</h3>
+      </div>
+      <LessonAudio lines={lessonLines(lesson, { number: step + 1, total: lessons.length })} onLine={setReading} />
+    </div>
+    <p className={['rep-course-summary', read('summary')].filter(Boolean).join(' ')}>{lesson.summary}</p>
     {lesson.priceGroups && <div className="rep-course-prices">
-      {lesson.priceGroups.map(group => <div key={group.label}>
+      {lesson.priceGroups.map((group, groupIndex) => <div key={group.label} className={read(`price:${groupIndex}`)}>
         <strong>{group.label}</strong>
         <ul>{group.lines.map(line => <li key={line}>{line}</li>)}</ul>
       </div>)}
     </div>}
-    <ul className="rep-course-points">{lesson.points.map(point => <li key={point}>{point}</li>)}</ul>
+    <ul className="rep-course-points">{lesson.points.map((point, index) => <li key={point} className={read(`point:${index}`)}>{point}</li>)}</ul>
     {lesson.say && <div className="rep-course-say">
-      <strong>What to say</strong>
-      {lesson.say.map(line => <p key={line}>“{line}”</p>)}
+      <strong className={read('say-label')}>What to say</strong>
+      {lesson.say.map((line, index) => <p key={line} className={read(`say:${index}`)}>“{line}”</p>)}
     </div>}
     <div className="rep-training-actions">
       <button className="btn-admin" type="button" onClick={() => setStep(step - 1)}>Back</button>

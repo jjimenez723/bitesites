@@ -25,6 +25,9 @@ const allowedKeys = new Set([
   'obstacles', 'obstacleDetails', 'wins', 'winDetails', 'timing', 'budget',
   'links', 'anythingElse'
 ]);
+// Sent to the page as prefill, never an answer. Older copies of the page sent
+// it back with the answers; accept and drop it rather than fail the prospect.
+const ignoredKeys = new Set(['firstName']);
 
 const safeHttpsUrl = (value, field, { optional = true } = {}) => {
   const raw = exactClean(value, 1000, field);
@@ -50,7 +53,7 @@ const choices = (value, field, { min = 1, max = 8 } = {}) => {
 
 export function validateQuestionnaireAnswers(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Questionnaire answers are required.');
-  const unknown = Object.keys(input).filter(key => !allowedKeys.has(key));
+  const unknown = Object.keys(input).filter(key => !allowedKeys.has(key) && !ignoredKeys.has(key));
   if (unknown.length) throw new Error(`Unknown questionnaire field: ${unknown[0]}.`);
 
   const businessName = exactClean(input.businessName, 160, 'Business name');

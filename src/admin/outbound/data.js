@@ -483,7 +483,10 @@ export const outbound = {
   repCourse: accountId => callable('getRepCourse', { accountId }),
   submitRepCourseQuiz: (accountId, answers) => callable('submitRepCourseQuiz', { accountId, answers }),
   createRepTrainingSession: accountId => callable('createRepTrainingSession', { accountId }),
-  completeRepTrainingAttempt: attemptId => callable('completeRepTrainingAttempt', { attemptId }),
+  completeRepTrainingAttempt: (attemptId, { testerSkip = false } = {}) =>
+    callable('completeRepTrainingAttempt', testerSkip ? { attemptId, testerSkip: true } : { attemptId }),
+  setRepTrainingTester: (uid, accountId, tester) => callable('setRepTrainingTester', { uid, accountId, tester }),
+  listRepTrainingTesters: () => callable('listRepTrainingTesters'),
   listKnowledgeBases: () => callable('listAIKnowledgeBases'),
   createKnowledgeBase: payload => callable('createAIKnowledgeBase', payload),
   upsertKnowledgeDocument: payload => callable('upsertAIKnowledgeDocument', payload)

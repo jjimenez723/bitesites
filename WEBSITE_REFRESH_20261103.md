@@ -28,8 +28,10 @@ Work happens in `bitesites-marketing-restoration`, not the older original checko
   pages, pricing, FAQ, team card and intake. Portfolio bullets are now dots.
   Admin screens were not touched.
 - `StickyAuditCta`: "Get a free audit" pill on home, service pages, pricing and
-  FAQ. Appears after the first screen, hides while the form is on screen, and
-  sits above the chat launcher on phones (≤480px).
+  FAQ. Shows from the first screen and hides while the form is on screen, or
+  while the menu, a portfolio project or Bit's chat is open. On phones it shares
+  the bottom row with Chat with Bit at the same height, and the launcher's
+  "Need help scoping a project?" prompt is hidden (changed 2026-11-13).
 
 ## Verified
 

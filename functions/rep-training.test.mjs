@@ -8,7 +8,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  allRepTrainingScenarios, evaluatePracticeConversation, validateRepTrainingTranscript, evaluationFromConversation, hasRepTrainingAccess, hasRepTrainingExemption, practiceAgentConfig, repTrainingInstructions, startPracticeConversation,
+  allRepTrainingScenarios, evaluatePracticeConversation, validateRepTrainingTranscript, isRepTrainingTester, pickAssignedCampaign, testerSkipEvaluation, evaluationFromConversation, hasRepTrainingAccess, hasRepTrainingExemption, practiceAgentConfig, repTrainingInstructions, startPracticeConversation,
   normalizeRepTrainingEvaluation, publicTrainingScenario, repTrainingScenarios
 } from './rep-training.js';
 import { PRACTICE_AGENT_IDS } from './rep-practice-agents.js';
@@ -245,4 +245,32 @@ test('a short do-not-call conversation is long enough to score', () => {
 test('every other scenario still needs a full conversation', () => {
   assert.throws(() => validateRepTrainingTranscript(turns(6, 'A sentence long enough to count here.'), yesScenario), /Complete a full practice conversation/);
   assert.doesNotThrow(() => validateRepTrainingTranscript(turns(10, 'A sentence that is comfortably long enough to count toward the minimum here.'), yesScenario));
+});
+
+test('only an admin-listed tester account can skip, and a skip is marked as one', () => {
+  assert.equal(isRepTrainingTester({ accountIds: ['bitesites'] }, 'bitesites'), true);
+  assert.equal(isRepTrainingTester({ accountIds: ['bitesites'] }, 'stone_bellisimo'), false);
+  assert.equal(isRepTrainingTester({ get: key => (key === 'accountIds' ? ['bitesites'] : undefined) }, 'bitesites'), true);
+  assert.equal(isRepTrainingTester({ get: () => undefined }, 'bitesites'), false);
+  assert.equal(isRepTrainingTester(null, 'bitesites'), false);
+  const skip = testerSkipEvaluation();
+  assert.equal(skip.passed, true);
+  assert.equal(skip.testerSkipped, true);
+  assert.equal(skip.score, 0);
+  assert.match(skip.summary, /not scored/);
+});
+
+test('any open campaign the rep was added to counts, preferring the default', () => {
+  const campaigns = [
+    { id: 'aug', name: 'August', accountId: 'bitesites', status: 'running' },
+    { id: 'old', name: 'Old', accountId: 'bitesites', status: 'cancelled' },
+    { id: 'stone', name: 'Stone', accountId: 'stone_bellisimo', status: 'running' },
+    { id: 'test', name: 'Test', accountId: 'bitesites', status: 'draft' }
+  ];
+  assert.equal(pickAssignedCampaign(campaigns, 'bitesites', '')?.id, 'aug');
+  assert.equal(pickAssignedCampaign(campaigns, 'bitesites', 'test')?.id, 'test');
+  assert.equal(pickAssignedCampaign(campaigns, 'bitesites', 'missing')?.id, 'aug');
+  assert.equal(pickAssignedCampaign([campaigns[1]], 'bitesites'), null);
+  assert.equal(pickAssignedCampaign(campaigns, 'the_fine_line_group'), null);
+  assert.equal(pickAssignedCampaign(undefined, 'bitesites'), null);
 });

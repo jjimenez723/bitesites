@@ -38,7 +38,7 @@ import { aiMediaAttachDeadline, failClosedAIMediaAttachment, isAIMediaAttachPend
 import { externalDialingAdmission } from './deployment-environment.js';
 import {
   evaluatePracticeConversation, hasRepTrainingAccess, hasRepTrainingExemption,
-  nextRepTrainingScenario, publicTrainingScenario, repTrainingScenarios,
+  isRepTrainingTester, pickAssignedCampaign, testerSkipEvaluation, nextRepTrainingScenario, publicTrainingScenario, repTrainingScenarios,
   startPracticeConversation
 } from './rep-training.js';
 import { gradeRepQuiz, hasRepCourse, publicRepCourse } from './rep-course.js';
@@ -902,7 +902,18 @@ export const getRepTrainingStatus = onCall(callOptions, async request => {
   const { db, uid, role, access } = await requireDialer(request);
   if (role !== 'outbound_rep') throw new HttpsError('permission-denied', 'Sales training is available to sales reps.');
   const accountIds = normalizeAccountScope(access.accountIds);
-  const roleSnapshot = await db.doc(`roles/${uid}`).get();
+  const [roleSnapshot, testerSnapshot, myCampaignsSnapshot] = await Promise.all([
+    db.doc(`roles/${uid}`).get(),
+    db.doc(`repTrainingTesters/${uid}`).get(),
+    // Every campaign this rep was added to, by default or by hand.
+    db.collection('outboundCampaigns').where('allowedRepUids', 'array-contains', uid).limit(100).get()
+  ]);
+  const myCampaigns = myCampaignsSnapshot.docs.map(entry => ({
+    id: entry.id,
+    name: clean(entry.get('name'), 120) || 'Campaign',
+    status: clean(entry.get('status'), 40),
+    accountId: readAccountId(entry.get('accountId'), { fallback: LEGACY_ACCOUNT_ID })
+  }));
   const passedAccountIds = roleSnapshot.get('trainingPassedAccountIds');
   const accounts = await Promise.all(accountIds.map(async accountId => {
     const [defaultSnapshot, progressSnapshot] = await Promise.all([
@@ -925,14 +936,15 @@ export const getRepTrainingStatus = onCall(callOptions, async request => {
       && passedAccountIds.includes(accountId)
       && requiredScenarioIds.every(id => completedScenarioIds.includes(id));
     const trainingExempt = hasRepTrainingExemption(roleSnapshot, accountId);
+    const assigned = pickAssignedCampaign(myCampaigns, accountId, defaultCampaign?.id || '');
     return {
+      trainingTester: isRepTrainingTester(testerSnapshot, accountId),
       accountId,
       accountName: getAccount(accountId)?.label || accountId,
       ready: requiredScenarioIds.length > 0,
       defaultCampaign,
-      campaignAssigned: Boolean(defaultCampaign
-        && Array.isArray(campaignSnapshot.get('allowedRepUids'))
-        && campaignSnapshot.get('allowedRepUids').includes(uid)),
+      campaignAssigned: Boolean(assigned),
+      assignedCampaign: assigned ? { id: assigned.id, name: assigned.name } : null,
       completedScenarioIds,
       requiredScenarioCount,
       passed,
@@ -1043,6 +1055,43 @@ export const createRepTrainingSession = onCall(
 );
 
 /** Score a completed role-play and grant default campaign access after all required niches pass. */
+/** Admin only: lets a named sales rep skip practice calls while testing onboarding. */
+export const setRepTrainingTester = onCall(callOptions, async request => {
+  const { db, uid: adminUid, email, role } = await requireDialer(request);
+  if (role !== 'admin') throw new HttpsError('permission-denied', 'Only an admin can choose training testers.');
+  const targetUid = clean(request.data?.uid, 128);
+  const accountId = normalizeAccountScope([request.data?.accountId])[0] || '';
+  const tester = request.data?.tester;
+  if (!targetUid || !/^[A-Za-z0-9_-]+$/.test(targetUid)) throw new HttpsError('invalid-argument', 'A sales rep is required.');
+  if (!accountId) throw new HttpsError('invalid-argument', 'Choose a valid seller account.');
+  if (typeof tester !== 'boolean') throw new HttpsError('invalid-argument', 'Choose whether this rep is a tester.');
+  const roleRef = db.doc(`roles/${targetUid}`);
+  const testerRef = db.doc(`repTrainingTesters/${targetUid}`);
+  const eventRef = db.collection('repTrainingTesterEvents').doc();
+  return db.runTransaction(async transaction => {
+    const [roleSnapshot, testerSnapshot] = await Promise.all([transaction.get(roleRef), transaction.get(testerRef)]);
+    if (roleSnapshot.get('role') !== 'outbound_rep') {
+      throw new HttpsError('failed-precondition', 'Testers must be active sales reps.');
+    }
+    if (!normalizeAccountScope(roleSnapshot.get('accountIds')).includes(accountId)) {
+      throw new HttpsError('failed-precondition', 'Assign this seller account to the sales rep first.');
+    }
+    const current = Array.isArray(testerSnapshot.get('accountIds')) ? testerSnapshot.get('accountIds') : [];
+    const next = tester ? [...new Set([...current, accountId])] : current.filter(id => id !== accountId);
+    transaction.set(testerRef, { uid: targetUid, accountIds: next, updatedAt: FieldValue.serverTimestamp(), updatedBy: adminUid }, { merge: true });
+    transaction.create(eventRef, { uid: targetUid, accountId, tester, changedBy: adminUid, changedByEmail: email, at: FieldValue.serverTimestamp() });
+    return { uid: targetUid, accountIds: next };
+  });
+});
+
+/** Admin only: which sales reps are training testers, as { uid: accountIds }. */
+export const listRepTrainingTesters = onCall(callOptions, async request => {
+  const { db, role } = await requireDialer(request);
+  if (role !== 'admin') throw new HttpsError('permission-denied', 'Only an admin can see training testers.');
+  const snapshot = await db.collection('repTrainingTesters').limit(200).get();
+  return { testers: Object.fromEntries(snapshot.docs.map(doc => [doc.id, Array.isArray(doc.get('accountIds')) ? doc.get('accountIds') : []])) };
+});
+
 export const completeRepTrainingAttempt = onCall(
   { ...callOptions, secrets: [REP_PRACTICE_ELEVENLABS_KEY], timeoutSeconds: 90 },
   async request => {
@@ -1050,6 +1099,10 @@ export const completeRepTrainingAttempt = onCall(
     if (role !== 'outbound_rep') throw new HttpsError('permission-denied', 'Sales training is available to sales reps.');
     const attemptId = clean(request.data?.attemptId, 200);
     if (!/^[A-Za-z0-9_-]+$/.test(attemptId)) throw new HttpsError('invalid-argument', 'A valid training attempt is required.');
+    // Testers (set by an admin) may pass a call without scoring. Checked here
+    // and again inside the transaction below.
+    const testerSkip = request.data?.testerSkip === true;
+    const testerRef = db.doc(`repTrainingTesters/${uid}`);
     const attemptRef = db.doc(`repTrainingAttempts/${attemptId}`);
     const initial = await attemptRef.get();
     if (!initial.exists || initial.get('uid') !== uid) throw new HttpsError('not-found', 'Training attempt not found.');
@@ -1068,11 +1121,14 @@ export const completeRepTrainingAttempt = onCall(
     }
     const scenario = repTrainingScenarios(accountId).find(entry => entry.id === initial.get('scenarioId'));
     if (!scenario) throw new HttpsError('failed-precondition', 'This training scenario is no longer available.');
-    const apiKey = secretValue(REP_PRACTICE_ELEVENLABS_KEY);
-    if (!apiKey) throw new HttpsError('failed-precondition', 'The AI training evaluator is not configured.');
+    if (testerSkip && !isRepTrainingTester(await testerRef.get(), accountId)) {
+      throw new HttpsError('permission-denied', 'Only an admin-approved tester can skip a practice call.');
+    }
+    const apiKey = testerSkip ? '' : secretValue(REP_PRACTICE_ELEVENLABS_KEY);
+    if (!testerSkip && !apiKey) throw new HttpsError('failed-precondition', 'The AI training evaluator is not configured.');
     const conversationId = clean(initial.get('conversationId'), 200);
     const agentId = clean(initial.get('agentId'), 200);
-    if (!conversationId || !agentId) throw new HttpsError('failed-precondition', 'This practice session expired. Start a fresh role-play.');
+    if (!testerSkip && (!conversationId || !agentId)) throw new HttpsError('failed-precondition', 'This practice session expired. Start a fresh role-play.');
 
     const scoringLock = await db.runTransaction(async transaction => {
       const current = await transaction.get(attemptRef);
@@ -1083,14 +1139,20 @@ export const completeRepTrainingAttempt = onCall(
     if (!scoringLock) throw new HttpsError('failed-precondition', 'This training attempt has already been submitted.');
 
     try {
-      const evaluation = await evaluatePracticeConversation({ apiKey, scenario, conversationId, agentId });
+      const evaluation = testerSkip
+        ? testerSkipEvaluation()
+        : await evaluatePracticeConversation({ apiKey, scenario, conversationId, agentId });
       const result = await db.runTransaction(async transaction => {
-        const [attemptSnapshot, roleSnapshot, progressSnapshot, defaultSnapshot] = await Promise.all([
+        const [attemptSnapshot, roleSnapshot, progressSnapshot, defaultSnapshot, testerSnapshot] = await Promise.all([
           transaction.get(attemptRef),
           transaction.get(db.doc(`roles/${uid}`)),
           transaction.get(db.doc(`repTrainingProgress/${repTrainingProgressId(uid, accountId)}`)),
-          transaction.get(db.doc(`outboundDefaults/${accountId}`))
+          transaction.get(db.doc(`outboundDefaults/${accountId}`)),
+          transaction.get(testerRef)
         ]);
+        if (testerSkip && !isRepTrainingTester(testerSnapshot, accountId)) {
+          throw new HttpsError('permission-denied', 'Only an admin-approved tester can skip a practice call.');
+        }
         if (attemptSnapshot.get('status') !== 'scoring' || attemptSnapshot.get('uid') !== uid) {
           throw new HttpsError('failed-precondition', 'This training attempt is no longer available.');
         }
@@ -1146,12 +1208,14 @@ export const completeRepTrainingAttempt = onCall(
           status: evaluation.passed ? 'passed' : 'failed',
           score: evaluation.score,
           result: courseResult,
+          ...(testerSkip ? { testerSkipped: true } : {}),
           finishedAt: FieldValue.serverTimestamp()
         }, { merge: true });
         transaction.set(db.doc(`repTrainingProgress/${repTrainingProgressId(uid, accountId)}`), {
           uid, accountId, status: coursePassed ? 'passed' : 'in_progress',
           completedScenarioIds,
           requiredScenarioCount,
+          ...(testerSkip ? { testerSkippedScenarioIds: FieldValue.arrayUnion(scenario.id) } : {}),
           ...(coursePassed ? { passedAt: FieldValue.serverTimestamp(), defaultCampaignId } : {}),
           updatedAt: FieldValue.serverTimestamp()
         }, { merge: true });
@@ -1263,7 +1327,10 @@ export const twilioHybridProspectTwiML = onRequest({ secrets: [HYBRID_TWILIO_AUT
 });
 
 /** TwiML App Voice URL for browser Voice SDK joins. */
-export const twilioHybridBrowserTwiML = onRequest({ secrets: [HYBRID_TWILIO_AUTH_TOKEN], maxInstances: 30 }, async (req, res) => {
+// Kept warm (minInstances: 1): this and twilioHybridConferenceEvent run the
+// moment a prospect answers. A cold start measured 3-5 s on 2026-11-20, which
+// was dead air before the rep was connected.
+export const twilioHybridBrowserTwiML = onRequest({ secrets: [HYBRID_TWILIO_AUTH_TOKEN], maxInstances: 30, minInstances: 1 }, async (req, res) => {
   if (!twilioSignatureValid(req, secretValue(HYBRID_TWILIO_AUTH_TOKEN))) {
     res.status(401).type('text/plain').send('unauthorized'); return;
   }
@@ -1312,7 +1379,7 @@ export const twilioHybridBrowserTwiML = onRequest({ secrets: [HYBRID_TWILIO_AUTH
   );
 });
 
-export const twilioHybridConferenceEvent = onRequest({ secrets: [HYBRID_TWILIO_AUTH_TOKEN], maxInstances: 30 }, async (req, res) => {
+export const twilioHybridConferenceEvent = onRequest({ secrets: [HYBRID_TWILIO_AUTH_TOKEN], maxInstances: 30, minInstances: 1 }, async (req, res) => {
   if (!twilioSignatureValid(req, secretValue(HYBRID_TWILIO_AUTH_TOKEN))) { res.status(401).json({ error: 'unauthorized' }); return; }
   const db = getFirestore();
   const sessionId = clean(req.query?.sessionId, 200);

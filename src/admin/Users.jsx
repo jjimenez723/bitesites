@@ -11,9 +11,11 @@
 // Approving someone means doing both, so this screen always does them together
 // and an approved account is never left without a role.
 
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useUsers, useRoles, setRole, setRepTrainingExemption, toDate } from './data';
 import { Pill } from './Panel';
+import { outbound } from './outbound/data';
+import RepCampaignManager from './outbound/RepCampaignManager';
 import { ACCOUNTS, ACCOUNT_IDS } from '../../functions/accounts.js';
 
 const when = value => {
@@ -27,6 +29,13 @@ export default function Users() {
   const [busyId, setBusyId] = useState(null);
   const [notice, setNotice] = useState('');
   const [scopeDrafts, setScopeDrafts] = useState({});
+  // Testers may skip practice calls while walking the onboarding. Stored
+  // server-side only, so it is read through the callable, not Firestore.
+  const [testers, setTesters] = useState({});
+  const loadTesters = useCallback(() => outbound.listRepTrainingTesters()
+    .then(result => setTesters(result?.testers || {}))
+    .catch(() => {}), []);
+  useEffect(() => { void loadTesters(); }, [loadTesters]);
   const exemptionsFor = useMemo(() => {
     const map = new Map();
     for (const entry of roles) {
@@ -83,6 +92,11 @@ export default function Users() {
   ));
   const setTrainingExemption = (user, accountId, exempt) =>
     act(user.id, () => setRepTrainingExemption(user.id, accountId, exempt));
+  const setTrainingTester = (user, accountId, tester) =>
+    act(user.id, async () => {
+      const result = await outbound.setRepTrainingTester(user.id, accountId, tester);
+      setTesters(current => ({ ...current, [user.id]: result?.accountIds || [] }));
+    });
   const revoke = user => act(user.id, () => setRole(user.id, 'none'));
 
   const pending = users.filter(user => !roleFor.get(user.id));
@@ -135,6 +149,16 @@ export default function Users() {
                             onChange={event => setTrainingExemption(user, accountId, event.target.checked)}
                             disabled={busy || !scopeFor(user.id).includes(accountId)} />
                           <span>Skip {ACCOUNTS[accountId].label} training</span>
+                        </label>
+                      ))}
+                      {ACCOUNT_IDS.map(accountId => (
+                        <label className="checkbox-row" key={`tester:${accountId}`} style={{ margin: 0 }}
+                               title="For testing onboarding: this rep goes through every step but can pass a practice call without being scored. Each skip is recorded.">
+                          <input type="checkbox"
+                            checked={(testers[user.id] || []).includes(accountId)}
+                            onChange={event => setTrainingTester(user, accountId, event.target.checked)}
+                            disabled={busy || !scopeFor(user.id).includes(accountId)} />
+                          <span>Tester: can skip {ACCOUNTS[accountId].label} practice calls</span>
                         </label>
                       ))}
                     </div>
@@ -220,6 +244,9 @@ export default function Users() {
           </div>
         )}
 
+        {/* Reps who passed but have nothing to dial; the full list is Outbound Calls → Reps. */}
+        <RepCampaignManager variant="waiting" />
+
         {pending.length > 0 && (
           <div className="admin-card">
             <div className="card-head">
@@ -251,7 +278,8 @@ export default function Users() {
         </p>
         <p className="admin-note">
           Training exemptions are admin-only and limited to the selected sales rep and seller account.
-          They do not record a course pass or assign the rep to a campaign.
+          They do not record a course pass or assign the rep to a campaign. To see every rep's
+          campaigns, or choose the campaign new reps get automatically, open Outbound Calls → Reps.
         </p>
       </div>
     </>

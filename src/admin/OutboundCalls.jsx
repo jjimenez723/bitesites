@@ -21,6 +21,7 @@ import TeamCallCoach from './outbound/TeamCallCoach';
 import ConsentRegistry from './outbound/ConsentRegistry';
 import EligibilityAudit from './outbound/EligibilityAudit';
 import RepTraining from './outbound/RepTraining';
+import RepCampaignManager from './outbound/RepCampaignManager';
 import './outbound/outbound.css';
 import './outbound/hybrid.css';
 import './outbound/agents.css';
@@ -28,6 +29,7 @@ import './outbound/agents.css';
 const TABS = [
   ['training', 'AI Training'],
   ['campaigns', 'Campaigns'],
+  ['reps', 'Reps'],
   ['discovery', 'Lead Discovery'],
   ['prospects', 'Prospects'],
   ['review', 'Import Review'],
@@ -48,7 +50,7 @@ const TABS = [
 // for permissions and deep links; this only supplies visual hierarchy.
 const TAB_GROUPS = [
   { key: 'onboard', label: 'Onboarding', tabs: ['training'] },
-  { key: 'operate', label: 'Operate', tabs: ['campaigns', 'queue', 'dialer', 'calendar', 'history'] },
+  { key: 'operate', label: 'Operate', tabs: ['campaigns', 'reps', 'queue', 'dialer', 'calendar', 'history'] },
   { key: 'build', label: 'Build', tabs: ['prospects', 'agents'] },
   { key: 'monitor', label: 'Monitor', tabs: ['coaching', 'later', 'settings'] },
   { key: 'admin', label: 'Admin', tabs: ['discovery', 'review', 'consent', 'eligibility'] }
@@ -198,7 +200,10 @@ export default function OutboundCalls({ role = 'admin', currentUid = '' }) {
   const campaignStatus = activeCampaign?.status || 'not selected';
   const campaignCounts = activeCampaign?.counts || {};
 
-  if (role === 'outbound_rep' && (repTraining.loading || repTraining.error)) {
+  // Only the first check blocks the page. Later refreshes (after a quiz or a
+  // scored practice call) keep the page mounted, or the coach's feedback
+  // would be thrown away the moment it arrived.
+  if (role === 'outbound_rep' && !repTraining.accounts.length && (repTraining.loading || repTraining.error)) {
     return <>
       <header className="admin-topbar"><h1>Outbound Sales</h1></header>
       <div className="admin-body">
@@ -312,6 +317,7 @@ export default function OutboundCalls({ role = 'admin', currentUid = '' }) {
             error={repTraining.error}
             onRefresh={loadRepTraining}
           />}
+          {tab === 'reps' && role === 'admin' && <RepCampaignManager />}
           {tab === 'campaigns' && (
             <CampaignList
               campaigns={campaigns.rows}

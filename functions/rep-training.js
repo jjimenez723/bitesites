@@ -35,6 +35,42 @@ export function hasRepTrainingExemption(roleRecord, accountId) {
   return Array.isArray(exemptions) && exemptions.includes(accountId);
 }
 
+/**
+ * Admin-designated testers (repTrainingTesters/{uid}, server-only) may pass a
+ * practice call without scoring, to walk the onboarding quickly. The skip is
+ * recorded on the attempt and in progress, so it is never mistaken for a pass.
+ */
+export function isRepTrainingTester(testerRecord, accountId) {
+  const accountIds = typeof testerRecord?.get === 'function'
+    ? testerRecord.get('accountIds')
+    : testerRecord?.accountIds;
+  return Array.isArray(accountIds) && accountIds.includes(accountId);
+}
+
+export function testerSkipEvaluation() {
+  return {
+    score: 0,
+    passed: true,
+    criticalFailure: false,
+    closed: false,
+    testerSkipped: true,
+    summary: 'Skipped by a tester. This call was not scored.',
+    strengths: [],
+    improvements: []
+  };
+}
+
+/**
+ * The campaign a rep can dial for a seller: the seller's default if the rep is
+ * on it, otherwise any other open campaign they were added to. Being on any
+ * open campaign counts; it does not have to be the default.
+ */
+export function pickAssignedCampaign(campaigns, accountId, defaultCampaignId = '') {
+  const open = (Array.isArray(campaigns) ? campaigns : []).filter(campaign =>
+    campaign && campaign.accountId === accountId && !['cancelled', 'completed'].includes(campaign.status));
+  return open.find(campaign => campaign.id === defaultCampaignId) || open[0] || null;
+}
+
 /** A rep may access a seller account after passing training or explicit exemption. */
 export function hasRepTrainingAccess(roleRecord, accountId) {
   const passed = typeof roleRecord?.get === 'function'

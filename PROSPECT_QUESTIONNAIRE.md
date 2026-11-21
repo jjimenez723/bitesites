@@ -10,8 +10,13 @@ in the URL.
 An admin creates or reuses a 30-day session through
 `createQuestionnaireSession`. The public `getQuestionnaireSession` callable
 returns only safe prefill fields: first name, business name, website, and
-location. `submitQuestionnaire` validates an exact field allowlist, controlled
-choices, lengths, HTTPS links, and the token on the server. A completed session
+location. The page copies only the answer fields out of that prefill and submits
+only answer fields. `submitQuestionnaire` validates an exact field allowlist,
+controlled choices, lengths, HTTPS links, and the token on the server; it drops
+a returned `firstName` instead of rejecting it, because pages served before
+2026-11-13 sent it back and every submission failed with "Unknown questionnaire
+field: firstName". That server tolerance ships with the next functions deploy;
+the page fix alone is enough. A completed session
 is idempotent and cannot be overwritten.
 
 Answers are stored in `questionnaireResponses/{sessionHash}` and copied into

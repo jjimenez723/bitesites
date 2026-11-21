@@ -51,6 +51,9 @@ test('valid submission updates the lead once and is idempotent', async () => {
 test('rejects required, unknown, oversized, and invalid URL fields', () => {
   assert.throws(() => validateQuestionnaireAnswers({ ...validAnswers(), businessName: '' }), /Business name/);
   assert.throws(() => validateQuestionnaireAnswers({ ...validAnswers(), secret: 'value' }), /Unknown/);
+  // The prefilled first name can come back with the answers; it is dropped, not rejected.
+  const withName = validateQuestionnaireAnswers({ ...validAnswers(), firstName: 'Alex' });
+  assert.equal('firstName' in withName, false);
   assert.throws(() => validateQuestionnaireAnswers({ ...validAnswers(), anythingElse: 'x'.repeat(1201) }), /too long/);
   assert.throws(() => validateQuestionnaireAnswers({ ...validAnswers(), website: 'javascript:alert(1)' }), /https/);
 });
