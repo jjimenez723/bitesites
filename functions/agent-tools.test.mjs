@@ -6,7 +6,7 @@ import {
   executeAgentTool,
   toolArgumentsHash
 } from './agent-tools.js';
-import { TOOL_SCHEMAS } from '../services/realtime-sideband/tool-schemas.js';
+import { TOOL_SCHEMAS } from './live-call-tool-schemas.js';
 
 const clone = value => value && typeof value === 'object'
   ? Array.isArray(value) ? value.map(clone) : Object.fromEntries(Object.entries(value).map(([key, item]) => [key, clone(item)]))

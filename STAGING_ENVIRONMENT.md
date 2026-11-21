@@ -11,7 +11,7 @@ are true:
 2. `OUTBOUND_EXTERNAL_DIALING=enabled`
 
 Every other environment, including `staging`, is fail-closed. This applies
-before a campaign can lock a target, warm the media sideband, enroll a provider
+before a campaign can lock a target, enroll a provider
 workflow, or create a Twilio PSTN/SIP call. Mock calls remain available to the
 test suite.
 
@@ -26,7 +26,7 @@ production Firebase project or auth domain.
 
 **Billing was authorized and linked on 2026-08-24, and the stack is deployed.**
 Rules, indexes, Functions and Hosting are live; Firebase Auth is initialised so
-the smoke test can provision a disposable admin. No carrier, OpenAI, calendar,
+the smoke test can provision a disposable admin. No carrier, ElevenLabs, calendar,
 or production secret has been copied into it — the 23 secrets that exist are
 inert placeholders, so a staging function that reaches a vendor fails
 authentication rather than acting.
@@ -88,10 +88,10 @@ npm run deploy:staging -- --confirm-staging-deploy=YOUR_STAGING_PROJECT_ID
 ```
 
 The staging helper deploys Firebase rules, indexes, Functions, and Hosting. It
-does not deploy Cloud Run or provision secrets. A future stage sideband must
-use a separately named Cloud Run service, stage-only secrets, and the staging
-Hosting control URLs. Its outbound media path will still be blocked by the
-runtime gate above.
+does not provision secrets. AI calls run on ElevenLabs (there is no Cloud Run
+service any more); a staging ElevenLabs agent would need its own setup and
+stage-only secrets, and its SIP dispatch is still blocked by the runtime gate
+above.
 
 ## Deployed state
 

@@ -141,14 +141,16 @@ campaign before they can access its leads or dial.
 
 **Rep field guide — added 2026-11-07, not deployed:** BiteSites reps also get a one-page field guide (`RepFieldGuide.jsx`, content in `functions/rep-course.js`). It covers what we sell with starting prices, the call in five steps, a short script (rewritten 2026-11-08: ask for the owner first, say upfront it is a cold call, then offer the free website demo or the AI receptionist demo; the demos are free, launching is paid), answers to nine kinds of pushback including the six the practice prospects use, the never-do list and the dialer outcomes. It opens on its own beside practice calls, can be shown or hidden during the lessons, and prints on one letter page. Its prices come from `SERVICE_PRICING`, and a test fails if it quotes a price that is not on that list. It ships with the rep onboarding release and needs no extra function. Tested in a headless browser at desktop and phone widths and as a printed PDF. Nobody has used it on a real practice call yet.
 
-**What still runs on OpenAI (2026-11-07):** the ElevenLabs key is already in Secret Manager, and Bit, Byte and (on this branch) rep practice use it. Four things still need OpenAI credits:
+**OpenAI removed (2026-11-07, not deployed):** the owner decided BiteSites uses ElevenLabs only. On `feat/elevenlabs-live-calls` (built on the rep onboarding branch):
 
-| Feature | Where | State |
+| Feature | Now | State |
 |---|---|---|
-| AI joining live calls | `hybrid-ai-sip-dispatch.js`, `hybrid-sideband-control.js`, `openAIRealtimeIncomingCall`, `services/realtime-sideband` | AI calling is off. Moving it to ElevenLabs is a carrier and launch-gate change and is not started. |
-| Admin agent preview | `agent-preview.js`, `createAIAgentPreviewSession`, `agent-preview-client.js` | Fails until credits are added or it is moved to ElevenLabs. Not started. |
-| Rep practice calls in production | live `createRepTrainingSession` | Still OpenAI until this branch deploys. |
-| Offline conversation scoring | `scripts/conversation-eval-model-adapter.mjs` | Run by hand, and only needs a key when used. |
+| AI joining live calls | ElevenLabs agent over SIP; the Cloud Run sideband and its endpoints are deleted | Built and unit-tested. ElevenLabs setup done 2026-11-08 (owner approved). Functions not deployed; no SIP call tested. AI calling stays off. |
+| Admin agent preview | ElevenLabs text-to-speech for the sample, a tool-free ElevenLabs agent for the test conversation | Built; preview agent created. Not tried in a browser until the Functions deploy. |
+| Rep practice calls | ElevenLabs (rep onboarding branch) | Production still runs the old OpenAI version until that branch deploys. |
+| Offline conversation scoring | Still OpenAI (`scripts/conversation-eval-model-adapter.mjs`) | Only used by hand; needs a key only if someone runs it. |
+
+The already-deployed production sideband on Cloud Run is still running until someone deletes it; after these branches deploy, nothing calls it.
 
 **Rep sign-in correction — 2026-10-28:** production logs identified the
 training-status 500 as a missing `node:crypto` `createHash` import. The

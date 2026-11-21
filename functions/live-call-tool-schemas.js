@@ -1,19 +1,17 @@
-// Wire schemas for every tool the agent can be granted.
+// Wire schemas for every tool the live-call agent can be granted.
 //
-// Split out of server.js so functions/agent-runtime.test.mjs can assert that
-// the compiler never advertises a tool this service cannot describe to OpenAI.
-// That assertion is the whole point of the file: `usableTools` drops unknown
-// names, so a missing entry leaves the model instructed to call a tool OpenAI
-// was never told about — and a model in that position either refuses the action
-// it exists to perform, or claims to have performed it.
+// functions/agent-runtime.test.mjs asserts that the compiler never grants a
+// tool this file cannot describe. A missing entry would leave the model told to
+// call a tool ElevenLabs was never given, and a model in that position either
+// refuses the action it exists for or claims to have done it.
+//
+// The schemas are written once here and converted to ElevenLabs webhook tools
+// in live-call-elevenlabs.js. Every call still lands on one server endpoint
+// that re-checks the grant, so a schema is a description, never a permission.
 
-// Offer track keys. Source of truth is functions/offer-tracks.js — this is a
-// separately deployed service, so the list is mirrored here for the wire schema
-// and re-validated server-side, where an unknown key is rejected outright.
-export const OFFER_TRACK_KEYS = [
-  'voice_agents', 'websites', 'leads', 'seo', 'automation', 'custom_os',
-  'ai_optimization', 'nfc', 'social', 'photography', 'drone', 'models', 'fonts'
-];
+import { OFFER_TRACK_KEYS as TRACK_KEYS } from './offer-tracks.js';
+
+export const OFFER_TRACK_KEYS = [...TRACK_KEYS];
 
 const fn = (name, description, properties = {}, required = []) => ({
   type: 'function',
@@ -186,14 +184,13 @@ export const TOOL_SCHEMA_NAMES = Object.freeze(Object.keys(TOOL_SCHEMAS).sort())
 /**
  * Resolve granted tool names to wire schemas.
  *
- * Unknown names are dropped — they must be, since OpenAI rejects a malformed
- * tool list and that would fail the whole call — but never silently.
+ * Unknown names are dropped, never silently.
  */
 export function usableTools(names = []) {
   const schemas = [];
   for (const name of Array.isArray(names) ? names : []) {
     if (TOOL_SCHEMAS[name]) schemas.push(TOOL_SCHEMAS[name]);
-    else console.error('[sideband] granted tool has no wire schema, dropping', name);
+    else console.error('[live-call] granted tool has no wire schema, dropping', name);
   }
   return schemas;
 }

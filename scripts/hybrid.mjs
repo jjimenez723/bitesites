@@ -6,11 +6,10 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
+import { LIVE_CALL_AGENT_IDS } from '../functions/live-call-agent-ids.js';
+
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PROJECT = 'bitesites-org';
-const REGION = 'us-central1';
-const SIDEBAND_SERVICE = 'bitesites-realtime-sideband';
-const SIDEBAND_SERVICE_ACCOUNT = `bitesites-sideband@${PROJECT}.iam.gserviceaccount.com`;
 const NODE_22 = '/opt/homebrew/opt/node@22/bin/node';
 const PARAM_FILE = join(ROOT, 'functions', `.env.${PROJECT}`);
 const FUNCTIONS_PACKAGE = join(ROOT, 'functions', 'package.json');
@@ -21,8 +20,10 @@ const REQUIRED_SECRETS = [
   'TWILIO_API_KEY_SECRET',
   'TWILIO_TWIML_APP_SID',
   'AI_MEDIA_WEBHOOK_SECRET',
-  'OPENAI_API_KEY',
-  'OPENAI_WEBHOOK_SECRET',
+  // AI phone calls on ElevenLabs: Twilio's SIP password and the post-call
+  // webhook signing secret. ELEVENLABS_API_KEY is listed below.
+  'ELEVENLABS_SIP_PASSWORD',
+  'ELEVENLABS_WEBHOOK_SECRET',
   // Bit and Byte, the public website agents, plus rep practice calls and scoring.
   'ELEVENLABS_API_KEY',
   // Google Calendar sync. Firebase resolves every defineSecret at deploy time,
@@ -106,7 +107,6 @@ const HYBRID_FUNCTIONS = [
   'twilioHybridConferenceEvent',
   'recordHybridCallEvent',
   'hybridAIMediaControl',
-  'openAIRealtimeIncomingCall',
   'getActiveHybridDialerSession',
   'startHybridDialerSession',
   'heartbeatHybridDialerSession',
@@ -126,8 +126,12 @@ const HYBRID_FUNCTIONS = [
   'reconcileHybridAIMediaAttachments',
   'twilioHybridAIParticipantTwiML',
   'twilioHybridAISipEvent',
-  'hybridSidebandControl',
-  'hybridAICarrierControl',
+  'hybridAICallInit',
+  'hybridAITools',
+  'hybridAIPostCall',
+  'hybridAIHandoffCarrier',
+  'hybridAIHandoffAnnouncement',
+  'hybridAIHandoffAudio',
   'handleHybridMachineAnswer',
   'twilioHybridVoicemailTwiML',
   'getCalendarAvailability',
@@ -227,7 +231,6 @@ function validate() {
   npm(['run', 'test:hybrid-dialer']);
   npm(['run', 'test:agent-runtime']);
   npm(['run', 'check'], join(ROOT, 'functions'));
-  npm(['run', 'check'], join(ROOT, 'services', 'realtime-sideband'));
   ok('Build, Hybrid V2 tests, and syntax checks passed');
 }
 
@@ -236,7 +239,6 @@ function setup() {
   heading(`BiteSites setup (${process.version})`);
   installWorkspace('web app', ROOT);
   installWorkspace('Firebase Functions', join(ROOT, 'functions'));
-  installWorkspace('Realtime sideband', join(ROOT, 'services', 'realtime-sideband'));
   validate();
   preflight({ strict: false });
 }
@@ -253,9 +255,9 @@ function readParams() {
     }));
 }
 
-function cloudState({ requireSideband = true, requiredSecrets = REQUIRED_SECRETS } = {}) {
+function cloudState({ requiredSecrets = REQUIRED_SECRETS } = {}) {
   const issues = [];
-  const state = { issues, secretNames: [], sidebandUrl: '' };
+  const state = { issues, secretNames: [] };
 
   if (!hasCommand('firebase')) issues.push('Firebase CLI is not installed');
   else {
@@ -286,30 +288,17 @@ function cloudState({ requireSideband = true, requiredSecrets = REQUIRED_SECRETS
     else ok('All Hybrid V2 secret names exist');
   }
 
-  const service = capture('gcloud', [
-    'run', 'services', 'describe', SIDEBAND_SERVICE,
-    `--project=${PROJECT}`, `--region=${REGION}`, '--format=value(status.url)',
-  ]);
-  if (service.status !== 0 || !service.stdout) {
-    if (requireSideband) issues.push(`Cloud Run service ${SIDEBAND_SERVICE} is not deployed`);
-    else warn(`Cloud Run service ${SIDEBAND_SERVICE} will be created by this deployment`);
-  }
-  else {
-    state.sidebandUrl = service.stdout;
-    ok(`Sideband service exists at ${service.stdout}`);
-  }
   return state;
 }
 
 function preflight({
   strict = true,
-  requireSideband = true,
   requiredSecrets = REQUIRED_SECRETS,
 } = {}) {
   ensureNode22();
   heading('Local preflight');
   ok(`Node ${process.version}`);
-  for (const relative of ['package-lock.json', 'functions/package-lock.json', 'services/realtime-sideband/package-lock.json']) {
+  for (const relative of ['package-lock.json', 'functions/package-lock.json']) {
     if (existsSync(join(ROOT, relative))) ok(`${relative} exists`);
     else fail(`${relative} is missing`);
   }
@@ -318,11 +307,11 @@ function preflight({
   const issues = [];
   if (params.PUBLIC_APP_URL === 'https://bitesites.org') ok('PUBLIC_APP_URL is configured');
   else issues.push(`PUBLIC_APP_URL is missing from ${PARAM_FILE}`);
-  if (/^proj_[A-Za-z0-9_-]+$/.test(params.OPENAI_PROJECT_ID || '')) ok('OPENAI_PROJECT_ID format is valid');
-  else issues.push(`OPENAI_PROJECT_ID is missing or invalid in ${PARAM_FILE}`);
+  if (LIVE_CALL_AGENT_IDS.agent && LIVE_CALL_AGENT_IDS.sipUser) ok('ElevenLabs live-call agent is set up');
+  else issues.push('ElevenLabs live-call agent is not set up: run scripts/setup-live-call-agents.mjs');
 
   heading('Cloud preflight');
-  const cloud = cloudState({ requireSideband, requiredSecrets });
+  const cloud = cloudState({ requiredSecrets });
   issues.push(...cloud.issues);
 
   if (issues.length) {
@@ -441,17 +430,13 @@ async function configure() {
   }
   command('gcloud', ['config', 'set', 'project', PROJECT]);
 
+  // Keep whatever else the file holds (the dialing gate, for one); only make
+  // sure the public URL is present.
   const currentParams = readParams();
-  const projectId = String(process.env.OPENAI_PROJECT_ID || currentParams.OPENAI_PROJECT_ID || '').trim();
-  if (projectId && !/^proj_[A-Za-z0-9_-]+$/.test(projectId)) {
-    throw new Error('OPENAI_PROJECT_ID must begin with proj_');
+  if (currentParams.PUBLIC_APP_URL !== 'https://bitesites.org') {
+    const lines = existsSync(PARAM_FILE) ? readFileSync(PARAM_FILE, 'utf8').split(/\r?\n/).filter(line => !line.startsWith('PUBLIC_APP_URL=')) : ['# Public Firebase deployment parameters for Hybrid Dialer V2.'];
+    writeFileSync(PARAM_FILE, [...lines.filter(Boolean), 'PUBLIC_APP_URL=https://bitesites.org', ''].join('\n'), { mode: 0o600 });
   }
-  writeFileSync(PARAM_FILE, [
-    '# Public Firebase deployment parameters for Hybrid Dialer V2.',
-    'PUBLIC_APP_URL=https://bitesites.org',
-    `OPENAI_PROJECT_ID=${projectId}`,
-    '',
-  ].join('\n'), { mode: 0o600 });
   ok(`Wrote public deployment parameters to ${PARAM_FILE}`);
 
   const existing = capture('gcloud', ['secrets', 'list', `--project=${PROJECT}`, '--format=value(name)']);
@@ -484,95 +469,14 @@ async function configure() {
 
 function deploy() {
   ensureNode22();
-  const result = preflight({ strict: true, requireSideband: false });
+  const result = preflight({ strict: true });
   if (result.issues.length) throw new Error('Deployment blocked by preflight');
   validate();
   firebaseDryRun();
   withHybridEntrypoint(() => command('firebase', [
     'deploy', '--only', FIREBASE_TARGETS, '--project', PROJECT,
   ]));
-  ensureSidebandServiceAccount([
-    'OPENAI_API_KEY', 'OPENAI_WEBHOOK_SECRET', 'AI_MEDIA_WEBHOOK_SECRET',
-  ]);
-  command('gcloud', [
-    'run', 'deploy', SIDEBAND_SERVICE,
-    '--source', join(ROOT, 'services', 'realtime-sideband'),
-    `--project=${PROJECT}`, `--region=${REGION}`,
-    `--service-account=${SIDEBAND_SERVICE_ACCOUNT}`,
-    '--allow-unauthenticated', '--no-cpu-throttling', '--min=1', '--quiet',
-    '--remove-env-vars', 'OPENAI_WEBHOOK_SECRET',
-    '--update-env-vars', 'FIREBASE_CONTROL_URL=https://bitesites.org/api/hybrid-sideband-control,FIREBASE_CARRIER_URL=https://bitesites.org/api/hybrid-ai-carrier-control',
-    '--set-secrets', 'OPENAI_API_KEY=OPENAI_API_KEY:latest,OPENAI_WEBHOOK_SECRET=OPENAI_WEBHOOK_SECRET:latest,AI_MEDIA_WEBHOOK_SECRET=AI_MEDIA_WEBHOOK_SECRET:latest',
-  ]);
   preflight({ strict: true });
-}
-
-function ensureSidebandServiceAccount(secrets) {
-  heading('Preparing least-privilege sideband identity');
-  const existing = capture('gcloud', [
-    'iam', 'service-accounts', 'describe', SIDEBAND_SERVICE_ACCOUNT,
-    `--project=${PROJECT}`,
-  ]);
-  if (existing.status !== 0) {
-    command('gcloud', [
-      'iam', 'service-accounts', 'create', 'bitesites-sideband',
-      '--display-name=BiteSites Realtime Sideband', `--project=${PROJECT}`,
-    ]);
-  }
-  for (const secret of secrets) {
-    const args = [
-      'secrets', 'add-iam-policy-binding', secret,
-      `--project=${PROJECT}`,
-      `--member=serviceAccount:${SIDEBAND_SERVICE_ACCOUNT}`,
-      '--role=roles/secretmanager.secretAccessor',
-      '--quiet',
-    ];
-    let lastResult;
-    for (let attempt = 1; attempt <= 6; attempt += 1) {
-      lastResult = capture('gcloud', args);
-      if (lastResult.status === 0) break;
-      const propagationDelay = /service account .* does not exist/i.test(lastResult.stderr);
-      if (!propagationDelay || attempt === 6) {
-        throw new Error(`gcloud ${args.join(' ')} failed: ${lastResult.stderr || 'unknown error'}`);
-      }
-      const delaySeconds = Math.min(attempt * 2, 10);
-      warn(`Service account is still propagating; retrying ${secret} access in ${delaySeconds}s`);
-      sleep(delaySeconds * 1000);
-    }
-    ok(`Granted ${secret} access to the sideband identity`);
-  }
-  ok(`Sideband runtime identity is ${SIDEBAND_SERVICE_ACCOUNT}`);
-}
-
-async function bootstrapSideband() {
-  ensureNode22();
-  const bootstrapSecrets = REQUIRED_SECRETS.filter(name => name !== 'OPENAI_WEBHOOK_SECRET');
-  const result = preflight({
-    strict: true,
-    requireSideband: false,
-    requiredSecrets: bootstrapSecrets,
-  });
-  if (result.issues.length) throw new Error('Sideband bootstrap blocked by preflight');
-  validate();
-  ensureSidebandServiceAccount(['OPENAI_API_KEY', 'AI_MEDIA_WEBHOOK_SECRET']);
-  command('gcloud', [
-    'run', 'deploy', SIDEBAND_SERVICE,
-    '--source', join(ROOT, 'services', 'realtime-sideband'),
-    `--project=${PROJECT}`, `--region=${REGION}`,
-    `--service-account=${SIDEBAND_SERVICE_ACCOUNT}`,
-    '--allow-unauthenticated', '--no-cpu-throttling', '--min=0', '--quiet',
-    '--set-env-vars', 'OPENAI_WEBHOOK_SECRET=bootstrap-pending,FIREBASE_CONTROL_URL=https://bitesites.org/api/hybrid-sideband-control,FIREBASE_CARRIER_URL=https://bitesites.org/api/hybrid-ai-carrier-control',
-    '--set-secrets', 'OPENAI_API_KEY=OPENAI_API_KEY:latest,AI_MEDIA_WEBHOOK_SECRET=AI_MEDIA_WEBHOOK_SECRET:latest',
-  ]);
-  const service = capture('gcloud', [
-    'run', 'services', 'describe', SIDEBAND_SERVICE,
-    `--project=${PROJECT}`, `--region=${REGION}`, '--format=value(status.url)',
-  ]);
-  if (service.status !== 0 || !service.stdout) throw new Error('Cloud Run did not return a sideband URL');
-  const health = await fetch(`${service.stdout}/health`);
-  if (!health.ok) throw new Error(`Sideband health check returned ${health.status}`);
-  ok(`Sideband bootstrap is healthy at ${service.stdout}`);
-  console.log(`\nCreate the OpenAI realtime.call.incoming webhook at:\n${service.stdout}/openai/webhook`);
 }
 
 function firebaseDryRun() {
@@ -611,7 +515,6 @@ try {
   else if (action === 'preflight') preflight({ strict: true });
   else if (action === 'configure') await configure();
   else if (action === 'dry-run') firebaseDryRun();
-  else if (action === 'bootstrap-sideband') await bootstrapSideband();
   else if (action === 'deploy') deploy();
   else if (action === 'test-all') testAll();
   else throw new Error(`Unknown action: ${action}`);

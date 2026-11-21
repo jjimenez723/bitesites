@@ -81,7 +81,7 @@ Webhooks can arrive late, duplicated, or out of order. All state transitions mus
 
 ### 3.7 Secrets never enter the browser
 
-Twilio Auth Tokens, OpenAI API keys, provider secrets, signing secrets, and service credentials live in Firebase Secret Manager or server environment bindings only.
+Twilio Auth Tokens, ElevenLabs API keys, provider secrets, signing secrets, and service credentials live in Firebase Secret Manager or server environment bindings only.
 
 Browser clients receive only short-lived, scope-limited tokens where required, such as a Twilio Voice SDK access token.
 
@@ -820,18 +820,20 @@ Recommended callable/request endpoints:
 
 A traditional Firebase HTTPS Function is suitable for authenticated control-plane APIs and webhook/TwiML endpoints. Long-lived bidirectional WebSocket media should run on infrastructure that supports durable WebSocket connections. If Cloud Functions cannot satisfy the media-session lifetime/stream requirements cleanly, use Cloud Run for the media bridge while keeping Firebase Functions as the control plane. Do not fake a durable WebSocket inside a function runtime that is not designed for it.
 
-## 22. OpenAI realtime integration boundary
+## 22. Voice AI integration boundary (ElevenLabs since 2026-11-07)
 
-If OpenAI Realtime is used for the live AI voice runtime:
+The live AI voice runs on an ElevenLabs agent reached over SIP. There is no
+media bridge of our own: Twilio carries the audio to ElevenLabs, and Firebase
+stays the control plane (see `functions/live-call-elevenlabs.js`).
 
 - API key stays server-side.
-- One Realtime session per AI-controlled call.
-- Audio bridge performs explicit format conversion only where required.
-- Transcript events are normalized into `calls/{callId}/turns`.
+- One ElevenLabs conversation per AI-controlled call, bound to that call by the conversation id.
+- Per-call instructions, opening line and voice come from our initiation webhook; the agent itself holds no seller data.
+- The post-call transcript is normalized into `calls/{callId}/turns`.
 - Tool calls are validated server-side.
 - Prospect speech is treated as untrusted input.
 - Session instructions come from the secure prompt compiler.
-- Handoff terminates or mutes AI output before human control is finalized.
+- Handoff mutes the AI on the carrier and ends its leg once a person owns the call.
 
 The model/provider name must remain configurable at the agent profile or platform-config level so the orchestration architecture is not permanently coupled to one realtime model.
 
@@ -954,7 +956,7 @@ Expected secrets/settings include at least:
 - `TWILIO_API_KEY_SID` (recommended for token signing)
 - `TWILIO_API_KEY_SECRET`
 - `TWILIO_TWIML_APP_SID`
-- `OPENAI_API_KEY` when OpenAI realtime is enabled
+- `ELEVENLABS_API_KEY`, `ELEVENLABS_SIP_PASSWORD` and `ELEVENLABS_WEBHOOK_SECRET` for AI calls
 - existing outbound webhook/discovery secrets
 
 Never commit secret values.

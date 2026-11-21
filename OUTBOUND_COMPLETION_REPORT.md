@@ -1,5 +1,7 @@
 # Outbound completion report
 
+> **Superseded in part (2026-11-07):** the OpenAI Realtime sideband described here was replaced by ElevenLabs over SIP on `feat/elevenlabs-live-calls`. See `HYBRID_DIALER_DEPLOYMENT.md` section 4.
+
 **Branch:** `feat/outbound-readiness-closeout`
 **Baseline:** `925697f` on `main`
 **Date:** 2026-08-25

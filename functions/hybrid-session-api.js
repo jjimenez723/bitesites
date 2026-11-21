@@ -22,7 +22,6 @@ import { clean } from './prospect-normalization.js';
 import { recordCallAuditEvent, releaseRepFromCall } from './hybrid-call-orchestration.js';
 import { maintainHybridCapacity } from './hybrid-capacity.js';
 import { hybridOutboundEventsUrl } from './hybrid-urls.js';
-import { warmSidebandForSession } from './hybrid-sideband-warmup.js';
 import {
   LEGACY_ACCOUNT_ID, readAccountId, checkAccountAlignment, accountMismatchLabel,
   sanitizePartnerOutcomes
@@ -260,10 +259,6 @@ export const startHybridDialerSession = onCall({ ...callOptions, secrets: HYBRID
     metadata: { hybridV2: true, concurrency, agentProfileId: requestedProfileId }
   });
 
-  // The earliest honest signal that AI calls are coming. Nothing is dialled for
-  // at least as long as it takes the rep to pick a campaign and hit dial, so
-  // the sideband has ample runway to be up before the first prospect answers.
-  await warmSidebandForSession({ operatingMode });
 
   return {
     sessionId,
@@ -280,11 +275,6 @@ export const heartbeatHybridDialerSession = onCall(callOptions, async request =>
   const sessionId = requireId(request.data?.sessionId, 'session id');
   const session = await requireOwnedSession(db, sessionId, uid, access);
   const beat = await heartbeatSession(db, sessionId);
-  // Every 45 seconds for the life of the session, so the sideband stays up for
-  // exactly as long as this rep could put a prospect in front of the AI — and
-  // scales to zero once they close the dialer. Best-effort by construction: a
-  // failed warm-up costs a cold start, never a dropped heartbeat.
-  await warmSidebandForSession(session);
   return beat;
 });
 
@@ -320,10 +310,6 @@ export const setHybridOperatingMode = onCall({ ...callOptions, secrets: HYBRID_S
     agentProfileVersion,
     updatedAt: FieldValue.serverTimestamp()
   }, { merge: true });
-  // A session that starts human-only never warms the sideband, so switching it
-  // into an AI mode is its own first signal — and the switch can be followed by
-  // a dial immediately.
-  await warmSidebandForSession({ operatingMode });
   if (agentProfileId) {
     for (const callId of (session.activeCallIds || []).slice(-100)) {
       const callRef = db.doc(`calls/${callId}`);

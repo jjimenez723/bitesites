@@ -159,7 +159,7 @@ const str = description => ({ type: 'string', description });
 
 /**
  * Wire schemas for the web session, embedded directly in the minted session
- * config. Kept in the same shape as the sideband's tool-schemas.js; the test
+ * config. Kept in the same shape as live-call-tool-schemas.js; the test
  * asserts the schema list and WEB_TOOL_NAMES never drift apart.
  */
 export const WEB_TOOL_SCHEMAS = Object.freeze({

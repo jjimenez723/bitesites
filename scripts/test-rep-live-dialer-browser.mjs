@@ -79,7 +79,7 @@ try {
   await start.waitFor();
   assert.equal(await start.isEnabled(), true);
   assert.equal(await page.getByRole('tab', { name: 'AI Training' }).count(), 0);
-  assert.equal(await page.getByRole('heading', { name: 'AI sales practice' }).count(), 0);
+  assert.equal(await page.getByRole('heading', { name: 'Your sales training' }).count(), 0);
   assert.equal(await page.getByRole('button', { name: 'Advanced', exact: true }).count(), 0);
   await start.click();
   await page.waitForFunction(() => window.dials.length === 1);
@@ -104,7 +104,7 @@ try {
   await page.evaluate(() => window.renderRep({ delay: true }));
   await page.getByRole('status').filter({ hasText: 'Checking your calling access' }).waitFor();
   assert.equal(await start.count(), 0);
-  assert.equal(await page.getByRole('heading', { name: 'AI sales practice' }).count(), 0);
+  assert.equal(await page.getByRole('heading', { name: 'Your sales training' }).count(), 0);
   await page.evaluate(() => window.releaseStatus());
   await start.waitFor();
   await page.evaluate(() => window.renderRep({ error: true }));
@@ -120,7 +120,7 @@ try {
       ...(mixed ? [{ accountId:'bitesites',trainingExempt:true,passed:false,campaignAssigned:false }] : []),
       { accountId:mixed?'stone-bellisimo':'bitesites',accountName:'Assigned seller',trainingExempt:false,passed:false,campaignAssigned:false,completedScenarioIds:[],requiredScenarioCount:3,ready:true }
     ] }), mixed);
-    await page.getByRole('heading', { name: 'AI sales practice' }).waitFor();
+    await page.getByRole('heading', { name: 'Your sales training' }).waitFor();
     assert.equal(await start.count(), 0);
     assert.equal(await page.getByRole('tab', { name: 'AI Training' }).count(), 1);
   }
