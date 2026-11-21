@@ -7,7 +7,7 @@
 // automatically the moment they pass.
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { useRoles, useUsers } from '../data';
+import { setRepTrainingExemption, useRoles, useUsers } from '../data';
 import { outbound, useCampaigns } from './data';
 import { ACCOUNTS, ACCOUNT_IDS } from '../../../functions/accounts.js';
 
@@ -93,15 +93,37 @@ export default function RepCampaignManager({ variant = 'full' }) {
       : 'No automatic campaign. New reps wait for you to add them.'));
   };
 
+  // Admin-only on the server too (setRepTrainingExemption). Skipping lets the rep
+  // be added to campaigns right away; requiring it again takes that back.
+  const changeExemption = (rep, accountId, exempt) => {
+    const seller = ACCOUNTS[accountId]?.label || accountId;
+    if (exempt && !window.confirm(
+      `Let ${rep.name} skip ${seller} training?\n\nThey can be added to campaigns and start dialing without passing the practice calls.`
+    )) return undefined;
+    return run(`training:${rep.uid}:${accountId}`, async () => {
+      await setRepTrainingExemption(rep.uid, accountId, exempt);
+      await refreshRoles();
+    }, exempt ? `${rep.name} can skip ${seller} training.` : `${rep.name} must complete ${seller} training again.`);
+  };
+
   const waiting = reps.filter(rep => rep.ready.some(accountId =>
     !campaignsFor(rep.uid).some(campaign => campaign.accountId === accountId)));
 
-  const statusFor = rep => rep.accountIds.map(accountId => {
-    const label = ACCOUNTS[accountId]?.label || accountId;
-    return rep.exempt.includes(accountId) ? `${label}: training skipped by admin`
-      : rep.passed.includes(accountId) ? `${label}: training passed`
-        : `${label}: in training`;
-  }).join(' · ') || 'No seller assigned';
+  const TrainingCell = ({ rep }) => !rep.accountIds.length
+    ? <span>No seller assigned</span>
+    : <div className="rep-training-list">{rep.accountIds.map(accountId => {
+      const label = ACCOUNTS[accountId]?.label || accountId;
+      const skipped = rep.exempt.includes(accountId);
+      const passed = rep.passed.includes(accountId);
+      const saving = busy === `training:${rep.uid}:${accountId}`;
+      return <div className="rep-training-row" key={accountId} style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', margin: '2px 0' }}>
+        <span>{skipped ? `${label}: training skipped by admin` : passed ? `${label}: training passed` : `${label}: in training`}</span>
+        {!passed && <button type="button" className="btn-admin" disabled={Boolean(busy)}
+                            onClick={() => changeExemption(rep, accountId, !skipped)}>
+          {saving ? 'Saving…' : skipped ? 'Require training' : 'Skip training'}
+        </button>}
+      </div>;
+    })}</div>;
 
   const Picker = ({ rep, showChips = true }) => {
     const mine = campaignsFor(rep.uid);
@@ -193,7 +215,7 @@ export default function RepCampaignManager({ variant = 'full' }) {
               <thead><tr><th>Rep</th><th>Training</th><th>Campaigns</th></tr></thead>
               <tbody>{reps.map(rep => <tr key={rep.uid}>
                 <td><div className="cell-strong">{rep.name}</div><div className="cell-dim">{rep.email}</div></td>
-                <td className="cell-dim cell-wrap">{statusFor(rep)}</td>
+                <td className="cell-dim cell-wrap"><TrainingCell rep={rep} /></td>
                 <td><Picker rep={rep} /></td>
               </tr>)}</tbody>
             </table>
