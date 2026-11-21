@@ -125,7 +125,8 @@ export function publicTrainingScenario(scenario) {
     business: scenario.business,
     name: scenario.name,
     age: scenario.age,
-    gender: scenario.gender
+    gender: scenario.gender,
+    minimums: repTrainingMinimums(scenario)
   };
 }
 
@@ -261,12 +262,20 @@ export function normalizeRepTrainingEvaluation(value, scenario = {}) {
   };
 }
 
+/**
+ * How long a practice call must be before the coach can score it. A no-sale
+ * scenario is won by accepting the no (or confirming a do-not-call) and ending
+ * the call, so a correct call is naturally short and gets a lower bar. The
+ * numbers are sent to the browser so it never blocks a call the server would
+ * accept; they say nothing about how the prospect will respond.
+ */
+export function repTrainingMinimums(scenario) {
+  const short = scenario?.outcome === 'no' || scenario?.doNotCall === true;
+  return short ? { entries: 4, turns: 2, characters: 100 } : { entries: 8, turns: 4, characters: 400 };
+}
+
 export function validateRepTrainingTranscript(transcript, scenario = {}) {
-  // A do-not-call scenario is won by apologizing, confirming the removal and
-  // hanging up, so a correct call is naturally short. It gets a lower bar.
-  const minEntries = scenario?.doNotCall ? 4 : 8;
-  const minTurns = scenario?.doNotCall ? 2 : 4;
-  const minCharacters = scenario?.doNotCall ? 100 : 400;
+  const { entries: minEntries, turns: minTurns, characters: minCharacters } = repTrainingMinimums(scenario);
   if (!Array.isArray(transcript) || transcript.length < minEntries || transcript.length > 80) {
     throw new Error('Complete a full practice conversation before submitting it for review.');
   }

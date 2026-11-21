@@ -11,13 +11,16 @@ const transcriptLengthLabel = turns => `${turns.length} transcript turns`;
 // recorded, and nothing here touches a real lead.
 const PRACTICE_OUTCOMES = ['Interested', 'Booked a meeting', 'Call back later', 'Not interested', 'Voicemail', 'Wrong number', 'Do not call'];
 
-// Mirrors the server's minimum (functions/rep-training.js): four turns each
-// way and about 400 characters, or the coach refuses to score the call.
-const scorable = turns => {
+// Mirrors the server's minimum (functions/rep-training.js repTrainingMinimums),
+// which it sends with the scenario: a call that ends early after a firm no or a
+// do-not-call request needs fewer turns than a full sales conversation.
+const scorable = (turns, minimums) => {
+  const needTurns = minimums?.turns ?? 4;
+  const needCharacters = minimums?.characters ?? 400;
   const you = turns.filter(turn => turn.role === 'you').length;
   const them = turns.filter(turn => turn.role === 'agent').length;
   const characters = turns.reduce((total, turn) => total + turn.text.length, 0);
-  return you >= 4 && them >= 4 && characters >= 400;
+  return you >= needTurns && them >= needTurns && characters >= needCharacters;
 };
 
 export default function RepTraining({ accounts = [], loading = false, error = '', onRefresh = () => {} }) {
@@ -171,7 +174,7 @@ export default function RepTraining({ accounts = [], loading = false, error = ''
     ? <button className="btn-admin rep-training-skip" type="button" disabled={busy} onClick={() => finish({ testerSkip: true })}>Pass this call (tester)</button>
     : null;
   const callEnded = Boolean(attemptId) && !['live', 'connecting', 'scoring'].includes(state);
-  const canScore = scorable(transcript);
+  const canScore = scorable(transcript, scenario?.minimums);
   const inPractice = Boolean(selected?.ready && !selected.trainingExempt && !selected.passed && !(selected.courseRequired && !selected.quizPassed));
 
   if (loading && !accounts.length) return <div className="admin-card rep-training-card"><p>Loading your training assignments…</p></div>;
@@ -320,7 +323,7 @@ export default function RepTraining({ accounts = [], loading = false, error = ''
                   {!wrapUp.outcome && <span className="rep-training-hint">Pick how the call ended first.</span>}
                 </div>
                 : <div className="rep-training-short" role="status">
-                  <p>This call was too short for the coach to score. It needs at least four back-and-forths. Start a new call and keep the conversation going a little longer.</p>
+                  <p>This call was too short for the coach to score. It needs a few more back-and-forths. Start a new call and keep the conversation going a little longer.</p>
                   <div className="rep-training-actions">
                     <button className="btn-admin primary" type="button" disabled={busy} onClick={start}>Start a new call</button>
                     {testerSkipButton}

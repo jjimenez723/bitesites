@@ -9,7 +9,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   allRepTrainingScenarios, evaluatePracticeConversation, validateRepTrainingTranscript, isRepTrainingTester, pickAssignedCampaign, testerSkipEvaluation, evaluationFromConversation, hasRepTrainingAccess, hasRepTrainingExemption, practiceAgentConfig, repTrainingInstructions, startPracticeConversation,
-  normalizeRepTrainingEvaluation, publicTrainingScenario, repTrainingScenarios
+  normalizeRepTrainingEvaluation, publicTrainingScenario, repTrainingMinimums, repTrainingScenarios
 } from './rep-training.js';
 import { PRACTICE_AGENT_IDS } from './rep-practice-agents.js';
 import { gradeRepQuiz, hasRepCourse, publicRepCourse } from './rep-course.js';
@@ -273,4 +273,26 @@ test('any open campaign the rep was added to counts, preferring the default', ()
   assert.equal(pickAssignedCampaign([campaigns[1]], 'bitesites'), null);
   assert.equal(pickAssignedCampaign(campaigns, 'the_fine_line_group'), null);
   assert.equal(pickAssignedCampaign(undefined, 'bitesites'), null);
+});
+
+test('no-sale scenarios get a shorter minimum, sent to the browser without saying why', () => {
+  assert.deepEqual(repTrainingMinimums(yesScenario), { entries: 8, turns: 4, characters: 400 });
+  assert.deepEqual(repTrainingMinimums(noScenario), { entries: 4, turns: 2, characters: 100 });
+  assert.deepEqual(repTrainingMinimums(stopScenario), { entries: 4, turns: 2, characters: 100 });
+  assert.deepEqual(publicTrainingScenario(stopScenario).minimums, { entries: 4, turns: 2, characters: 100 });
+  assert.deepEqual(publicTrainingScenario(yesScenario).minimums, { entries: 8, turns: 4, characters: 400 });
+});
+
+test('a six-turn do-not-call call and a short firm-no call both score', () => {
+  const dnc = [
+    ['you', 'Hey, Chris. My name is Dan. I am with BiteSites. May I speak to the owner, please?'],
+    ['agent', 'I am not the owner and I am not interested. Please take me off your list and do not call again.'],
+    ['you', 'No problem at all. I will take you off right now, and sorry for the interruption.'],
+    ['agent', 'Thanks, Dan. Please make sure this number is removed. I am ending the call now.'],
+    ['you', 'Well, you have a good day.'],
+    ['agent', 'Thanks, Dan. You have a good day too. Goodbye.']
+  ].map(([role, text]) => ({ role, text }));
+  assert.doesNotThrow(() => validateRepTrainingTranscript(dnc, stopScenario));
+  assert.doesNotThrow(() => validateRepTrainingTranscript(dnc.slice(0, 4), noScenario));
+  assert.throws(() => validateRepTrainingTranscript(dnc, yesScenario), /Complete a full practice conversation/);
 });
